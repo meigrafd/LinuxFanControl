@@ -1,0 +1,2 @@
+# LinuxFanControl
+Testing some Ideas
