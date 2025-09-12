@@ -1,8 +1,4 @@
 cmake_minimum_required(VERSION 3.16)
-
-# ------------------------------------------------------------------
-# Linux Fan Control - Top-level CMake
-# ------------------------------------------------------------------
 project(LinuxFanControl LANGUAGES CXX)
 
 # Default build type
@@ -18,24 +14,22 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# Options
 option(BUILD_DAEMON "Build daemon (lfcd)" ON)
 option(BUILD_GUI    "Build GUI (lfc-gui)" ON)
 
-# Common include dir (header-only SHM)
-#   src/common/ShmTelemetry.h
-include_directories(${CMAKE_SOURCE_DIR}/src/common)
+# IMPORTANT: make both "src" and "src/common" visible for includes like "common/ShmTelemetry.h"
+include_directories(
+  ${CMAKE_SOURCE_DIR}/src
+  ${CMAKE_SOURCE_DIR}/src/common
+)
 
-# Subdirectories
 if(BUILD_DAEMON)
   add_subdirectory(src/daemon)
 endif()
-
 if(BUILD_GUI)
   add_subdirectory(src/gui)
 endif()
 
-# Print summary
 message(STATUS "======== LFC Build Summary ========")
 message(STATUS " CMAKE_BUILD_TYPE     : ${CMAKE_BUILD_TYPE}")
 message(STATUS " BUILD_DAEMON (lfcd)  : ${BUILD_DAEMON}")

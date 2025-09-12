@@ -1,50 +1,56 @@
+/*
+ * Linux Fan Control (LFC) - FanTile widget
+ * (c) 2025 meigrafd & contributors - MIT License
+ */
 #include "widgets/FanTile.h"
-
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QProgressBar>
 #include <QPushButton>
+#include <cmath>
 
-FanTile::FanTile(QWidget* parent)
-: QWidget(parent)
-{
+FanTile::FanTile(QWidget* parent) : QWidget(parent) {
     setObjectName("fanTile");
-    // Rounded card look; the QListWidget's gridSize defines outer footprint.
-    setStyleSheet(
-        "QWidget#fanTile {"
-        "  background: palette(base);"
-        "  border: 1px solid rgba(0,0,0,30);"
-        "  border-radius: 14px;"
-        "}"
-        "QLabel { font-size: 14px; }"
-        "QLabel#title { font-weight: 600; font-size: 16px; }"
-    );
+    setMinimumSize(260, 100);
 
     auto* v = new QVBoxLayout(this);
-    v->setContentsMargins(12, 10, 12, 10);
+    v->setContentsMargins(10,8,10,8);
     v->setSpacing(6);
 
-    title_  = new QLabel("Channel", this); title_->setObjectName("title");
-    sensor_ = new QLabel("sensor: --", this);
-    duty_   = new QLabel("duty: -- %", this);
-    temp_   = new QLabel("temp: -- °C", this);
+    auto* top = new QHBoxLayout();
+    lblTitle_ = new QLabel("<b>[FAN] –</b>", this);
+    btnEdit_  = new QPushButton("Edit", this);
+    btnEdit_->setFixedWidth(56);
+    connect(btnEdit_, &QPushButton::clicked, this, [this]{ emit editClicked(); });
+    top->addWidget(lblTitle_, 1);
+    top->addWidget(btnEdit_, 0);
+    v->addLayout(top);
 
-    auto* row1 = new QHBoxLayout();
-    row1->addWidget(title_, 1);
-    btnEdit_ = new QPushButton("Edit", this);
-    btnEdit_->setFixedHeight(22);
-    btnEdit_->setCursor(Qt::PointingHandCursor);
-    row1->addWidget(btnEdit_);
-    v->addLayout(row1);
+    lblSensor_ = new QLabel("[TEMP] –", this);
+    v->addWidget(lblSensor_);
 
-    v->addWidget(sensor_);
-    v->addWidget(duty_);
-    v->addWidget(temp_);
-
-    connect(btnEdit_, &QPushButton::clicked, this, [this]{ emit editRequested(); });
+    auto* h = new QHBoxLayout();
+    barDuty_ = new QProgressBar(this);
+    barDuty_->setRange(0, 100);
+    barDuty_->setValue(0);
+    barDuty_->setFormat("%p%");
+    lblDutyText_ = new QLabel("0%", this);
+    lblTemp_     = new QLabel("-- °C", this);
+    h->addWidget(barDuty_, 1);
+    h->addWidget(lblDutyText_);
+    h->addWidget(lblTemp_);
+    v->addLayout(h);
 }
 
-void FanTile::setTitle(const QString& t)  { title_->setText(t); }
-void FanTile::setSensor(const QString& s) { sensor_->setText(QString("sensor: %1").arg(s)); }
-void FanTile::setDuty(double pct)         { duty_->setText(QString("duty: %1 %").arg(QString::number(pct, 'f', 0))); }
-void FanTile::setTemp(double celsius)     { temp_->setText(QString("temp: %1 °C").arg(QString::number(celsius, 'f', 1))); }
+void FanTile::setTitle(const QString& t) { lblTitle_->setText("<b>"+t.toHtmlEscaped()+"</b>"); }
+void FanTile::setSensor(const QString& s) { lblSensor_->setText(s.toHtmlEscaped()); }
+void FanTile::setDuty(double pct) {
+    int v = std::lround(std::max(0.0, std::min(100.0, pct)));
+    barDuty_->setValue(v);
+    lblDutyText_->setText(QString::number(v) + "%");
+}
+void FanTile::setTemp(double celsius) {
+    if (std::isfinite(celsius)) lblTemp_->setText(QString::number(celsius, 'f', 1) + " °C");
+    else lblTemp_->setText("-- °C");
+}

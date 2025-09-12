@@ -1,5 +1,5 @@
 /*
- * Linux Fan Control (LFC)
+ * Linux Fan Control (LFC) - Main Window
  * (c) 2025 meigrafd & contributors - MIT License
  */
 
@@ -19,20 +19,27 @@
 #include <QListWidget>
 #include <QListView>
 #include <QAbstractItemView>
-#include <QScrollArea>
 #include <QPushButton>
 #include <QLabel>
 #include <QCheckBox>
 #include <QTimer>
-#include <QPalette>
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QFile>
 #include <QDir>
-#include <QDateTime>
-#include <QPainter>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
+#include <QComboBox>
+#include <QLineEdit>
+#include <QSlider>
+#include <QDoubleSpinBox>
+#include <QTableWidget>
+#include <QHeaderView>
+#include <QJsonDocument>
+#include <cmath>
 
-// --- Theme loader (from .qss files) ---
+// ---------- Helper: read stylesheet from file ----------
 static QString readTextFile(const QString& rel) {
     const QString base = QCoreApplication::applicationDirPath();
     QFile f(base + "/" + rel);
@@ -43,43 +50,126 @@ static void applyThemeFile(const QString& relQss) {
     qApp->setStyleSheet(readTextFile(relQss));
 }
 
-// --- Simple animated logo: rotate a fan-glyph via timer (no external binary needed) ---
+// ---------- Animated logo ----------
 class RotLogo : public QWidget {
     Q_OBJECT
-public:
-    explicit RotLogo(QWidget* p=nullptr) : QWidget(p) {
-        setFixedSize(28, 28);
+    public: explicit RotLogo(QWidget* p=nullptr) : QWidget(p) {
+        setFixedSize(28,28);
         t_.setInterval(30);
-        connect(&t_, &QTimer::timeout, this, [this]{ ang_ = (ang_ + 6) % 360; update(); });
+        connect(&t_, &QTimer::timeout, this, [this]{ ang_=(ang_+6)%360; update(); });
         t_.start();
     }
 protected:
     void paintEvent(QPaintEvent*) override {
         QPainter g(this);
-        g.setRenderHint(QPainter::Antialiasing, true);
-        g.translate(width()/2.0, height()/2.0);
-        g.rotate(ang_);
-        g.setPen(Qt::NoPen);
-        g.setBrush(QColor("#3a7bd5"));
-        for (int i=0;i<3;++i) {
-            g.save();
-            g.rotate(120*i);
-            g.drawRoundedRect(QRectF(2,-4,10,8), 3, 3);
-            g.restore();
-        }
-        g.setBrush(QColor("#1b3a5b"));
-        g.drawEllipse(QPointF(0,0), 3.5, 3.5);
+        g.setRenderHint(QPainter::Antialiasing,true);
+        g.translate(width()/2.0, height()/2.0); g.rotate(ang_);
+        g.setPen(Qt::NoPen); g.setBrush(QColor("#3a7bd5"));
+        for(int i=0;i<3;++i){ g.save(); g.rotate(120*i); g.drawRoundedRect(QRectF(2,-4,10,8),3,3); g.restore();}
+        g.setBrush(QColor("#1b3a5b")); g.drawEllipse(QPointF(0,0),3.5,3.5);
     }
 private:
-    QTimer t_;
-    int ang_{0};
+    QTimer t_; int ang_{0};
 };
 
-// ASCII-ish prefixes for tiles
+// ---------- Inline Channel Editor Dialog ----------
+class EditorDialog : public QDialog {
+    Q_OBJECT
+public:
+    explicit EditorDialog(QWidget* parent=nullptr) : QDialog(parent) {
+        setWindowTitle("Edit Channel");
+        resize(520, 420);
+
+        auto* v = new QVBoxLayout(this);
+        auto* form = new QFormLayout();
+        editName_ = new QLineEdit(this);
+        cmbMode_  = new QComboBox(this); cmbMode_->addItems({"Auto","Manual"});
+        sliderManual_ = new QSlider(Qt::Horizontal, this); sliderManual_->setRange(0,100);
+        spinHyst_ = new QDoubleSpinBox(this); spinHyst_->setRange(0.0, 20.0); spinHyst_->setSuffix(" °C");
+        spinTau_  = new QDoubleSpinBox(this); spinTau_->setRange(0.0, 60.0); spinTau_->setSuffix(" s");
+
+        form->addRow("Label", editName_);
+        form->addRow("Mode",  cmbMode_);
+        form->addRow("Manual", sliderManual_);
+        form->addRow("Hysteresis", spinHyst_);
+        form->addRow("Response τ", spinTau_);
+        v->addLayout(form);
+
+        // Minimal curve table (x=temp, y=duty). Keep simple and robust.
+        tbl_ = new QTableWidget(this);
+        tbl_->setColumnCount(2);
+        tbl_->setHorizontalHeaderLabels(QStringList()<<"Temp (°C)"<<"Duty (%)");
+        tbl_->horizontalHeader()->setStretchLastSection(true);
+        v->addWidget(tbl_, 1);
+
+        auto* hb = new QHBoxLayout();
+        btnAdd_ = new QPushButton("Add Point", this);
+        btnDel_ = new QPushButton("Delete Point", this);
+        hb->addWidget(btnAdd_); hb->addWidget(btnDel_); hb->addStretch(1);
+        v->addLayout(hb);
+
+        auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel, this);
+        v->addWidget(bb);
+        connect(bb, &QDialogButtonBox::accepted, this, &QDialog::accept);
+        connect(bb, &QDialogButtonBox::rejected, this, &QDialog::reject);
+        connect(btnAdd_, &QPushButton::clicked, this, [this]{
+            int r = tbl_->rowCount(); tbl_->insertRow(r);
+            tbl_->setItem(r,0,new QTableWidgetItem("40"));
+            tbl_->setItem(r,1,new QTableWidgetItem("50"));
+        });
+        connect(btnDel_, &QPushButton::clicked, this, [this]{
+            auto r = tbl_->currentRow(); if (r>=0) tbl_->removeRow(r);
+        });
+    }
+
+    void loadFrom(const QJsonObject& ch) {
+        editName_->setText(ch.value("name").toString());
+        cmbMode_->setCurrentText(ch.value("mode").toString("Auto"));
+        sliderManual_->setValue(std::lround(ch.value("manual").toDouble(0.0)));
+        spinHyst_->setValue(ch.value("hyst").toDouble(0.0));
+        spinTau_->setValue(ch.value("tau").toDouble(0.0));
+        // curve points: expect array of {x,y}
+        tbl_->setRowCount(0);
+        for (const auto& it : ch.value("curve").toArray()) {
+            auto p = it.toObject();
+            int r = tbl_->rowCount(); tbl_->insertRow(r);
+            tbl_->setItem(r,0,new QTableWidgetItem(QString::number(p.value("x").toDouble())));
+            tbl_->setItem(r,1,new QTableWidgetItem(QString::number(p.value("y").toDouble())));
+        }
+    }
+
+    QJsonObject toPatchJson() const {
+        QJsonObject out;
+        out["name"]   = editName_->text();
+        out["mode"]   = cmbMode_->currentText();
+        out["manual"] = sliderManual_->value();
+        out["hyst"]   = spinHyst_->value();
+        out["tau"]    = spinTau_->value();
+        QJsonArray pts;
+        for (int r=0;r<tbl_->rowCount();++r) {
+            bool ok1=false, ok2=false;
+            double x = tbl_->item(r,0) ? tbl_->item(r,0)->text().toDouble(&ok1) : 0.0;
+            double y = tbl_->item(r,1) ? tbl_->item(r,1)->text().toDouble(&ok2) : 0.0;
+            if (ok1 && ok2) pts.push_back(QJsonObject{{"x",x},{"y",y}});
+        }
+        out["curve"] = pts;
+        return out;
+    }
+
+private:
+    QLineEdit*      editName_{};
+    QComboBox*      cmbMode_{};
+    QSlider*        sliderManual_{};
+    QDoubleSpinBox* spinHyst_{};
+    QDoubleSpinBox* spinTau_{};
+    QTableWidget*   tbl_{};
+    QPushButton*    btnAdd_{};
+    QPushButton*    btnDel_{};
+};
+
+// ---------- MainWindow ----------
 static QString fanPrefix()  { return "[FAN] ";  }
 static QString tempPrefix() { return "[TEMP] "; }
-static QString autoPrefix() { return "[AUTO] "; }
-static QString manPrefix()  { return "[MAN] ";  }
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     rpc_ = new RpcClient();
@@ -87,7 +177,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     auto* tb = addToolBar("toolbar");
     tb->setMovable(false);
-    tb->addWidget(new RotLogo(tb)); // animated logo
+    tb->addWidget(new RotLogo(tb));
 
     actSetup_   = new QAction("Setup", this);
     actImport_  = new QAction("Import…", this);
@@ -112,7 +202,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     tb->addSeparator();
     tb->addAction(actTheme_);
 
-    // Central
     auto* central = new QWidget(this);
     auto* v = new QVBoxLayout(central);
     v->setContentsMargins(12,12,12,12);
@@ -121,20 +210,22 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     // Empty state
     emptyState_ = new QWidget(central);
-    auto* ev = new QVBoxLayout(emptyState_);
-    ev->setContentsMargins(20,40,20,40);
-    ev->setSpacing(12);
-    auto* title = new QLabel("<b>No channels yet</b>", emptyState_);
-    auto* desc  = new QLabel("Click <i>Setup</i> to detect sensors and calibrate fans, or <i>Import</i>.", emptyState_);
-    btnEmptySetup_ = new QPushButton("Setup", emptyState_);
-    btnEmptySetup_->setFixedWidth(120);
-    ev->addWidget(title, 0, Qt::AlignHCenter);
-    ev->addWidget(desc, 0, Qt::AlignHCenter);
-    ev->addWidget(btnEmptySetup_, 0, Qt::AlignHCenter);
-    connect(btnEmptySetup_, &QPushButton::clicked, this, &MainWindow::detect);
-    v->addWidget(emptyState_);
+    {
+        auto* ev = new QVBoxLayout(emptyState_);
+        ev->setContentsMargins(20,40,20,40);
+        ev->setSpacing(12);
+        auto* title = new QLabel("<b>No channels yet</b>", emptyState_);
+        auto* desc  = new QLabel("Click <i>Setup</i> to detect sensors and calibrate fans, or <i>Import</i>.", emptyState_);
+        btnEmptySetup_ = new QPushButton("Setup", emptyState_);
+        btnEmptySetup_->setFixedWidth(120);
+        ev->addWidget(title, 0, Qt::AlignHCenter);
+        ev->addWidget(desc, 0, Qt::AlignHCenter);
+        ev->addWidget(btnEmptySetup_, 0, Qt::AlignHCenter);
+        connect(btnEmptySetup_, &QPushButton::clicked, this, &MainWindow::detect);
+        v->addWidget(emptyState_);
+    }
 
-    // TOP tiles
+    // Top: tiles
     channelsList_ = new QListWidget(this);
     channelsList_->setViewMode(QListView::IconMode);
     channelsList_->setMovement(QListView::Snap);
@@ -145,7 +236,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     channelsList_->setGridSize(QSize(280, 110));
     v->addWidget(channelsList_);
 
-    // Sensors hidden by default
+    // Sensors panel (hidden initially)
     sensorsPanel_ = new QWidget(this);
     auto* spLay = new QVBoxLayout(sensorsPanel_);
     spLay->setContentsMargins(0,0,0,0);
@@ -164,7 +255,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     resize(1280, 900);
 
-    // Apply default theme from file
+    // Theme files
     applyThemeFile("assets/themes/dark.qss");
     isDark_ = true;
     actTheme_->setText("Light Mode");
@@ -175,9 +266,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     QTimer::singleShot(100, this, &MainWindow::refresh);
 }
 
-MainWindow::~MainWindow() {
-    if (shm_) shm_->stop();
-}
+MainWindow::~MainWindow() { if (shm_) shm_->stop(); }
 
 void MainWindow::switchTheme() {
     isDark_ = !isDark_;
@@ -185,14 +274,8 @@ void MainWindow::switchTheme() {
     actTheme_->setText(isDark_ ? "Light Mode" : "Dark Mode");
 }
 
-void MainWindow::startEngine() {
-    rpc_->call("engineStart");
-    statusBar()->showMessage("Engine started", 1200);
-}
-void MainWindow::stopEngine() {
-    rpc_->call("engineStop");
-    statusBar()->showMessage("Engine stopped", 1200);
-}
+void MainWindow::startEngine() { rpc_->call("engineStart"); statusBar()->showMessage("Engine started", 1200); }
+void MainWindow::stopEngine()  { rpc_->call("engineStop");  statusBar()->showMessage("Engine stopped", 1200); }
 
 void MainWindow::applyHideSensors() {
     for (int i = sensorsGrid_->count() - 1; i >= 0; --i) {
@@ -200,18 +283,16 @@ void MainWindow::applyHideSensors() {
         if (auto* w = it->widget()) { w->hide(); w->deleteLater(); }
         delete it;
     }
-    sensorCards_.clear();
-
-    int cols = 4, row=0, col=0;
+    int cols=4,row=0,col=0;
     for (const auto& v : sensorsCache_) {
         const auto s = v.toObject();
         QString label = s.value("label").toString();
         if (hiddenSensors_.contains(label)) continue;
 
         auto* roww = new QWidget;
+        roww->setObjectName("sensorRow");
         auto* h = new QHBoxLayout(roww);
-        h->setContentsMargins(8,6,8,6);
-        h->setSpacing(6);
+        h->setContentsMargins(8,6,8,6); h->setSpacing(6);
         auto* chk = new QCheckBox(roww);
         chk->setChecked(true);
         connect(chk, &QCheckBox::toggled, this, [this, label](bool on){ if (on) hiddenSensors_.remove(label); else hiddenSensors_.insert(label); });
@@ -219,7 +300,7 @@ void MainWindow::applyHideSensors() {
         h->addWidget(new QLabel(label, roww), 1);
 
         sensorsGrid_->addWidget(roww, row, col);
-        if (++col >= cols) { col=0; ++row; }
+        if (++col>=cols) { col=0; ++row; }
     }
 }
 
@@ -230,7 +311,6 @@ void MainWindow::showEmptyState(bool on) {
 
 QWidget* MainWindow::makeFanTileWidget(const QJsonObject& ch) {
     auto* tile = new FanTile(this);
-    tile->setObjectName("fanTile");
     const QString nm = ch.value("name").toString();
     const QString sn = ch.value("sensor").toString();
     tile->setTitle(fanPrefix() + nm);
@@ -249,13 +329,14 @@ void MainWindow::rebuildChannels(const QJsonArray& channels) {
         auto obj = it.toObject();
         const QString id = obj.value("id").toString();
 
-        auto* tile = makeFanTileWidget(obj);
-
+        auto* tile = qobject_cast<FanTile*>(makeFanTileWidget(obj));
         auto* item = new QListWidgetItem();
         item->setSizeHint(QSize(270, 100));
         item->setData(Qt::UserRole, id);
         channelsList_->addItem(item);
         channelsList_->setItemWidget(item, tile);
+
+        connect(tile, &FanTile::editClicked, this, [this, id, obj]{ openEditorForChannel(id, obj); });
 
         ChannelCardRefs refs; refs.card = tile;
         chCards_[id] = refs;
@@ -263,47 +344,37 @@ void MainWindow::rebuildChannels(const QJsonArray& channels) {
     }
 }
 
-void MainWindow::rebuildSensors(const QJsonArray& sensors) {
-    sensorsCache_ = sensors;
-}
+void MainWindow::rebuildSensors(const QJsonArray& sensors) { sensorsCache_ = sensors; }
 
 QString MainWindow::chooseSensorForPwm(const QJsonArray& sensors, const QString& pwmLabel) const {
-    auto pickByType = [&](const QString& type) -> QString {
+    auto pickByType = [&](const QString& type)->QString{
         for (const auto& it : sensors) {
             const auto s = it.toObject();
-            if (s.value("type").toString().compare(type, Qt::CaseInsensitive) == 0) {
-                return s.value("path").toString();
-            }
+            if (s.value("type").toString().compare(type, Qt::CaseInsensitive)==0) return s.value("path").toString();
         }
         return {};
     };
-    if (pwmLabel.contains("amdgpu", Qt::CaseInsensitive))
-        if (auto p = pickByType("GPU"); !p.isEmpty()) return p;
-        if (pwmLabel.contains("k10temp", Qt::CaseInsensitive) || pwmLabel.contains("coretemp", Qt::CaseInsensitive))
-            if (auto p = pickByType("CPU"); !p.isEmpty()) return p;
-            if (!sensors.isEmpty()) return sensors.first().toObject().value("path").toString();
-            return {};
+    if (pwmLabel.contains("amdgpu", Qt::CaseInsensitive)) {
+        if (auto p=pickByType("GPU"); !p.isEmpty()) return p;
+    }
+    if (pwmLabel.contains("k10temp", Qt::CaseInsensitive) || pwmLabel.contains("coretemp", Qt::CaseInsensitive)) {
+        if (auto p=pickByType("CPU"); !p.isEmpty()) return p;
+    }
+    if (!sensors.isEmpty()) return sensors.first().toObject().value("path").toString();
+    return {};
 }
 
 void MainWindow::detect() {
     DetectDialog dlg(this);
-    if (dlg.exec() != QDialog::Accepted) {
-        statusBar()->showMessage("Setup cancelled", 1500);
-        return;
-    }
+    if (dlg.exec()!=QDialog::Accepted) { statusBar()->showMessage("Setup cancelled", 1500); return; }
     auto res = dlg.result();
-    if (res.isEmpty()) {
-        statusBar()->showMessage("Setup failed", 1500);
-        return;
-    }
+    if (res.isEmpty()) { statusBar()->showMessage("Setup failed", 1500); return; }
 
     auto sensors = res.value("sensors").toArray();
     auto pwms    = res.value("pwms").toArray();
     auto mapping = res.value("mapping").toObject();
 
-    // Create channels in batch
-    QJsonArray batch;
-    int idCounter = 1;
+    QJsonArray batch; int idCounter=1;
     for (const auto& it : pwms) {
         const auto p = it.toObject();
         const QString lbl = p.value("label").toString();
@@ -311,24 +382,14 @@ void MainWindow::detect() {
         const QString sensorPath = m.value("sensor_path").toString();
         if (sensorPath.isEmpty()) continue;
 
-        QJsonObject params;
-        params["name"]   = lbl;
-        params["sensor"] = sensorPath;
-        params["pwm"]    = p.value("pwm").toString();
-
-        batch.push_back(QJsonObject{
-            {"jsonrpc","2.0"},
-            {"method","createChannel"},
-            {"id", QString::number(idCounter++)},
-                        {"params", params}
-        });
+        QJsonObject params; params["name"]=lbl; params["sensor"]=sensorPath; params["pwm"]=p.value("pwm").toString();
+        batch.push_back(QJsonObject{{"jsonrpc","2.0"},{"method","createChannel"},{"id",QString::number(idCounter++)},{"params",params}});
     }
     if (!batch.isEmpty()) {
         rpc_->callBatch(batch);
         rpc_->call("engineStart");
         statusBar()->showMessage("Setup completed, engine started", 1800);
     }
-
     sensorsPanel_->setVisible(true);
     refresh();
 }
@@ -338,7 +399,7 @@ void MainWindow::onImport() {
     if (path.isEmpty()) return;
     QString err;
     if (!Importer::importFanControlJson(rpc_, path, &err)) {
-        QMessageBox::warning(this, "Import failed", err.isEmpty()? "Unknown error" : err);
+        QMessageBox::warning(this, "Import failed", err.isEmpty()?"Unknown error":err);
         return;
     }
     statusBar()->showMessage("Import completed", 1800);
@@ -350,7 +411,6 @@ void MainWindow::refresh() {
     if (e.contains("result")) {
         auto r = e["result"].toObject();
         rebuildSensors(r.value("sensors").toArray());
-
         auto ch = rpc_->listChannels();
         rebuildChannels(ch);
     } else {
@@ -365,15 +425,66 @@ void MainWindow::onTelemetry(const QJsonArray& channels) {
         const QString id   = ch.value("id").toString();
         const double lastOut  = ch.contains("last_out")  ? ch["last_out"].toDouble()  : NAN;
         const double lastTemp = ch.contains("last_temp") ? ch["last_temp"].toDouble() : NAN;
-
         auto* item = chItems_.value(id, nullptr);
         if (!item) continue;
-        auto* w = channelsList_->itemWidget(item);
-        if (auto* tile = qobject_cast<FanTile*>(w)) {
+        if (auto* tile = qobject_cast<FanTile*>(channelsList_->itemWidget(item))) {
             if (std::isfinite(lastOut))  tile->setDuty(lastOut);
             if (std::isfinite(lastTemp)) tile->setTemp(lastTemp);
         }
     }
+}
+
+// ----- open editor and perform Batch RPC -----
+void MainWindow::openEditorForChannel(const QString& channelId, const QJsonObject& channelObj) {
+    EditorDialog dlg(this);
+    dlg.loadFrom(channelObj);
+    if (dlg.exec()!=QDialog::Accepted) return;
+
+    const auto patch = dlg.toPatchJson();
+    QJsonArray pts = patch.value("curve").toArray();
+
+    // Prepare JSON-RPC 2.0 batch
+    QJsonArray batch;
+    int id=1;
+
+    if (patch.contains("name")) {
+        batch.push_back(QJsonObject{
+            {"jsonrpc","2.0"},{"id",QString::number(id++)},
+                        {"method","setChannelName"},
+                        {"params", QJsonObject{{"id",channelId},{"name",patch["name"]}}}
+        });
+    }
+    if (patch.contains("mode")) {
+        batch.push_back(QJsonObject{
+            {"jsonrpc","2.0"},{"id",QString::number(id++)},
+                        {"method","setChannelMode"},
+                        {"params", QJsonObject{{"id",channelId},{"mode",patch["mode"]}}}
+        });
+        if (patch["mode"].toString()=="Manual") {
+            batch.push_back(QJsonObject{
+                {"jsonrpc","2.0"},{"id",QString::number(id++)},
+                            {"method","setChannelManual"},
+                            {"params", QJsonObject{{"id",channelId},{"duty",patch["manual"]}}}
+            });
+        }
+    }
+    // curve + hysteresis/tau
+    if (!pts.isEmpty()) {
+        batch.push_back(QJsonObject{
+            {"jsonrpc","2.0"},{"id",QString::number(id++)},
+                        {"method","setChannelCurve"},
+                        {"params", QJsonObject{{"id",channelId},{"points",pts}}}
+        });
+    }
+    batch.push_back(QJsonObject{
+        {"jsonrpc","2.0"},{"id",QString::number(id++)},
+                    {"method","setChannelHystTau"},
+                    {"params", QJsonObject{{"id",channelId},{"hyst",patch["hyst"]},{"tau",patch["tau"]}}}
+    });
+
+    rpc_->callBatch(batch);
+    statusBar()->showMessage("Channel updated", 1500);
+    refresh();
 }
 
 #include "MainWindow.moc"

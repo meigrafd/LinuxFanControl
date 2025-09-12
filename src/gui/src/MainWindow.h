@@ -1,8 +1,8 @@
+/*
+ * Linux Fan Control (LFC) - Main Window
+ * (c) 2025 meigrafd & contributors - MIT License
+ */
 #pragma once
-// MainWindow — dashboard-like UI mirroring FanControl.Release,
-// now with SHM telemetry (ShmSubscriber) and Import menu.
-// Comments in English.
-
 #include <QMainWindow>
 #include <QMap>
 #include <QSet>
@@ -11,17 +11,18 @@
 
 class QListWidget;
 class QListWidgetItem;
-class QWidget;
 class QGridLayout;
-class QPushButton;
+class QWidget;
 class QAction;
+class QPushButton;
+class QLabel;
 
 class RpcClient;
 class ShmSubscriber;
 class FanTile;
 
 struct ChannelCardRefs {
-    QWidget* card{nullptr};
+    FanTile* card{nullptr};
 };
 
 class MainWindow : public QMainWindow {
@@ -31,52 +32,51 @@ public:
     ~MainWindow();
 
 private slots:
-    void refresh();
-    void detect();          // opens DetectDialog
+    void switchTheme();
     void startEngine();
     void stopEngine();
-    void switchTheme();
-    void applyHideSensors();
-    void onTelemetry(const QJsonArray& channels);
+    void detect();
     void onImport();
+    void refresh();
+    void onTelemetry(const QJsonArray& channels);
+    void applyHideSensors();
 
 private:
-    void buildUi();
     void showEmptyState(bool on);
     QWidget* makeFanTileWidget(const QJsonObject& ch);
+    void rebuildChannels(const QJsonArray& channels);
+    void rebuildSensors(const QJsonArray& sensors);
     QString chooseSensorForPwm(const QJsonArray& sensors, const QString& pwmLabel) const;
 
-    void rebuildSensors(const QJsonArray& sensors);
-    void rebuildChannels(const QJsonArray& channels);
+    // Inline editor dialog (defined in .cpp)
+    void openEditorForChannel(const QString& channelId, const QJsonObject& channelObj);
 
 private:
-    RpcClient*       rpc_{};
-    ShmSubscriber*   shm_{};
+    RpcClient* rpc_{nullptr};
+    ShmSubscriber* shm_{nullptr};
+    bool isDark_{true};
 
-    // TOP: draggable channel tiles (fans)
+    // toolbar actions
+    QAction* actSetup_{};
+    QAction* actImport_{};
+    QAction* actRefresh_{};
+    QAction* actStart_{};
+    QAction* actStop_{};
+    QAction* actTheme_{};
+
+    // Empty state
+    QWidget*  emptyState_{};
+    QPushButton* btnEmptySetup_{};
+
+    // Top tiles
     QListWidget* channelsList_{};
-    QMap<QString, ChannelCardRefs> chCards_;
     QMap<QString, QListWidgetItem*> chItems_;
+    QMap<QString, ChannelCardRefs>  chCards_;
 
-    // Sensors panel (collapsed by default)
-    QWidget*     sensorsPanel_{};
+    // Sensors panel (hidden by default, user can hide entries then "Apply Hide")
+    QWidget*   sensorsPanel_{};
     QGridLayout* sensorsGrid_{};
     QPushButton* btnApplyHide_{};
     QSet<QString> hiddenSensors_;
-    QMap<QString, QWidget*> sensorCards_;
-
-    // Empty-state overlay
-    QWidget*     emptyState_{};
-    QPushButton* btnEmptySetup_{};
-
-    QAction*     actSetup_{};
-    QAction*     actRefresh_{};
-    QAction*     actStart_{};
-    QAction*     actStop_{};
-    QAction*     actTheme_{};
-    QAction*     actImport_{};
-
     QJsonArray sensorsCache_;
-    QJsonArray pwmsCache_;
-    bool isDark_{true};
 };
