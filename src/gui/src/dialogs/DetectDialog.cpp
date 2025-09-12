@@ -156,6 +156,3 @@ void DetectDialog::onWorkerFailed(const QString& err) {
     }
     reject();
 }
-
-#include "dialogs/moc_DetectDialog.cpp"
-#include "moc_DetectDialog.cpp"
