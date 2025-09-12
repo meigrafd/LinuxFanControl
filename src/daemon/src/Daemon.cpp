@@ -21,6 +21,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cmath>
+#include <map>
 
 #include <nlohmann/json.hpp>
 
@@ -440,8 +441,8 @@ static inline double read_temp(const std::string& path) {
 
 json Daemon::rpcDetectCalibrate() {
     const int floor_pct = 20;
-    const int delta_pct = 25; // strong step so audible (as requested)
-    const double dwell_s = 10.0; // longer dwell for clear response
+    const int delta_pct = 25;      // strong step so audible
+    const double dwell_s = 10.0;   // longer dwell for clear response
     const int repeats = 1;
     const int rpm_threshold = 100;
     const int step = 5;
@@ -517,8 +518,8 @@ json Daemon::rpcDetectCalibrate() {
         double start_pct = std::max<double>(floor_pct, prev_pct);
 
         // write lower bound (never below floor)
-        auto safe_write = [&](double pct) {
-            write_pwm_pct(p.pwm_path, std::max<double>(floor_pct, pct));
+        auto safe_write = [&](double pct) -> bool {
+            return write_pwm_pct(p.pwm_path, std::max<double>(floor_pct, pct));
         };
 
         // If writing is unsupported (e.g. amdgpu Errno 95), skip but keep snapshot restore
@@ -531,11 +532,11 @@ json Daemon::rpcDetectCalibrate() {
         std::map<std::string,double> t_low, t_base;
         for (int rep = 0; rep < repeats; ++rep) {
             double low = std::max<double>(floor_pct, start_pct - std::abs(delta_pct));
-            safe_write(low);
+            (void)safe_write(low);
             std::this_thread::sleep_for(std::chrono::milliseconds(int(dwell_s * 1000)));
             read_all_temps(t_low);
 
-            safe_write(start_pct);
+            (void)safe_write(start_pct);
             std::this_thread::sleep_for(std::chrono::milliseconds(int(dwell_s * 1000)));
             read_all_temps(t_base);
         }
@@ -559,7 +560,7 @@ json Daemon::rpcDetectCalibrate() {
         }
 
         // restore to start
-        safe_write(start_pct);
+        (void)safe_write(start_pct);
         // restore enable + raw if we had snapshot
         if (s.has_en) write_text(p.enable_path, s.enable);
         if (s.has_pwm) write_text(p.pwm_path, s.pwm);
@@ -576,15 +577,15 @@ json Daemon::rpcDetectCalibrate() {
         if (!p.enable_path.empty()) write_text(p.enable_path, "1");
 
         // graceful PWM test
-        std::string prev_raw;
-        read_text(p.pwm_path, prev_raw);
-        double prev_pct = pct_from_raw(prev_raw);
-        if (!std::isfinite(prev_pct)) prev_pct = 35.0;
+        std::string prev_raw2;
+        read_text(p.pwm_path, prev_raw2);
+        double prev_pct2 = pct_from_raw(prev_raw2);
+        if (!std::isfinite(prev_pct2)) prev_pct2 = 35.0;
 
-        auto safe_write = [&](double pct) {
+        auto safe_write2 = [&](double pct) -> bool {
             return write_pwm_pct(p.pwm_path, std::max<double>(floorHere, pct));
         };
-        if (!safe_write(prev_pct)) {
+        if (!safe_write2(prev_pct2)) {
             cal_res[lbl] = json{{"ok", false}, {"error","PWM write not supported"}};
             // restore snapshot if any
             if (itS!=snaps.end()) {
@@ -598,7 +599,7 @@ json Daemon::rpcDetectCalibrate() {
         int rpm_at_min = 0;
 
         for (int duty = std::max(0, floorHere); duty <= 100; duty += step) {
-            safe_write(duty);
+            (void)safe_write2(duty);
             std::this_thread::sleep_for(std::chrono::milliseconds(int(settle_s * 1000)));
             int rpm = (p.tach_path.empty() ? -1 : read_rpm(p.tach_path));
             if (rpm >= rpm_threshold) { spinup = duty; rpm_at_min = rpm; break; }
@@ -615,7 +616,7 @@ json Daemon::rpcDetectCalibrate() {
 
         int min_stable = spinup;
         for (int duty = spinup; duty >= floorHere; duty -= step) {
-            safe_write(duty);
+            (void)safe_write2(duty);
             std::this_thread::sleep_for(std::chrono::milliseconds(int(settle_s * 1000)));
             int rpm = (p.tach_path.empty() ? -1 : read_rpm(p.tach_path));
             if (rpm >= rpm_threshold) {
