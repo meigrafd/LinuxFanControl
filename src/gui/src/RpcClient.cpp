@@ -9,6 +9,7 @@
 #include <QProcessEnvironment>
 #include <QElapsedTimer>
 #include <QDir>
+#include <QDateTime>
 
 static inline QString nowIso() {
     return QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
@@ -112,169 +113,169 @@ QPair<QJsonValue, QString> RpcClient::call(const QString& method,
     if (!waitForId(id, &out, &err, timeoutMs))
         return {QJsonValue(), err.isEmpty() ? QStringLiteral("timeout") : err};
     return {out, QString()};
-}
+                                           }
 
-QPair<QJsonArray, QString> RpcClient::callBatch(const QJsonArray& batch, int timeoutMs) {
-    QString err;
-    if (!ensureRunning(&err)) return {QJsonArray(), err};
+                                           QPair<QJsonArray, QString> RpcClient::callBatch(const QJsonArray& batch, int timeoutMs) {
+                                               QString err;
+                                               if (!ensureRunning(&err)) return {QJsonArray(), err};
 
-    QJsonArray outBatch;
-    QSet<QString> ids;
-    for (const QJsonValue& v : batch) {
-        if (!v.isObject()) continue;
-        QJsonObject o = v.toObject();
-        o["jsonrpc"] = "2.0";
-        if (!o.contains("id")) o["id"] = nextId();
-        ids.insert(o["id"].toString());
-        outBatch.push_back(o);
-    }
+                                               QJsonArray outBatch;
+                                               QSet<QString> ids;
+                                               for (const QJsonValue& v : batch) {
+                                                   if (!v.isObject()) continue;
+                                                   QJsonObject o = v.toObject();
+                                                   o["jsonrpc"] = "2.0";
+                                                   if (!o.contains("id")) o["id"] = nextId();
+                                                   ids.insert(o["id"].toString());
+                                                   outBatch.push_back(o);
+                                               }
 
-    QJsonDocument doc(outBatch);
-    if (!sendJsonLineRaw(doc)) return {QJsonArray(), "I/O write failed"};
+                                               QJsonDocument doc(outBatch);
+                                               if (!sendJsonLineRaw(doc)) return {QJsonArray(), "I/O write failed"};
 
-    QJsonArray resp;
-    if (!waitForBatchIds(ids, &resp, &err, timeoutMs))
-        return {QJsonArray(), err.isEmpty() ? QStringLiteral("timeout") : err};
-    return {resp, QString()};
-}
+                                               QJsonArray resp;
+                                               if (!waitForBatchIds(ids, &resp, &err, timeoutMs))
+                                                   return {QJsonArray(), err.isEmpty() ? QStringLiteral("timeout") : err};
+                                               return {resp, QString()};
+                                           }
 
-bool RpcClient::sendJsonLine(const QJsonObject& obj) {
-    QJsonDocument doc(obj);
-    return sendJsonLineRaw(doc);
-}
-bool RpcClient::sendJsonLineRaw(const QJsonDocument& doc) {
-    if (!proc_) return false;
-    QByteArray line = doc.toJson(QJsonDocument::Compact);
-    line.append('\n');
-    return proc_->write(line) == line.size();
-}
+                                           bool RpcClient::sendJsonLine(const QJsonObject& obj) {
+                                               QJsonDocument doc(obj);
+                                               return sendJsonLineRaw(doc);
+                                           }
+                                           bool RpcClient::sendJsonLineRaw(const QJsonDocument& doc) {
+                                               if (!proc_) return false;
+                                               QByteArray line = doc.toJson(QJsonDocument::Compact);
+                                               line.append('\n');
+                                               return proc_->write(line) == line.size();
+                                           }
 
-void RpcClient::onReadyRead() {
-    if (!proc_) return;
-    buf_.append(proc_->readAllStandardOutput());
-    buf_.append(proc_->readAllStandardError());
+                                           void RpcClient::onReadyRead() {
+                                               if (!proc_) return;
+                                               buf_.append(proc_->readAllStandardOutput());
+                                               buf_.append(proc_->readAllStandardError());
 
-    while (true) {
-        int nl = buf_.indexOf('\n');
-        if (nl < 0) break;
-        QByteArray one = buf_.left(nl);
-        buf_.remove(0, nl + 1);
-        const QString s = QString::fromUtf8(one).trimmed();
-        if (s.isEmpty()) continue;
+                                               while (true) {
+                                                   int nl = buf_.indexOf('\n');
+                                                   if (nl < 0) break;
+                                                   QByteArray one = buf_.left(nl);
+                                                   buf_.remove(0, nl + 1);
+                                                   const QString s = QString::fromUtf8(one).trimmed();
+                                                   if (s.isEmpty()) continue;
 
-        QJsonParseError pe{};
-        QJsonDocument jd = QJsonDocument::fromJson(one, &pe);
-        if (pe.error == QJsonParseError::NoError && (jd.isObject() || jd.isArray())) {
-            if (jd.isObject()) {
-                const QJsonObject env = jd.object();
-                const QString id = env.value("id").toVariant().toString();
-                QMutexLocker lk(&mtx_);
-                if (env.contains("result") || env.contains("error")) {
-                    pending_[id]    = env.value("result").isNull() ? env.value("error") : env.value("result");
-                    pendingEnv_[id] = env;
-                    cond_.wakeAll();
-                }
-            } else {
-                const QJsonArray arr = jd.array();
-                QMutexLocker lk(&mtx_);
-                for (const QJsonValue& v : arr) {
-                    if (!v.isObject()) continue;
-                    const QJsonObject env = v.toObject();
-                    const QString id = env.value("id").toVariant().toString();
-                    pending_[id]    = env.value("result").isNull() ? env.value("error") : env.value("result");
-                    pendingEnv_[id] = env;
-                }
-                cond_.wakeAll();
-            }
-        } else {
-            emit daemonLogLine(s);
-        }
-    }
-}
+                                                   QJsonParseError pe{};
+                                                   QJsonDocument jd = QJsonDocument::fromJson(one, &pe);
+                                                   if (pe.error == QJsonParseError::NoError && (jd.isObject() || jd.isArray())) {
+                                                       if (jd.isObject()) {
+                                                           const QJsonObject env = jd.object();
+                                                           const QString id = env.value("id").toVariant().toString();
+                                                           QMutexLocker lk(&mtx_);
+                                                           if (env.contains("result") || env.contains("error")) {
+                                                               pending_[id]    = env.value("result").isNull() ? env.value("error") : env.value("result");
+                                                               pendingEnv_[id] = env;
+                                                               cond_.wakeAll();
+                                                           }
+                                                       } else {
+                                                           const QJsonArray arr = jd.array();
+                                                           QMutexLocker lk(&mtx_);
+                                                           for (const QJsonValue& v : arr) {
+                                                               if (!v.isObject()) continue;
+                                                               const QJsonObject env = v.toObject();
+                                                               const QString id = env.value("id").toVariant().toString();
+                                                               pending_[id]    = env.value("result").isNull() ? env.value("error") : env.value("result");
+                                                               pendingEnv_[id] = env;
+                                                           }
+                                                           cond_.wakeAll();
+                                                       }
+                                                   } else {
+                                                       emit daemonLogLine(s);
+                                                   }
+                                               }
+                                           }
 
-void RpcClient::onErrorOccurred(QProcess::ProcessError e) {
-    emit daemonLogLine(QString("[rpc] process error: %1").arg(static_cast<int>(e)));
-}
-void RpcClient::onFinished(int exitCode, QProcess::ExitStatus status) {
-    emit daemonLogLine(QString("[rpc] daemon finished: code=%1, status=%2").arg(exitCode).arg(int(status)));
-    emit daemonCrashed(exitCode, status);
-}
+                                           void RpcClient::onErrorOccurred(QProcess::ProcessError e) {
+                                               emit daemonLogLine(QString("[rpc] process error: %1").arg(static_cast<int>(e)));
+                                           }
+                                           void RpcClient::onFinished(int exitCode, QProcess::ExitStatus status) {
+                                               emit daemonLogLine(QString("[rpc] daemon finished: code=%1, status=%2").arg(exitCode).arg(int(status)));
+                                               emit daemonCrashed(exitCode, status);
+                                           }
 
-bool RpcClient::waitForId(const QString& id, QJsonValue* out, QString* err, int timeoutMs) {
-    QElapsedTimer t; t.start();
-    QMutexLocker lk(&mtx_);
-    while (!pending_.contains(id)) {
-        const qint64 left = timeoutMs < 0 ? 1000 : std::max<qint64>(1, timeoutMs - t.elapsed());
-        if (!cond_.wait(&mtx_, left)) {
-            if (timeoutMs >= 0 && t.elapsed() >= timeoutMs) {
-                if (err) *err = "timeout";
-                return false;
-            }
-        }
-    }
-    *out = pending_.take(id);
-    pendingEnv_.remove(id);
-    return true;
-}
+                                           bool RpcClient::waitForId(const QString& id, QJsonValue* out, QString* err, int timeoutMs) {
+                                               QElapsedTimer t; t.start();
+                                               QMutexLocker lk(&mtx_);
+                                               while (!pending_.contains(id)) {
+                                                   const qint64 left = (timeoutMs < 0) ? 1000 : std::max<qint64>(1, timeoutMs - t.elapsed());
+                                                   if (!cond_.wait(&mtx_, left)) {
+                                                       if (timeoutMs >= 0 && t.elapsed() >= timeoutMs) {
+                                                           if (err) { *err = "timeout"; }
+                                                           return false;
+                                                       }
+                                                   }
+                                               }
+                                               *out = pending_.take(id);
+                                               pendingEnv_.remove(id);
+                                               return true;
+                                           }
 
-bool RpcClient::waitForBatchIds(const QSet<QString>& ids, QJsonArray* out, QString* err, int timeoutMs) {
-    QElapsedTimer t; t.start();
-    QMutexLocker lk(&mtx_);
-    while (true) {
-        bool all = true;
-        for (const QString& id : ids) if (!pendingEnv_.contains(id)) { all = false; break; }
-        if (all) break;
-        const qint64 left = timeoutMs < 0 ? 1000 : std::max<qint64>(1, timeoutMs - t.elapsed());
-        if (!cond_.wait(&mtx_, left)) {
-            if (timeoutMs >= 0 && t.elapsed() >= timeoutMs) {
-                if (err) *err = "timeout"; return false;
-            }
-        }
-    }
-    QJsonArray arr;
-    for (const QString& id : ids) {
-        arr.push_back(pendingEnv_.take(id));
-        pending_.remove(id);
-    }
-    *out = arr;
-    return true;
-}
+                                           bool RpcClient::waitForBatchIds(const QSet<QString>& ids, QJsonArray* out, QString* err, int timeoutMs) {
+                                               QElapsedTimer t; t.start();
+                                               QMutexLocker lk(&mtx_);
+                                               while (true) {
+                                                   bool all = true;
+                                                   for (const QString& id : ids) if (!pendingEnv_.contains(id)) { all = false; break; }
+                                                   if (all) break;
+                                                   const qint64 left = (timeoutMs < 0) ? 1000 : std::max<qint64>(1, timeoutMs - t.elapsed());
+                                                   if (!cond_.wait(&mtx_, left)) {
+                                                       if (timeoutMs >= 0 && t.elapsed() >= timeoutMs) {
+                                                           if (err) { *err = "timeout"; }
+                                                           return false;
+                                                       }
+                                                   }
+                                               }
+                                               QJsonArray arr;
+                                               for (const QString& id : ids) {
+                                                   arr.push_back(pendingEnv_.take(id));
+                                                   pending_.remove(id);
+                                               }
+                                               *out = arr;
+                                               return true;
+                                           }
 
-// ---- convenience wrappers ----
-QJsonArray RpcClient::listSensors(QString* err) {
-    auto res = call(QStringLiteral("listSensors"));
-    if (!res.second.isEmpty()) { if (err) *err = res.second; return {}; }
-    return res.first.toArray();
-}
-QJsonArray RpcClient::listPwms(QString* err) {
-    auto res = call(QStringLiteral("listPwms"));
-    if (!res.second.isEmpty()) { if (err) *err = res.second; return {}; }
-    return res.first.toArray();
-}
-QJsonObject RpcClient::enumerate(QString* err) {
-    QJsonArray batch;
-    batch.push_back(QJsonObject{{"method","listSensors"},{"params",QJsonObject{}}});
-    batch.push_back(QJsonObject{{"method","listPwms"},{"params",QJsonObject{}}});
-    auto res = callBatch(batch, 20000);
-    if (!res.second.isEmpty()) { if (err) *err = res.second; return {}; }
-    QJsonObject out;
-    for (const auto& v : res.first) {
-        const auto o = v.toObject();
-        const QString m = o.value("result").isNull() ? QString() : QString();
-        // Identify by array shape
-        const auto r = o.value("result");
-        if (r.isArray() && !r.toArray().isEmpty() && r.toArray().first().isObject()
-            && r.toArray().first().toObject().contains("pwm_path"))
-            out["pwms"] = r;
-        else if (r.isArray())
-            out["sensors"] = r;
-    }
-    if (!out.contains("sensors")) out["sensors"] = QJsonArray();
-    if (!out.contains("pwms"))    out["pwms"] = QJsonArray();
-    return out;
-}
-QJsonArray RpcClient::listChannels(QString* err) {
-    auto res = call(QStringLiteral("listChannels"));
-    if (!res.second.isEmpty()) { if (err) *err = res.second; return {}; }
-    return res.first.toArray();
-}
+                                           // ---- convenience wrappers ----
+                                           QJsonArray RpcClient::listSensors(QString* err) {
+                                               auto res = call(QStringLiteral("listSensors"));
+                                               if (!res.second.isEmpty()) { if (err) *err = res.second; return {}; }
+                                               return res.first.toArray();
+                                           }
+                                           QJsonArray RpcClient::listPwms(QString* err) {
+                                               auto res = call(QStringLiteral("listPwms"));
+                                               if (!res.second.isEmpty()) { if (err) *err = res.second; return {}; }
+                                               return res.first.toArray();
+                                           }
+                                           QJsonObject RpcClient::enumerate(QString* err) {
+                                               QJsonArray batch;
+                                               batch.push_back(QJsonObject{{"method","listSensors"},{"params",QJsonObject{}}});
+                                               batch.push_back(QJsonObject{{"method","listPwms"},{"params",QJsonObject{}}});
+                                               auto res = callBatch(batch, 20000);
+                                               if (!res.second.isEmpty()) { if (err) *err = res.second; return {}; }
+                                               QJsonObject out;
+                                               for (const auto& v : res.first) {
+                                                   const auto o = v.toObject();
+                                                   const auto r = o.value("result");
+                                                   if (r.isArray() && !r.toArray().isEmpty() &&
+                                                       r.toArray().first().isObject() &&
+                                                       r.toArray().first().toObject().contains("pwm_path"))
+                                                       out["pwms"] = r;
+                                                   else if (r.isArray())
+                                                       out["sensors"] = r;
+                                               }
+                                               if (!out.contains("sensors")) out["sensors"] = QJsonArray();
+                                               if (!out.contains("pwms"))    out["pwms"] = QJsonArray();
+                                               return out;
+                                           }
+                                           QJsonArray RpcClient::listChannels(QString* err) {
+                                               auto res = call(QStringLiteral("listChannels"));
+                                               if (!res.second.isEmpty()) { if (err) *err = res.second; return {}; }
+                                               return res.first.toArray();
+                                           }
