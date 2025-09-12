@@ -1,8 +1,8 @@
 #include "MainWindow.h"
 #include "RpcClient.h"
 #include "TelemetryWorker.h"
+#include "dialogs/DetectDialog.h"
 #include "widgets/FanTile.h"
-#include "widgets/CollapsiblePanel.h"
 
 #include <QToolBar>
 #include <QAction>
@@ -19,13 +19,14 @@
 #include <QCheckBox>
 #include <QTimer>
 #include <QPalette>
+#include <QFrame>
 
 // ---- Deep-blue theme close to FanControl look ----
 static void applyBlueTheme(bool dark) {
     QPalette pal;
     if (dark) {
-        pal.setColor(QPalette::Window, QColor("#0e1b2a"));   // deep blue bg
-        pal.setColor(QPalette::Base,   QColor("#13273d"));   // cards base
+        pal.setColor(QPalette::Window, QColor("#0e1b2a"));
+        pal.setColor(QPalette::Base,   QColor("#13273d"));
         pal.setColor(QPalette::AlternateBase, QColor("#0e1b2a"));
         pal.setColor(QPalette::Button, QColor("#1b3a5b"));
         pal.setColor(QPalette::ButtonText, Qt::white);
@@ -40,7 +41,6 @@ static void applyBlueTheme(bool dark) {
 }
 
 static QString tileStyle(bool dark) {
-    // Blue tile
     if (dark) {
         return QStringLiteral(
             "QWidget#fanTile {"
@@ -77,21 +77,18 @@ MainWindow::MainWindow(QWidget* parent)
     rpc_ = new RpcClient();
     tw_  = new TelemetryWorker(rpc_, this);
 
-    // ---- Toolbar ----
     auto* tb = addToolBar("toolbar");
-    actDetect_  = new QAction("Detect", this);
+    actSetup_   = new QAction("Setup", this);
     actRefresh_ = new QAction("Refresh", this);
     actStart_   = new QAction("Start", this);
     actStop_    = new QAction("Stop", this);
     actTheme_   = new QAction("Light Mode", this);
-
-    connect(actDetect_,  &QAction::triggered, this, &MainWindow::detect);
+    connect(actSetup_,   &QAction::triggered, this, &MainWindow::detect);
     connect(actRefresh_, &QAction::triggered, this, &MainWindow::refresh);
     connect(actStart_,   &QAction::triggered, this, &MainWindow::startEngine);
     connect(actStop_,    &QAction::triggered, this, &MainWindow::stopEngine);
     connect(actTheme_,   &QAction::triggered, this, &MainWindow::switchTheme);
-
-    tb->addAction(actDetect_);
+    tb->addAction(actSetup_);
     tb->addAction(actRefresh_);
     tb->addSeparator();
     tb->addAction(actStart_);
@@ -99,14 +96,29 @@ MainWindow::MainWindow(QWidget* parent)
     tb->addSeparator();
     tb->addAction(actTheme_);
 
-    // ---- Central single layout (no splitter) ----
+    // ---- Central single layout ----
     auto* central = new QWidget(this);
     auto* v = new QVBoxLayout(central);
     v->setContentsMargins(12,12,12,12);
     v->setSpacing(12);
     setCentralWidget(central);
 
-    // TOP: draggable tiles (compact)
+    // Empty state overlay
+    emptyState_ = new QWidget(central);
+    auto* ev = new QVBoxLayout(emptyState_);
+    ev->setContentsMargins(20,40,20,40);
+    ev->setSpacing(12);
+    auto* title = new QLabel("<b>No channels yet</b>", emptyState_);
+    auto* desc  = new QLabel("Click <i>Setup</i> to detect sensors and calibrate fans.", emptyState_);
+    btnEmptySetup_ = new QPushButton("Setup", emptyState_);
+    btnEmptySetup_->setFixedWidth(120);
+    ev->addWidget(title, 0, Qt::AlignHCenter);
+    ev->addWidget(desc, 0, Qt::AlignHCenter);
+    ev->addWidget(btnEmptySetup_, 0, Qt::AlignHCenter);
+    connect(btnEmptySetup_, &QPushButton::clicked, this, &MainWindow::detect);
+    v->addWidget(emptyState_);
+
+    // TOP: draggable tiles
     channelsList_ = new QListWidget(this);
     channelsList_->setViewMode(QListView::IconMode);
     channelsList_->setMovement(QListView::Snap);
@@ -114,41 +126,28 @@ MainWindow::MainWindow(QWidget* parent)
     channelsList_->setResizeMode(QListView::Adjust);
     channelsList_->setWrapping(true);
     channelsList_->setSpacing(10);
-    channelsList_->setGridSize(QSize(280, 110)); // compact like FanControl
+    channelsList_->setGridSize(QSize(280, 110));
     v->addWidget(channelsList_);
 
-    // SENSORS: collapsible panel (hidden by default)
-    auto* sensorsPanel = new CollapsiblePanel("Sensors", this);
-    sensorsPanel_ = sensorsPanel;
-    sensorsPanel_->setVisible(false); // hidden until user opens via Detect/Refresh result or future toggle
-    QWidget* body = sensorsPanel->body();
-    auto* vb = qobject_cast<QVBoxLayout*>(body->layout());
-    if (!vb) vb = new QVBoxLayout(body);
-    btnApplyHide_ = new QPushButton("Apply Hide", body);
+    // Sensors panel hidden by default (can be shown after setup)
+    sensorsPanel_ = new QWidget(this);
+    auto* spLay = new QVBoxLayout(sensorsPanel_);
+    spLay->setContentsMargins(0,0,0,0);
+    spLay->setSpacing(8);
+    btnApplyHide_ = new QPushButton("Apply Hide", sensorsPanel_);
     connect(btnApplyHide_, &QPushButton::clicked, this, &MainWindow::applyHideSensors);
-    vb->addWidget(btnApplyHide_, 0, Qt::AlignLeft);
-    auto* cont = new QWidget(body);
+    spLay->addWidget(btnApplyHide_, 0, Qt::AlignLeft);
+    auto* cont = new QWidget(sensorsPanel_);
     sensorsGrid_ = new QGridLayout(cont);
     sensorsGrid_->setContentsMargins(0,0,0,0);
     sensorsGrid_->setHorizontalSpacing(10);
     sensorsGrid_->setVerticalSpacing(10);
-    vb->addWidget(cont);
+    spLay->addWidget(cont);
+    sensorsPanel_->setVisible(false);
     v->addWidget(sensorsPanel_);
 
-    // BOTTOM (Curves/Mix/Triggers): start hidden unless we have channels
-    curvesArea_ = new QScrollArea(this);
-    curvesArea_->setWidgetResizable(true);
-    curvesWrap_ = new QWidget(curvesArea_);
-    curvesGrid_ = new QGridLayout(curvesWrap_);
-    curvesGrid_->setContentsMargins(0,0,0,0);
-    curvesGrid_->setHorizontalSpacing(10);
-    curvesGrid_->setVerticalSpacing(10);
-    curvesArea_->setWidget(curvesWrap_);
-    curvesArea_->setVisible(false);
-    v->addWidget(curvesArea_);
-
     resize(1280, 900);
-    applyBlueTheme(true); // start in dark blue
+    applyBlueTheme(true);
     actTheme_->setText("Light Mode");
 
     connect(tw_, &TelemetryWorker::tickReady, this, &MainWindow::onTelemetry);
@@ -164,7 +163,6 @@ void MainWindow::switchTheme() {
     applyBlueTheme(isDark_);
     actTheme_->setText(isDark_ ? "Light Mode" : "Dark Mode");
 
-    // re-apply tile stylesheet for all tiles
     for (int i = 0; i < channelsList_->count(); ++i) {
         if (auto* w = channelsList_->itemWidget(channelsList_->item(i))) {
             if (w->objectName() == "fanTile") {
@@ -184,7 +182,6 @@ void MainWindow::stopEngine() {
 }
 
 void MainWindow::applyHideSensors() {
-    // rebuild grid skipping hiddenSensors_
     for (int i = sensorsGrid_->count() - 1; i >= 0; --i) {
         auto* it = sensorsGrid_->takeAt(i);
         if (auto* w = it->widget()) { w->hide(); w->deleteLater(); }
@@ -198,7 +195,6 @@ void MainWindow::applyHideSensors() {
         QString label = s.value("label").toString();
         if (hiddenSensors_.contains(label)) continue;
 
-        // small checkbox row
         auto* roww = new QWidget;
         roww->setObjectName("sensorRow");
         auto* h = new QHBoxLayout(roww);
@@ -215,10 +211,15 @@ void MainWindow::applyHideSensors() {
     }
 }
 
-static QWidget* makeFanTileWidget(const QJsonObject& ch, bool dark) {
-    auto* tile = new FanTile();
+void MainWindow::showEmptyState(bool on) {
+    emptyState_->setVisible(on);
+    channelsList_->setVisible(!on);
+}
+
+QWidget* MainWindow::makeFanTileWidget(const QJsonObject& ch) {
+    auto* tile = new FanTile(this);
     tile->setObjectName("fanTile");
-    tile->setStyleSheet(tileStyle(dark));
+    tile->setStyleSheet(tileStyle(isDark_));
     tile->setTitle(ch.value("name").toString());
     tile->setSensor(ch.value("sensor").toString());
     return tile;
@@ -227,12 +228,15 @@ static QWidget* makeFanTileWidget(const QJsonObject& ch, bool dark) {
 void MainWindow::rebuildChannels(const QJsonArray& channels) {
     channelsList_->clear();
     chItems_.clear();
+    chCards_.clear();
+
+    showEmptyState(channels.isEmpty());
 
     for (const auto& it : channels) {
         auto obj = it.toObject();
         const QString id = obj.value("id").toString();
 
-        auto* tile = makeFanTileWidget(obj, isDark_);
+        auto* tile = makeFanTileWidget(obj);
 
         auto* item = new QListWidgetItem();
         item->setSizeHint(QSize(270, 100));
@@ -240,25 +244,15 @@ void MainWindow::rebuildChannels(const QJsonArray& channels) {
         channelsList_->addItem(item);
         channelsList_->setItemWidget(item, tile);
 
-        // store refs for telemetry
         ChannelCardRefs refs; refs.card = tile;
         chCards_[id] = refs;
+        chItems_.insert(id, item);
     }
-
-    // Show curves panel only if we have channels configured
-    curvesArea_->setVisible(channels.size() > 0);
 }
 
 void MainWindow::rebuildSensors(const QJsonArray& sensors) {
     sensorsCache_ = sensors;
-    // keep sensors panel hidden by default; user can show via future toggle, or we show it after Detect
-    // Nothing to do here unless you want it visible: sensorsPanel_->setVisible(true);
-}
-
-void MainWindow::rebuildCurves(const QJsonArray& channels) {
-    // placeholder: keep hidden unless channels available
-    if (channels.isEmpty()) return;
-    // minimal placeholder tiles removed to keep lower area compact initially
+    // only show after Setup/Refresh if needed
 }
 
 QString MainWindow::chooseSensorForPwm(const QString& pwmLabel, const QJsonArray& sensors) const {
@@ -282,18 +276,22 @@ QString MainWindow::chooseSensorForPwm(const QString& pwmLabel, const QJsonArray
 }
 
 void MainWindow::detect() {
-    // Run daemon-side full auto-setup (perturbation+calibration)
-    auto res = rpc_->call("detectCalibrate");
-    if (!res.contains("result")) {
-        statusBar()->showMessage("detectCalibrate failed", 1800);
+    DetectDialog dlg(rpc_, this);
+    if (dlg.exec() != QDialog::Accepted) {
+        statusBar()->showMessage("Setup cancelled", 1500);
         return;
     }
-    auto r = res["result"].toObject();
-    auto sensors = r.value("sensors").toArray();
-    auto pwms    = r.value("pwms").toArray();
-    auto mapping = r.value("mapping").toObject();
+    auto res = dlg.result();
+    if (res.isEmpty()) {
+        statusBar()->showMessage("Setup failed", 1500);
+        return;
+    }
 
-    // create channels batch based on mapping
+    auto sensors = res.value("sensors").toArray();
+    auto pwms    = res.value("pwms").toArray();
+    auto mapping = res.value("mapping").toObject();
+
+    // Create channels in batch
     QJsonArray batch;
     int idCounter = 1;
     for (const auto& it : pwms) {
@@ -318,12 +316,10 @@ void MainWindow::detect() {
     if (!batch.isEmpty()) {
         rpc_->callBatch(batch);
         rpc_->call("engineStart");
-        statusBar()->showMessage("Detection done, engine started", 1800);
+        statusBar()->showMessage("Setup completed, engine started", 1800);
     }
 
-    // Update UI caches; show sensors panel so user can hide some
-    sensorsPanel_->setVisible(true);
-    rebuildSensors(sensors);
+    sensorsPanel_->setVisible(true);   // allow user to hide some sensors
     refresh();
 }
 
@@ -332,15 +328,12 @@ void MainWindow::refresh() {
     if (e.contains("result")) {
         auto r = e["result"].toObject();
         rebuildSensors(r.value("sensors").toArray());
+
         auto ch = rpc_->listChannels();
-        if (ch.isEmpty()) {
-            // No config → run auto-setup once
-            detect();
-            return;
-        }
         rebuildChannels(ch);
     } else {
         statusBar()->showMessage("daemon not reachable", 1500);
+        showEmptyState(true);
     }
 }
 

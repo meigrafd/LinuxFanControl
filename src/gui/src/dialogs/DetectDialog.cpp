@@ -3,118 +3,156 @@
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QPlainTextEdit>
+#include <QProgressBar>
+#include <QLabel>
 #include <QPushButton>
-#include <QHeaderView>
-#include <QTableWidget>
-#include <QTableWidgetItem>
-#include <QCheckBox>
-#include <QMetaObject>
+#include <QThread>
+#include <QTimer>
+
+class DetectWorker : public QObject {
+    Q_OBJECT
+public:
+    explicit DetectWorker(RpcClient* rpc, QObject* parent=nullptr) : QObject(parent), rpc_(rpc) {}
+
+public slots:
+    void run() {
+        emit log("Detecting sensors & PWM outputs…");
+        // Single blocking RPC — we run it in this thread to avoid UI freeze.
+        auto res = rpc_->call("detectCalibrate");
+        if (!res.contains("result")) {
+            emit failed("detectCalibrate failed");
+            return;
+        }
+        emit log("Detection + calibration finished.");
+        emit finished(res.value("result").toObject());
+    }
+
+signals:
+    void log(const QString& line);
+    void finished(const QJsonObject& res);
+    void failed(const QString& err);
+
+private:
+    RpcClient* rpc_{nullptr};
+};
 
 DetectDialog::DetectDialog(RpcClient* rpc, QWidget* parent)
-: QDialog(parent), rpc_(rpc)
-{
+: QDialog(parent), rpc_(rpc) {
+    setWindowTitle("Auto-Setup (Detect & Calibrate)");
+    resize(720, 420);
     buildUi();
-    onRefresh();
+}
+
+DetectDialog::~DetectDialog() {
+    if (thread_) {
+        thread_->quit();
+        thread_->wait(3000);
+        thread_->deleteLater();
+    }
 }
 
 void DetectDialog::buildUi() {
-    setWindowTitle("Detect Devices");
-
     auto* v = new QVBoxLayout(this);
 
-    tbl_ = new QTableWidget(this);
-    tbl_->setColumnCount(6);
-    tbl_->setHorizontalHeaderLabels(QStringList() << "Use" << "Label" << "PWM" << "Enable" << "Tach" << "Sensor Type");
-    tbl_->horizontalHeader()->setStretchLastSection(true);
-    tbl_->verticalHeader()->setVisible(false);
-    tbl_->setSelectionMode(QAbstractItemView::NoSelection);
-    v->addWidget(tbl_);
+    lblStatus_ = new QLabel("Idle", this);
+    bar_ = new QProgressBar(this);
+    bar_->setRange(0, 0); // indeterminate
+    bar_->setTextVisible(false);
+    bar_->setVisible(false);
+
+    log_ = new QPlainTextEdit(this);
+    log_->setReadOnly(true);
+    log_->setMinimumHeight(260);
 
     auto* h = new QHBoxLayout();
-    btnRefresh_ = new QPushButton("Refresh", this);
-    btnOk_      = new QPushButton("OK", this);
-    btnCancel_  = new QPushButton("Cancel", this);
-    h->addWidget(btnRefresh_);
     h->addStretch(1);
+    btnStart_ = new QPushButton("Start", this);
+    btnCancel_ = new QPushButton("Close", this);
+    h->addWidget(btnStart_);
     h->addWidget(btnCancel_);
-    h->addWidget(btnOk_);
+
+    v->addWidget(lblStatus_);
+    v->addWidget(bar_);
+    v->addWidget(log_);
     v->addLayout(h);
 
-    connect(btnRefresh_, &QPushButton::clicked, this, &DetectDialog::onRefresh);
-    connect(btnCancel_,  &QPushButton::clicked, this, &DetectDialog::reject);
-    connect(btnOk_,      &QPushButton::clicked, this, &DetectDialog::onAccept);
+    connect(btnStart_,  &QPushButton::clicked, this, &DetectDialog::onStart);
+    connect(btnCancel_, &QPushButton::clicked, this, &DetectDialog::onCancel);
 }
 
-void DetectDialog::onRefresh() {
-    if (!rpc_) return;
+void DetectDialog::onStart() {
+    if (running_) return;
 
-    // Use timeout overload; avoid capturing unique_ptr in lambda:
-    auto res = rpc_->call("enumerate", QJsonObject{}, /*timeout*/ 6000, static_cast<std::string*>(nullptr));
-    if (!res) return;
+    running_ = true;
+    lblStatus_->setText("Running…");
+    bar_->setVisible(true);
+    btnStart_->setEnabled(false);
+    btnCancel_->setText("Cancel");
 
-    // Copy QJsonObject before posting to GUI thread
-    QJsonObject obj = *res;
+    // Worker thread
+    thread_ = new QThread(this);
+    worker_ = new DetectWorker(rpc_);
+    worker_->moveToThread(thread_);
 
-    QMetaObject::invokeMethod(this, [this, obj]() {
-        if (!obj.contains("result") || !obj["result"].isObject()) return;
-        populate(obj["result"].toObject());
-    }, Qt::QueuedConnection);
+    connect(thread_, &QThread::started, worker_, &DetectWorker::run);
+    connect(worker_, &DetectWorker::log, this, &DetectDialog::onWorkerLog);
+    connect(worker_, &DetectWorker::finished, this, &DetectDialog::onWorkerFinished);
+    connect(worker_, &DetectWorker::failed, this, &DetectDialog::onWorkerFailed);
+    connect(worker_, &DetectWorker::finished, worker_, &DetectWorker::deleteLater);
+    connect(worker_, &DetectWorker::failed,   worker_, &DetectWorker::deleteLater);
+    connect(thread_, &QThread::finished, thread_, &QThread::deleteLater);
+
+    thread_->start();
+    onWorkerLog("Starting detection… this may take a few minutes.");
 }
 
-void DetectDialog::populate(const QJsonObject& enumerateResult) {
-    sensors_ = enumerateResult.value("sensors").toArray();
-    pwms_    = enumerateResult.value("pwms").toArray();
-
-    tbl_->setRowCount(0);
-    for (const auto& v : pwms_) {
-        const auto p = v.toObject();
-        const QString label  = p.value("label").toString();
-        const QString pwm    = p.value("pwm").toString();
-        const QString enable = p.value("enable").toString();
-        const QString tach   = p.value("tach").toString();
-
-        const int r = tbl_->rowCount();
-        tbl_->insertRow(r);
-
-        auto* chk = new QCheckBox(this);
-        chk->setChecked(true);
-        tbl_->setCellWidget(r, 0, chk);
-
-        tbl_->setItem(r, 1, new QTableWidgetItem(label));
-        tbl_->setItem(r, 2, new QTableWidgetItem(pwm));
-        tbl_->setItem(r, 3, new QTableWidgetItem(enable));
-        tbl_->setItem(r, 4, new QTableWidgetItem(tach));
-        // Simple sensor type guess (match by device folder name prefix)
-        QString sensType = "Unknown";
-        if (label.contains("amdgpu", Qt::CaseInsensitive)) sensType = "GPU";
-        else if (label.contains("k10temp", Qt::CaseInsensitive) || label.contains("coretemp", Qt::CaseInsensitive)) sensType = "CPU";
-        tbl_->setItem(r, 5, new QTableWidgetItem(sensType));
+void DetectDialog::onCancel() {
+    if (!running_) {
+        reject();
+        return;
     }
-
-    tbl_->resizeColumnsToContents();
+    // The current daemon RPC is blocking; we can't cancel mid-flight.
+    // Communicate this clearly and wait until it returns.
+    onWorkerLog("Cancel requested: current phase will finish, then dialog closes.");
+    btnCancel_->setEnabled(false);
 }
 
-QJsonArray DetectDialog::selectedPwms() const {
-    QJsonArray out;
-    for (int r = 0; r < tbl_->rowCount(); ++r) {
-        auto* w = tbl_->cellWidget(r, 0);
-        auto* chk = qobject_cast<QCheckBox*>(w);
-        if (chk && chk->isChecked()) {
-            QJsonObject o;
-            o["label"]  = tbl_->item(r, 1)->text();
-            o["pwm"]    = tbl_->item(r, 2)->text();
-            o["enable"] = tbl_->item(r, 3)->text();
-            o["tach"]   = tbl_->item(r, 4)->text();
-            out.push_back(o);
-        }
+void DetectDialog::onWorkerLog(const QString& line) {
+    log_->appendPlainText(line);
+}
+
+void DetectDialog::onWorkerFinished(const QJsonObject& res) {
+    running_ = false;
+    result_ = res;
+    lblStatus_->setText("Completed");
+    bar_->setVisible(false);
+    btnCancel_->setText("Close");
+    btnCancel_->setEnabled(true);
+
+    if (thread_) {
+        thread_->quit();
+        thread_->wait(3000);
+        thread_->deleteLater();
+        thread_ = nullptr;
     }
-    return out;
-}
-
-QJsonArray DetectDialog::sensors() const {
-    return sensors_;
-}
-
-void DetectDialog::onAccept() {
     accept();
+}
+
+void DetectDialog::onWorkerFailed(const QString& err) {
+    running_ = false;
+    lblStatus_->setText("Failed");
+    bar_->setVisible(false);
+    onWorkerLog(err);
+    btnStart_->setEnabled(true);
+    btnCancel_->setText("Close");
+    btnCancel_->setEnabled(true);
+
+    if (thread_) {
+        thread_->quit();
+        thread_->wait(3000);
+        thread_->deleteLater();
+        thread_ = nullptr;
+    }
+    reject();
 }
