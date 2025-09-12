@@ -1,5 +1,5 @@
 #pragma once
-// MainWindow — dashboard-style UI with tiles/cards.
+// MainWindow — dashboard-style UI with draggable tiles for channels.
 // Comments in English (per project), UI strings currently English.
 // Provides: Detect, Start/Stop engine, Dark/Light switch, Sensors hide/apply.
 
@@ -16,6 +16,8 @@ class QLabel;
 class QComboBox;
 class QGridLayout;
 class QPushButton;
+class QListWidget;
+class QListWidgetItem;
 
 class RpcClient;
 class TelemetryWorker;
@@ -35,8 +37,8 @@ public:
     ~MainWindow();
 
 private slots:
-    void refresh();              // refresh tiles from enumerate()
-    void detect();               // open detect dialog, create channels, start engine
+    void refresh();              // refresh from enumerate(); auto-detect if no channels
+    void detect();               // enumerate -> createChannel (batch) -> engineStart
     void startEngine();
     void stopEngine();
     void switchTheme();
@@ -53,21 +55,22 @@ private:
     void rebuildSensors(const QJsonArray& sensors);
     void rebuildChannels(const QJsonArray& channels);
 
-    // basic heuristic: choose a sensor path for a given pwm label
-    QString chooseSensorForPwm(const QString& pwmLabel,
-                               const QJsonArray& sensors) const;
+    QString chooseSensorForPwm(const QString& pwmLabel, const QJsonArray& sensors) const;
 
 private:
     RpcClient*       rpc_{};
     TelemetryWorker* tw_{};
 
     QSplitter*   splitter_{};
-    QScrollArea* saTop_{};
+
+    // TOP: draggable tiles
+    QListWidget* channelsList_{};
+
+    // BOTTOM: sensors with hide/apply
     QScrollArea* saBottom_{};
-    QWidget*     wrapTop_{};
     QWidget*     wrapBottom_{};
-    QGridLayout* gridTop_{};
     QGridLayout* gridBottom_{};
+    QPushButton* btnApplyHide_{};
 
     QAction*     actDetect_{};
     QAction*     actRefresh_{};
@@ -75,15 +78,11 @@ private:
     QAction*     actStop_{};
     QAction*     actTheme_{};
 
-    // sensor hiding
-    QPushButton* btnApplyHide_{};
-    QSet<QString> hiddenSensors_;         // by sensor "label"
-    QMap<QString, QWidget*> sensorCards_; // label -> card widget
+    QSet<QString> hiddenSensors_;           // by sensor label
+    QMap<QString, QWidget*> sensorCards_;   // label -> card
+    QMap<QString, ChannelCardRefs> chCards_;// channel id -> refs
+    QMap<QString, QListWidgetItem*> chItems_;// channel id -> list item
 
-    // channel tiles
-    QMap<QString, ChannelCardRefs> chCards_;  // id -> refs
-
-    // cache
     QJsonArray sensorsCache_;
     QJsonArray pwmsCache_;
     bool isDark_{false};

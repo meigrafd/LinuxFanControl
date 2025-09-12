@@ -1,7 +1,7 @@
 #pragma once
 // Daemon interface expected by src/daemon/src/main.cpp
-// - init(): bind/listen on Unix domain socket
-// - pumpOnce(timeout_ms): accept+serve exactly one client (or timeout), return true while running
+// - init(): bind/listen on Unix domain socket (single-instance guard)
+// - pumpOnce(timeout_ms): accept+serve exactly one client (or timeout)
 // - shutdown(): close & unlink socket
 // Comments in English per project preference.
 
@@ -17,9 +17,9 @@ public:
     Daemon();
     ~Daemon();
 
-    bool init();                 // bind/listen
-    bool pumpOnce(int timeoutMs);// accept one client with timeout; true => keep looping
-    void shutdown();             // stop server
+    bool init();                  // bind/listen (returns false if another instance is running)
+    bool pumpOnce(int timeoutMs); // accept one client with timeout; true => keep looping
+    void shutdown();              // stop server
 
 private:
     // RPC plumbing
@@ -41,10 +41,14 @@ private:
     static nlohmann::json error_obj(const nlohmann::json& id, int code, const std::string& msg);
     static nlohmann::json result_obj(const nlohmann::json& id, const nlohmann::json& result);
 
+    // single-instance helpers
+    bool isAlreadyRunning() const; // try connect to existing socket
+
 private:
     std::string  sockPath_;
     int          srvFd_;
     std::atomic<bool> running_;
+    bool         debug_; // controlled by env LFC_DEBUG
 
     // owned components
     Hwmon*  hw_;

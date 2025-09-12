@@ -20,25 +20,32 @@
 #include <QSpacerItem>
 #include <QCheckBox>
 #include <QPalette>
+#include <QListWidget>
+#include <QListView>
+#include <QAbstractItemView>
+#include <QHBoxLayout>
 
 static QString cardStyle(bool dark) {
-    // subtle shadow-look via border + bg
     if (dark) {
         return QStringLiteral(
             "QFrame {"
             "  background:#2f2f2f;"
             "  border:1px solid #444;"
-            "  border-radius:12px;"
+            "  border-radius:14px;"
+            "  padding:10px;"
             "}"
-            "QLabel { color:#e8e8e8; }");
+            "QLabel { color:#e8e8e8; font-size:14px; }"
+            "QLabel#tileTitle { font-weight:600; font-size:16px; }");
     } else {
         return QStringLiteral(
             "QFrame {"
             "  background:#ffffff;"
             "  border:1px solid #d0d0d0;"
-            "  border-radius:12px;"
+            "  border-radius:14px;"
+            "  padding:10px;"
             "}"
-            "QLabel { color:#222; }");
+            "QLabel { color:#222; font-size:14px; }"
+            "QLabel#tileTitle { font-weight:600; font-size:16px; }");
     }
 }
 
@@ -50,10 +57,8 @@ MainWindow::MainWindow(QWidget* parent)
     buildUi();
     resize(1280, 900);
 
-    // initial refresh after UI is up
     QTimer::singleShot(120, this, &MainWindow::refresh);
 
-    // telemetry feed
     connect(tw_, &TelemetryWorker::tickReady, this, &MainWindow::onTelemetry);
     tw_->start(1000);
 }
@@ -67,7 +72,7 @@ void MainWindow::buildUi() {
     actRefresh_ = new QAction("Refresh", this);
     actStart_   = new QAction("Start", this);
     actStop_    = new QAction("Stop", this);
-    actTheme_   = new QAction("Light Mode", this); // starts dark=false => offer Light
+    actTheme_   = new QAction("Light Mode", this);
 
     connect(actDetect_,  &QAction::triggered, this, &MainWindow::detect);
     connect(actRefresh_, &QAction::triggered, this, &MainWindow::refresh);
@@ -87,18 +92,18 @@ void MainWindow::buildUi() {
     splitter_->setOrientation(Qt::Vertical);
     setCentralWidget(splitter_);
 
-    // TOP (Channels / Fans)
-    saTop_ = new QScrollArea(this);
-    saTop_->setWidgetResizable(true);
-    wrapTop_ = new QWidget(this);
-    gridTop_ = new QGridLayout(wrapTop_);
-    gridTop_->setContentsMargins(12,12,12,12);
-    gridTop_->setHorizontalSpacing(12);
-    gridTop_->setVerticalSpacing(12);
-    saTop_->setWidget(wrapTop_);
-    splitter_->addWidget(saTop_);
+    // TOP: draggable channel tiles using QListWidget in IconMode
+    channelsList_ = new QListWidget(this);
+    channelsList_->setViewMode(QListView::IconMode);
+    channelsList_->setMovement(QListView::Snap);
+    channelsList_->setDragDropMode(QAbstractItemView::InternalMove);
+    channelsList_->setResizeMode(QListView::Adjust);
+    channelsList_->setWrapping(true);
+    channelsList_->setSpacing(14);
+    channelsList_->setGridSize(QSize(360, 150)); // tile footprint
+    splitter_->addWidget(channelsList_);
 
-    // BOTTOM (Sensors overview with hide-apply)
+    // BOTTOM (Sensors overview with hide/apply)
     saBottom_ = new QScrollArea(this);
     saBottom_->setWidgetResizable(true);
     wrapBottom_ = new QWidget(this);
@@ -131,8 +136,6 @@ void MainWindow::clearGrid(QGridLayout* g) {
     }
 }
 
-// ---------------- Theme ----------------
-
 void MainWindow::switchTheme() {
     isDark_ = !isDark_;
     if (isDark_) {
@@ -152,16 +155,16 @@ void MainWindow::switchTheme() {
         actTheme_->setText("Dark Mode");
     }
 
-    // restyle cards
-    for (auto& ref : chCards_) {
-        if (ref.card) ref.card->setStyleSheet(cardStyle(isDark_));
+    // restyle existing tiles
+    for (auto it = chCards_.begin(); it != chCards_.end(); ++it) {
+        if (it.value().card) it.value().card->setStyleSheet(cardStyle(isDark_));
     }
     for (auto it = sensorCards_.begin(); it != sensorCards_.end(); ++it) {
         if (it.value()) it.value()->setStyleSheet(cardStyle(isDark_));
     }
 }
 
-// --------------- Sensor / Channel cards ----------------
+// ---------------- tiles ----------------
 
 QWidget* MainWindow::makeSensorCard(const QJsonObject& s, bool checked) {
     auto* card = new QFrame;
@@ -181,6 +184,7 @@ QWidget* MainWindow::makeSensorCard(const QJsonObject& s, bool checked) {
     chk->setToolTip("Check to keep this sensor visible. Click 'Apply Hide' to hide unchecked.");
     top->addWidget(chk);
     auto* name = new QLabel(QString("<b>%1</b>").arg(label), card);
+    name->setObjectName("tileTitle");
     name->setTextFormat(Qt::RichText);
     top->addWidget(name, 1);
     v->addLayout(top);
@@ -188,7 +192,6 @@ QWidget* MainWindow::makeSensorCard(const QJsonObject& s, bool checked) {
     v->addWidget(new QLabel(QString("type: %1").arg(type), card));
     v->addWidget(new QLabel(QString("path: %1").arg(path), card));
 
-    // Track state through widget property (label as key)
     card->setProperty("sensorLabel", label);
     chk->setProperty("sensorLabel", label);
     connect(chk, &QCheckBox::toggled, this, [this, label](bool on){
@@ -208,6 +211,7 @@ QWidget* MainWindow::makeChannelCard(const QJsonObject& ch) {
     auto* v = new QVBoxLayout(card);
 
     auto* name = new QLabel(QString("<b>%1</b>").arg(ch.value("name").toString()), card);
+    name->setObjectName("tileTitle");
     name->setTextFormat(Qt::RichText);
 
     auto* sensor = new QLabel(QString("sensor: %1").arg(ch.value("sensor").toString()), card);
@@ -219,7 +223,6 @@ QWidget* MainWindow::makeChannelCard(const QJsonObject& ch) {
     v->addWidget(duty);
     v->addWidget(temp);
 
-    // store refs
     const QString id = ch.value("id").toString();
     chCards_[id] = ChannelCardRefs{card, name, sensor, duty, temp};
     return card;
@@ -251,7 +254,6 @@ QString MainWindow::chooseSensorForPwm(const QString& pwmLabel, const QJsonArray
 // ---------------------- Actions ------------------------
 
 void MainWindow::applyHideSensors() {
-    // rebuild bottom grid, skipping hidden labels
     clearGrid(gridBottom_);
     int cols = 4, row=0, col=0;
     sensorCards_.clear();
@@ -278,7 +280,6 @@ void MainWindow::stopEngine() {
 }
 
 void MainWindow::detect() {
-    // Pull enumerate
     auto e = rpc_->enumerate();
     if (!e.contains("result")) {
         statusBar()->showMessage("enumerate failed", 1500);
@@ -323,7 +324,7 @@ void MainWindow::detect() {
 }
 
 void MainWindow::refresh() {
-    // Enumerate for sensors + pwms list
+    // enumerate: sensors + pwms
     auto e = rpc_->enumerate();
     if (e.contains("result")) {
         auto r = e["result"].toObject();
@@ -331,10 +332,9 @@ void MainWindow::refresh() {
         pwmsCache_    = r.value("pwms").toArray();
         rebuildSensors(sensorsCache_);
 
-        // If no channels exist yet, offer detection automatically
+        // If no channels exist yet, run detection once
         auto ch = rpc_->listChannels();
         if (ch.isEmpty() && !pwmsCache_.isEmpty()) {
-            // auto-detect once
             detect();
             return;
         }
@@ -345,11 +345,10 @@ void MainWindow::refresh() {
 }
 
 void MainWindow::onTelemetry(const QJsonArray& channels) {
-    // Update existing cards with duty/temp
+    // Update tile labels for duty/temp
     for (const auto& it : channels) {
         const auto ch = it.toObject();
         const QString id   = ch.value("id").toString();
-        const double duty  = ch.value("manual").toDouble(); // read mode-agnostic? fallback to last_out?
         const double lastOut  = ch.contains("last_out")  ? ch["last_out"].toDouble()  : NAN;
         const double lastTemp = ch.contains("last_temp") ? ch["last_temp"].toDouble() : NAN;
 
@@ -359,17 +358,12 @@ void MainWindow::onTelemetry(const QJsonArray& channels) {
 
         if (std::isfinite(lastOut))
             refs.duty->setText(QString("duty: %1 %").arg(QString::number(lastOut, 'f', 0)));
-        else
-            refs.duty->setText(QString("duty: %1 %").arg(QString::number(duty, 'f', 0)));
-
         if (std::isfinite(lastTemp))
             refs.temp->setText(QString("temp: %1 °C").arg(QString::number(lastTemp, 'f', 1)));
-        else
-            refs.temp->setText(QString("temp: -- °C"));
     }
 }
 
-// --------------- Rebuild sections ----------------------
+// ---------------- rebuild sections ---------------------
 
 void MainWindow::rebuildSensors(const QJsonArray& sensors) {
     clearGrid(gridBottom_);
@@ -385,19 +379,28 @@ void MainWindow::rebuildSensors(const QJsonArray& sensors) {
         if (checked) {
             gridBottom_->addWidget(w, row, col);
             if (++col >= cols) { col=0; ++row; }
-        } // unchecked remain not added; press "Apply Hide" to rebuild quickly
+        }
     }
 }
 
 void MainWindow::rebuildChannels(const QJsonArray& channels) {
-    clearGrid(gridTop_);
+    channelsList_->clear();
     chCards_.clear();
+    chItems_.clear();
 
-    int cols = 3, row=0, col=0;
     for (const auto& it : channels) {
         auto obj = it.toObject();
-        auto* w = makeChannelCard(obj);
-        gridTop_->addWidget(w, row, col);
-        if (++col >= cols) { col=0; ++row; }
+        const QString id = obj.value("id").toString();
+
+        // create tile widget
+        QWidget* tile = makeChannelCard(obj);
+
+        // host it in a QListWidgetItem
+        auto* item = new QListWidgetItem();
+        item->setSizeHint(QSize(340, 130)); // inner size (card margin is inside)
+        item->setData(Qt::UserRole, id);
+        channelsList_->addItem(item);
+        channelsList_->setItemWidget(item, tile);
+        chItems_.insert(id, item);
     }
 }

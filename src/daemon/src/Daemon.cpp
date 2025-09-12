@@ -62,11 +62,24 @@ static bool read_line(int fd, std::string& out) {
     return true;
 }
 
+static bool try_connect(const std::string& sockPath) {
+    int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return false;
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    std::snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", sockPath.c_str());
+    bool ok = (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0);
+    if (ok) ::shutdown(fd, SHUT_RDWR);
+    ::close(fd);
+    return ok;
+}
+
 // -------------------- lifecycle ------------------------
 Daemon::Daemon()
 : sockPath_(getenv_or("LFC_SOCK", "/tmp/lfcd.sock"))
 , srvFd_(-1)
 , running_(false)
+, debug_(std::getenv("LFC_DEBUG") != nullptr)
 , hw_(new Hwmon())
 , engine_(new Engine()) {
 }
@@ -77,10 +90,21 @@ Daemon::~Daemon() {
     delete hw_;
 }
 
+bool Daemon::isAlreadyRunning() const {
+    // if a server is already bound/accepting on the socket, connecting will succeed
+    return try_connect(sockPath_);
+}
+
 bool Daemon::init() {
     if (running_) return true;
 
-    // remove stale socket
+    // single-instance guard
+    if (isAlreadyRunning()) {
+        std::fprintf(stderr, "[daemon] another instance is already running at %s\n", sockPath_.c_str());
+        return false;
+    }
+
+    // remove stale socket if present
     ::unlink(sockPath_.c_str());
 
     srvFd_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
@@ -140,6 +164,10 @@ bool Daemon::pumpOnce(int timeoutMs) {
     bool have = read_line(cfd, line);
     if (!have) { ::close(cfd); return true; }
 
+    if (debug_) {
+        std::fprintf(stderr, "[daemon] RX: %s\n", line.c_str());
+    }
+
     json reply;
     try {
         json req = json::parse(line);
@@ -158,6 +186,9 @@ bool Daemon::pumpOnce(int timeoutMs) {
     }
 
     const std::string payload = reply.dump() + "\n";
+    if (debug_) {
+        std::fprintf(stderr, "[daemon] TX: %s", payload.c_str());
+    }
     write_all(cfd, payload.data(), payload.size());
     ::close(cfd);
     return true;
@@ -193,10 +224,10 @@ json Daemon::dispatch(const json& req) {
     const json params = (itP == req.end() ? json::object() : *itP);
 
     try {
-        if (method == "ping")        return result_obj(id, json{{"pong", true}});
-        if (method == "version")     return result_obj(id, json{{"name","lfcd"},{"protocol","jsonrpc2-batch"},{"version","1.0"}});
-        if (method == "enumerate")   return result_obj(id, rpcEnumerate());
-        if (method == "listChannels")return result_obj(id, rpcListChannels());
+        if (method == "ping")         return result_obj(id, json{{"pong", true}});
+        if (method == "version")      return result_obj(id, json{{"name","lfcd"},{"protocol","jsonrpc2-batch"},{"version","1.0"}});
+        if (method == "enumerate")    return result_obj(id, rpcEnumerate());
+        if (method == "listChannels") return result_obj(id, rpcListChannels());
 
         if (method == "createChannel") {
             const std::string name   = params.value("name",   "");
@@ -311,7 +342,9 @@ json Daemon::rpcListChannels() {
             {"manual", c.manual_pct},
             {"hyst",   c.hyst_c},
             {"tau",    c.tau_s},
-            {"curve",  pts}
+            {"curve",  pts},
+            {"last_out",  c.last_out},
+            {"last_temp", c.last_temp}
         });
     }
     return arr;
