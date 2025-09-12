@@ -1,130 +1,58 @@
 #include "CurveEditor.h"
 #include <QPainter>
-#include <QMouseEvent>
 #include <algorithm>
-
-static QPoint clampPt(const QPoint& p, int minv=0, int maxv=100) {
-    return QPoint(std::clamp(p.x(), minv, maxv), std::clamp(p.y(), minv, maxv));
-}
+#include <cmath>
 
 CurveEditor::CurveEditor(QWidget* parent) : QWidget(parent) {
-    setMinimumSize(360, 220);
-    setPoints({{20,20},{35,25},{50,50},{70,80}});
+    setMinimumSize(320, 180);
+    graphRect_ = QRectF(30, 10, 280, 140);
+    pts_ = { QPointF(20,20), QPointF(40,40), QPointF(60,60), QPointF(80,100) };
+    ensureOrder();
 }
 
-void CurveEditor::setPoints(const QVector<QPointF>& pts) {
-    pts_.clear();
-    for (auto& p : pts) pts_.push_back(QPoint((int)p.x(), (int)p.y()));
+void CurveEditor::setPoints(const QList<QPointF>& p) {
+    pts_ = p;
     ensureOrder();
     update();
 }
 
 void CurveEditor::ensureOrder() {
-    std::sort(pts_.begin(), pts_.end(), [](const QPoint& a, const QPoint& b){ return a.x() < b.x(); });
-}
-
-QPoint CurveEditor::mapToGraph(const QPoint& p) const {
-    const int lm=40, tm=10, rm=10, bm=30;
-    int w = width()-lm-rm, h=height()-tm-bm;
-    if (w<=0||h<=0) return QPoint(0,0);
-    double x = 100.0*(p.x()-lm)/double(w);
-    double y = 100.0*(h-(p.y()-tm))/double(h);
-    return clampPt(QPoint((int)std::round(x), (int)std::round(y)));
-}
-
-QPoint CurveEditor::mapFromGraph(const QPoint& g) const {
-    const int lm=40, tm=10, rm=10, bm=30;
-    int w = width()-lm-rm, h=height()-tm-bm;
-    if (w<=0||h<=0) return QPoint(lm, tm+h);
-    double x = lm + (g.x()/100.0)*w;
-    double y = tm + (1.0 - g.y()/100.0)*h;
-    return QPoint((int)std::round(x), (int)std::round(y));
+    std::sort(pts_.begin(), pts_.end(),
+              [](const QPointF& a, const QPointF& b){ return a.x() < b.x(); });
 }
 
 void CurveEditor::paintEvent(QPaintEvent*) {
-    QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing, true);
-    p.fillRect(rect(), palette().base());
+    QPainter g(this);
+    g.setRenderHint(QPainter::Antialiasing, true);
 
-    const int lm=40, tm=10, rm=10, bm=30;
-    QRectF area(lm, tm, width()-lm-rm, height()-tm-bm);
-    p.setPen(QPen(palette().mid().color(), 1));
-    p.drawRect(area);
+    // axes
+    g.drawRect(graphRect_);
 
-    p.setPen(QPen(palette().mid().color(), 1, Qt::DotLine));
-    for (int x=0; x<=100; x+=10) {
-        QPoint a = mapFromGraph(QPoint(x,0));
-        QPoint b = mapFromGraph(QPoint(x,100));
-        p.drawLine(a.x(), a.y(), b.x(), b.y());
-    }
-    for (int y=0; y<=100; y+=10) {
-        QPoint a = mapFromGraph(QPoint(0,y));
-        QPoint b = mapFromGraph(QPoint(100,y));
-        p.drawLine(a.x(), a.y(), b.x(), b.y());
-    }
-    if (pts_.size()>=2) {
-        p.setPen(QPen(palette().text().color(), 2));
-        for (int i=1;i<pts_.size();++i) {
+    // polyline
+    if (pts_.size() >= 2) {
+        for (int i=1; i<pts_.size(); ++i) {
             QPoint a = mapFromGraph(pts_[i-1]);
-            QPoint b = mapFromGraph(pts_[i]);
-            p.drawLine(a, b);
+            QPoint c = mapFromGraph(pts_[i]);
+            g.drawLine(a, c);
         }
     }
-    p.setBrush(palette().highlight());
-    p.setPen(Qt::NoPen);
-    for (int i=0;i<pts_.size();++i) {
-        QPoint c = mapFromGraph(pts_[i]);
-        p.drawEllipse(c, 6, 6);
+    // points
+    for (auto& p : pts_) {
+        QPoint w = mapFromGraph(p);
+        g.drawEllipse(QRect(w.x()-3, w.y()-3, 6, 6));
     }
 }
 
-int CurveEditor::nearestIdx(const QPoint& mouse) const {
-    int best = -1; int bestd = 1e9;
-    for (int i=0;i<pts_.size();++i) {
-        QPoint c = mapFromGraph(pts_[i]);
-        int d = (c - mouse).manhattanLength();
-        if (d < bestd) { bestd = d; best = i; }
-    }
-    return (bestd <= 18) ? best : -1;
+QPoint CurveEditor::mapFromGraph(const QPointF& g) const {
+    const double gx = std::clamp(g.x(), 0.0, 100.0);
+    const double gy = std::clamp(g.y(), 0.0, 100.0);
+    const double wx = graphRect_.left() + (gx/100.0)*graphRect_.width();
+    const double wy = graphRect_.bottom() - (gy/100.0)*graphRect_.height();
+    return QPoint(static_cast<int>(std::lround(wx)), static_cast<int>(std::lround(wy)));
 }
 
-void CurveEditor::mousePressEvent(QMouseEvent* ev) {
-    if (ev->button() == Qt::RightButton) {
-        if (pts_.size() > 2) {
-            int idx = nearestIdx(ev->pos());
-            if (idx >= 0) {
-                pts_.removeAt(idx);
-                update();
-                emit pointsChanged(pts_);
-            }
-        }
-        return;
-    }
-    if (ev->button() == Qt::LeftButton) {
-        int idx = nearestIdx(ev->pos());
-        if (idx >= 0) dragIdx_ = idx;
-    }
+QPointF CurveEditor::mapToGraph(const QPoint& w) const {
+    const double gx = (w.x() - graphRect_.left()) / graphRect_.width() * 100.0;
+    const double gy = (graphRect_.bottom() - w.y()) / graphRect_.height() * 100.0;
+    return QPointF(std::clamp(gx,0.0,100.0), std::clamp(gy,0.0,100.0));
 }
-
-void CurveEditor::mouseDoubleClickEvent(QMouseEvent* ev) {
-    if (ev->button() == Qt::LeftButton) {
-        QPoint g = mapToGraph(ev->pos());
-        pts_.push_back(g);
-        ensureOrder();
-        update();
-        emit pointsChanged(pts_);
-    }
-}
-
-void CurveEditor::mouseMoveEvent(QMouseEvent* ev) {
-    if (dragIdx_ < 0) return;
-    QPoint g = mapToGraph(ev->pos());
-    int left = (dragIdx_>0) ? pts_[dragIdx_-1].x()+1 : 0;
-    int right= (dragIdx_<pts_.size()-1) ? pts_[dragIdx_+1].x()-1 : 100;
-    g.setX(std::clamp(g.x(), left, right));
-    pts_[dragIdx_] = g;
-    update();
-    emit pointsChanged(pts_);
-}
-
-void CurveEditor::mouseReleaseEvent(QMouseEvent*) { dragIdx_ = -1; }

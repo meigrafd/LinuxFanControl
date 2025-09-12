@@ -1,31 +1,36 @@
 #pragma once
-// hwmon scanner via /sys/class/hwmon + heuristics
+// Thin hwmon helpers + discovery
+// Comments in English per project preference.
 
-#include <vector>
 #include <string>
+#include <vector>
+#include <limits>
 
 struct TempSensorInfo {
-    std::string name;   // "hwmonX:<driver>:<label>"
-    std::string path;   // /sys/class/hwmon/hwmonX/tempY_input
-    std::string type;   // heuristic "CPU/GPU/Water/Ambient/..." or "Unknown"
+    std::string label;
+    std::string path;
+    std::string type; // optional classification
 };
 
-struct PwmOutputInfo {
-    std::string label;       // "hwmonX:<driver>:pwmN"
-    std::string pwmPath;     // /sys/class/hwmon/hwmonX/pwmN
-    std::string enablePath;  // pwmN_enable (optional)
-    std::string tachPath;    // fanN_input   (optional)
+struct PwmDevice {
+    std::string pwm_path;
+    std::string enable_path;
+    std::string tach_path;
+    double min_pct{0.0};
+    double max_pct{100.0};
 };
 
 class Hwmon {
 public:
     std::vector<TempSensorInfo> discoverTemps() const;
-    std::vector<PwmOutputInfo>  discoverPwms()  const;
+    std::vector<PwmDevice>      discoverPwms()  const;
+
+    // Static helpers (used by Engine & daemon):
+    // Read °C (hwmon often provides millidegree values)
+    static double readTempC(const std::string& path);
+    // Write PWM percent [0..100], enabling manual mode if possible
+    static bool   setPwmPercent(const PwmDevice& dev, double pct, std::string* err=nullptr);
 
 private:
-    static std::string readFile(const std::string& path);
-    static bool isDir(const std::string& p);
-    static std::string basename(const std::string& p);
-
-    static std::string classify(const std::string& devName, const std::string& label);
+    static double milli_to_c(double v) { return (v > 200.0 ? v/1000.0 : v); }
 };

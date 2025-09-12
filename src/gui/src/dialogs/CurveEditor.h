@@ -1,27 +1,24 @@
 #pragma once
 #include <QWidget>
-#include <QVector>
+#include <QList>
 #include <QPointF>
+#include <QRectF>
 
 class CurveEditor : public QWidget {
     Q_OBJECT
 public:
     explicit CurveEditor(QWidget* parent=nullptr);
-    void setPoints(const QVector<QPointF>& pts);
-    QVector<QPointF> points() const { return pts_; }
-signals:
-    void pointsChanged(QVector<QPointF> pts);
+    QList<QPointF> points() const { return pts_; }
+    void setPoints(const QList<QPointF>& p);
+
 protected:
     void paintEvent(QPaintEvent*) override;
-    void mousePressEvent(QMouseEvent*) override;
-    void mouseMoveEvent(QMouseEvent*) override;
-    void mouseReleaseEvent(QMouseEvent*) override;
-    void mouseDoubleClickEvent(QMouseEvent*) override;
+
 private:
-    QVector<QPointF> pts_;
-    int dragIdx_ = -1;
-    QPoint mapToGraph(const QPoint& p) const;
-    QPoint mapFromGraph(const QPoint& g) const;
-    int nearestIdx(const QPoint& mouse) const;
     void ensureOrder();
+    QPoint mapFromGraph(const QPointF& g) const; // graph coords (0..100) -> widget px
+    QPointF mapToGraph(const QPoint& w) const;   // widget px -> graph coords (0..100)
+private:
+    QList<QPointF> pts_;
+    QRectF graphRect_;
 };

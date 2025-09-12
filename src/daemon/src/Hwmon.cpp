@@ -2,105 +2,122 @@
 #include <filesystem>
 #include <fstream>
 #include <regex>
+#include <unordered_map>
+#include <charconv>
+#include <cstdlib>
+#include <cstring>
+#include <stdexcept>
+#include <algorithm>
 
-using std::string;
+using namespace std;
 namespace fs = std::filesystem;
 
-static inline bool starts_with(const string& s, const char* pfx) {
-    return s.compare(0, std::char_traits<char>::length(pfx), pfx) == 0;
-}
-static inline bool ends_with(const string& s, const char* sfx) {
-    size_t n = std::char_traits<char>::length(sfx);
-    return s.size()>=n && s.compare(s.size()-n, n, sfx)==0;
-}
-
-string Hwmon::readFile(const string& path) {
-    std::ifstream f(path);
-    if (!f) return {};
-    std::string s; std::getline(f, s);
-    if (!s.empty() && s.back()=='\n') s.pop_back();
-    return s;
-}
-
-bool Hwmon::isDir(const string& p) { std::error_code ec; return fs::is_directory(p, ec); }
-string Hwmon::basename(const string& p) { return fs::path(p).filename().string(); }
-
-string Hwmon::classify(const string& devName, const string& label) {
-    auto low = [](string s){ for (auto& c: s) c= char(::tolower(c)); return s; };
-    string n = low(devName), l = low(label);
-    if (n.find("amdgpu") != string::npos || l.find("gpu")!=string::npos || l.find("hotspot")!=string::npos) return "GPU";
-    if (n.find("k10temp")!=string::npos || n.find("coretemp")!=string::npos || l.find("cpu")!=string::npos || l.find("tctl")!=string::npos) return "CPU";
-    if (l.find("water")!=string::npos || l.find("coolant")!=string::npos) return "Water";
-    if (l.find("ambient")!=string::npos || l.find("room")!=string::npos) return "Ambient";
-    if (l.find("nvme")!=string::npos) return "NVMe";
-    if (l.find("vrm")!=string::npos || l.find("mos")!=string::npos) return "VRM";
-    if (l.find("chipset")!=string::npos || l.find("pch")!=string::npos) return "Chipset";
-    return "Unknown";
-}
+// --- discovery -------------------------------------------------------------
 
 std::vector<TempSensorInfo> Hwmon::discoverTemps() const {
     std::vector<TempSensorInfo> out;
-    const string base = "/sys/class/hwmon";
-    if (!isDir(base)) return out;
+    const fs::path base("/sys/class/hwmon");
+    if (!fs::exists(base)) return out;
 
-    for (auto& e : fs::directory_iterator(base)) {
-        if (!e.is_directory()) continue;
-        string hw = e.path().string();
-        string devname = readFile(hw + "/name");
-        string hwid = basename(hw);
-        // collect temp labels
-        std::unordered_map<string, string> labelByTemp;
-        for (auto& f : fs::directory_iterator(hw)) {
-            string bn = basename(f.path().string());
-            if (starts_with(bn, "temp") && ends_with(bn, "_label")) {
-                string key = bn.substr(0, bn.size()-6); // strip _label
-                labelByTemp[key] = readFile(f.path().string());
+    for (auto& d : fs::directory_iterator(base)) {
+        if (!fs::is_directory(d)) continue;
+        const fs::path dir = d.path();
+
+        std::string devname;
+        {
+            std::ifstream f(dir / "name");
+            if (f) std::getline(f, devname);
+        }
+
+        // Build map tempN -> label (if label files exist)
+        std::unordered_map<std::string, std::string> labelByTemp;
+        for (auto& e : fs::directory_iterator(dir)) {
+            const std::string fn = e.path().filename().string();
+            if (fn.rfind("temp", 0) == 0 && fn.size() > 6 && fn.ends_with("_label")) {
+                std::ifstream fl(e.path());
+                std::string lab;
+                if (fl) std::getline(fl, lab);
+                const auto n = fn.substr(0, fn.find('_')); // tempN
+                labelByTemp[n] = lab;
             }
         }
-        for (auto& f : fs::directory_iterator(hw)) {
-            string bn = basename(f.path().string());
-            if (starts_with(bn, "temp") && ends_with(bn, "_input")) {
-                string key = bn.substr(0, bn.size()-6); // strip _input
-                string rawLabel = labelByTemp.count(key) ? labelByTemp[key] : key;
-                string type = classify(devname, rawLabel);
-                TempSensorInfo ts;
-                ts.name = hwid + ":" + devname + ":" + rawLabel;
-                ts.path = f.path().string();
-                ts.type = type;
-                out.push_back(std::move(ts));
+
+        for (auto& e : fs::directory_iterator(dir)) {
+            const std::string fn = e.path().filename().string();
+            if (fn.rfind("temp", 0) == 0 && fn.size() > 6 && fn.ends_with("_input")) {
+                const std::string n = fn.substr(0, fn.find('_')); // tempN
+                const std::string raw = (labelByTemp.count(n) ? labelByTemp[n] : n);
+                // crude type suggestion
+                std::string type = "Unknown";
+                const std::string low = raw;
+                auto contains = [&](const char* pat){
+                    return low.find(pat) != std::string::npos;
+                };
+                if (contains("cpu") || contains("tctl") || contains("tdie")) type = "CPU";
+                else if (contains("gpu") || contains("junction") || contains("hotspot")) type = "GPU";
+                else if (contains("nvme")) type = "NVMe";
+                else if (contains("ambient")) type = "Ambient";
+                else if (contains("water") || contains("liquid")) type = "Water";
+
+                TempSensorInfo info;
+                info.label = devname.empty() ? (dir.filename().string()+":"+raw) : (devname+":"+raw);
+                info.path  = e.path().string();
+                info.type  = type;
+                out.push_back(std::move(info));
             }
         }
     }
     return out;
 }
 
-std::vector<PwmOutputInfo> Hwmon::discoverPwms() const {
-    std::vector<PwmOutputInfo> out;
-    const string base = "/sys/class/hwmon";
-    if (!isDir(base)) return out;
+std::vector<PwmDevice> Hwmon::discoverPwms() const {
+    std::vector<PwmDevice> out;
+    const fs::path base("/sys/class/hwmon");
+    if (!fs::exists(base)) return out;
 
-    std::regex rpwm("^pwm(\\d+)$");
-    for (auto& e : fs::directory_iterator(base)) {
-        if (!e.is_directory()) continue;
-        string hw = e.path().string();
-        string devname = readFile(hw + "/name");
-        string hwid = basename(hw);
-
-        for (auto& f : fs::directory_iterator(hw)) {
-            string bn = basename(f.path().string());
-            std::smatch m;
-            if (std::regex_match(bn, m, rpwm)) {
-                string n = m[1].str();
-                string en = hw + "/pwm" + n + "_enable";
-                string fan = hw + "/fan" + n + "_input";
-                PwmOutputInfo po;
-                po.label = hwid + ":" + devname + ":pwm" + n;
-                po.pwmPath = f.path().string();
-                po.enablePath = fs::exists(en) ? en : "";
-                po.tachPath = fs::exists(fan) ? fan : "";
-                out.push_back(std::move(po));
+    for (auto& d : fs::directory_iterator(base)) {
+        if (!fs::is_directory(d)) continue;
+        const fs::path dir = d.path();
+        for (auto& e : fs::directory_iterator(dir)) {
+            const std::string fn = e.path().filename().string();
+            if (fn.rfind("pwm", 0) == 0 && fn.size() >= 4 && std::isdigit(static_cast<unsigned char>(fn[3]))) {
+                PwmDevice dev;
+                dev.pwm_path = e.path().string();
+                const std::string n = fn.substr(3); // number
+                const fs::path enable = dir / ("pwm"+n+"_enable");
+                if (fs::exists(enable)) dev.enable_path = enable.string();
+                const fs::path tach = dir / ("fan"+n+"_input");
+                if (fs::exists(tach)) dev.tach_path = tach.string();
+                out.push_back(std::move(dev));
             }
         }
     }
     return out;
+}
+
+// --- helpers ---------------------------------------------------------------
+
+double Hwmon::readTempC(const std::string& path) {
+    std::ifstream f(path);
+    if (!f) return std::numeric_limits<double>::quiet_NaN();
+    long long raw = 0;
+    f >> raw;
+    return milli_to_c(static_cast<double>(raw));
+}
+
+bool Hwmon::setPwmPercent(const PwmDevice& dev, double pct, std::string* err) {
+    const int v = std::clamp(static_cast<int>(std::lround(std::clamp(pct, 0.0, 100.0) * 255.0 / 100.0)), 0, 255);
+    try {
+        if (!dev.enable_path.empty()) {
+            std::ofstream en(dev.enable_path);
+            if (en) en << "1";
+        }
+        std::ofstream p(dev.pwm_path);
+        if (!p) throw std::runtime_error("open pwm failed");
+        p << v;
+        return true;
+    } catch (const std::exception& e) {
+        if (err) *err = e.what();
+        return false;
+    }
 }
