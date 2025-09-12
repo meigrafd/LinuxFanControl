@@ -1,29 +1,31 @@
 #pragma once
-#include <QString>
-#include <QHash>
-#include <QVariant>
+// Translations helper: load/unload Qt .qm files at runtime.
+// Comments in English; UI text language switch handled elsewhere.
 
-/* Filesystem-based i18n loader.
- * Locale directory list:
- *  - env LFCD_LOCALES
- *  - <binary_dir>/locales
- *  - <source_dir>/locales  (pass on construction)
- *
- * Looks for: locales/<lang>/messages.json or locales/<lang>.json
- * Default language is "en".
- */
-class Translations {
+#include <QObject>
+#include <QTranslator>
+#include <QString>
+#include <QStringList>
+
+class Translations : public QObject {
+    Q_OBJECT
 public:
-    explicit Translations(QString sourceDir = {});
-    void setLanguage(const QString& lang);
-    QString language() const { return lang_; }
-    QString t(const QString& key, const QVariantMap& args = {}) const;
+    static Translations& instance();
+
+    // Change UI language. Looks into "<appdir>/locales".
+    // Tries: "<code>.qm", "gui_<code>.qm", "lfc_<code>.qm".
+    bool setLanguage(const QString& code);
+
+    QString currentLanguage() const { return current_; }
+
+    // List codes discovered in "<appdir>/locales" (best-effort).
+    QStringList availableLanguages() const;
 
 private:
-    QString findLocaleFile(const QString& lang) const;
-    void load(const QString& lang);
+    explicit Translations(QObject* parent=nullptr);
+    QString localesDir() const;
 
-    QString lang_ = "en";
-    QHash<QString, QString> map_;
-    QString sourceDir_;
+private:
+    mutable QTranslator translator_;
+    QString current_;
 };
