@@ -1,32 +1,28 @@
 #pragma once
-#include <string>
-#include <optional>
-#include <QString>
-#include <QByteArray>
-#include <QJsonObject>
-#include <QJsonValue>
+// Simple newline-delimited JSON-RPC 2.0 client over Unix domain socket.
+// Comments in English per project.
 
-/* Simple JSON-RPC 2.0 over UNIX domain socket (newline-delimited JSON).
- * Blocking calls with timeout. GUI offloads heavy calls to worker threads.
- */
+#include <QString>
+#include <QJsonObject>
+#include <QJsonArray>
+
 class RpcClient {
 public:
-    explicit RpcClient(QString sockPath = "/tmp/lfcd.sock");
-    ~RpcClient();
+    explicit RpcClient(const QString& sockPath = qEnvironmentVariable("LFC_SOCK", "/tmp/lfcd.sock"));
 
-    bool connect(std::string* err = nullptr);
-    void close();
+    // Generic call
+    QJsonObject call(const QString& method, const QJsonObject& params = QJsonObject(), const QString& id = "1");
+    // Batch call
+    QJsonArray  callBatch(const QJsonArray& batch);
 
-    std::optional<QJsonValue> call(const QString& method,
-                                   const QJsonObject& params,
-                                   int timeoutMs,
-                                   std::string* err = nullptr);
+    // Convenience
+    QJsonObject ping();
+    QJsonObject version();
+    QJsonObject enumerate();
+    QJsonArray  listChannels();
 
 private:
-    int fd_ = -1;
-    QString path_;
-    int nextId_ = 1;
-
-    bool writeLine(const QByteArray& line, std::string* err);
-    bool readLine(QByteArray& lineOut, int timeoutMs, std::string* err);
+    QString sock_;
+    bool    readLine(int fd, QByteArray& line);
+    bool    writeAll(int fd, const QByteArray& data);
 };

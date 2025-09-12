@@ -1,84 +1,104 @@
 #include "RpcClient.h"
+
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
-#include <poll.h>
-#include <cstring>
+#include <errno.h>
+#include <string.h>
+
 #include <QJsonDocument>
 
-RpcClient::RpcClient(QString sockPath) : path_(std::move(sockPath)) {}
-RpcClient::~RpcClient() { close(); }
+RpcClient::RpcClient(const QString& sockPath)
+: sock_(sockPath) {}
 
-bool RpcClient::connect(std::string* err) {
-    if (fd_ != -1) return true;
+static int connect_unix(const QString& path) {
     int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd < 0) { if (err) *err = "socket() failed"; return false; }
+    if (fd < 0) return -1;
     sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
-    QByteArray p = path_.toUtf8();
-    if (p.size() >= (int)sizeof(addr.sun_path)) {
-        if (err) *err = "socket path too long";
-        ::close(fd); return false;
+    QByteArray p = path.toLocal8Bit();
+    ::snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", p.constData());
+    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+        ::close(fd);
+        return -1;
     }
-    std::memset(addr.sun_path, 0, sizeof(addr.sun_path));
-    std::memcpy(addr.sun_path, p.constData(), p.size());
-    if (::connect(fd, (sockaddr*)&addr, sizeof(addr)) != 0) {
-        if (err) *err = "connect() failed (is lfcd running?)";
-        ::close(fd); return false;
-    }
-    fd_ = fd;
-    return true;
+    return fd;
 }
 
-void RpcClient::close() {
-    if (fd_ != -1) { ::close(fd_); fd_ = -1; }
-}
-
-bool RpcClient::writeLine(const QByteArray& line, std::string* err) {
-    const char* data = line.constData();
-    size_t left = (size_t)line.size();
+bool RpcClient::writeAll(int fd, const QByteArray& data) {
+    const char* p = data.constData();
+    qsizetype left = data.size();
     while (left > 0) {
-        ssize_t n = ::write(fd_, data, left);
-        if (n <= 0) { if (err) *err = "write() failed"; return false; }
-        left -= (size_t)n; data += n;
+        ssize_t w = ::write(fd, p, static_cast<size_t>(left));
+        if (w < 0) {
+            if (errno == EINTR) continue;
+            return false;
+        }
+        left -= w;
+        p += w;
     }
     return true;
 }
 
-bool RpcClient::readLine(QByteArray& out, int timeoutMs, std::string* err) {
-    out.clear();
+bool RpcClient::readLine(int fd, QByteArray& line) {
+    line.clear();
+    char ch;
     while (true) {
-        pollfd pfd{ fd_, POLLIN, 0 };
-        int pr = ::poll(&pfd, 1, timeoutMs);
-        if (pr <= 0) { if (err) *err = "timeout waiting for response"; return false; }
-        char ch;
-        ssize_t n = ::read(fd_, &ch, 1);
-        if (n <= 0) { if (err) *err = "read() failed"; return false; }
+        ssize_t r = ::read(fd, &ch, 1);
+        if (r == 0) return false;
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            return false;
+        }
         if (ch == '\n') break;
-        out.push_back(ch);
+        line.append(ch);
+        if (line.size() > (1<<20)) return false; // 1MB guard
     }
     return true;
 }
 
-std::optional<QJsonValue> RpcClient::call(const QString& method,
-                                          const QJsonObject& params,
-                                          int timeoutMs,
-                                          std::string* err) {
-    if (!connect(err)) return std::nullopt;
-    int id = nextId_++;
-    QJsonObject req{{"id", id}, {"method", method}, {"params", params}};
-    QByteArray line = QJsonDocument(req).toJson(QJsonDocument::Compact);
-    line.push_back('\n');
-    if (!writeLine(line, err)) return std::nullopt;
-
-    QByteArray resp;
-    if (!readLine(resp, timeoutMs, err)) return std::nullopt;
-    auto doc = QJsonDocument::fromJson(resp);
-    if (!doc.isObject()) { if (err) *err = "invalid JSON"; return std::nullopt; }
-    QJsonObject obj = doc.object();
-    if (obj.contains("error")) {
-        if (err) *err = obj["error"].toString().toStdString();
-        return std::nullopt;
+QJsonObject RpcClient::call(const QString& method, const QJsonObject& params, const QString& id) {
+    int fd = connect_unix(sock_);
+    if (fd < 0) return QJsonObject{{"error", QJsonObject{{"code",-32000},{"message","connect failed"}}}};
+    QJsonObject req{{"jsonrpc","2.0"},{"method",method},{"id",id}};
+    if (!params.isEmpty()) req["params"] = params;
+    QByteArray out = QJsonDocument(req).toJson(QJsonDocument::Compact);
+    out.append('\n');
+    if (!writeAll(fd, out)) { ::close(fd); return QJsonObject{{"error", QJsonObject{{"code",-32001},{"message","write failed"}}}}; }
+    QByteArray line;
+    if (!readLine(fd, line)) { ::close(fd); return QJsonObject{{"error", QJsonObject{{"code",-32002},{"message","read failed"}}}}; }
+    ::close(fd);
+    QJsonParseError pe{};
+    QJsonDocument doc = QJsonDocument::fromJson(line, &pe);
+    if (pe.error != QJsonParseError::NoError || !doc.isObject()) {
+        return QJsonObject{{"error", QJsonObject{{"code",-32700},{"message","parse error"}}}};
     }
-    return obj.value("result");
+    return doc.object();
+}
+
+QJsonArray RpcClient::callBatch(const QJsonArray& batch) {
+    int fd = connect_unix(sock_);
+    if (fd < 0) return QJsonArray{ QJsonObject{{"error", QJsonObject{{"code",-32000},{"message","connect failed"}}}} };
+    QByteArray out = QJsonDocument(batch).toJson(QJsonDocument::Compact);
+    out.append('\n');
+    if (!writeAll(fd, out)) { ::close(fd); return QJsonArray{ QJsonObject{{"error", QJsonObject{{"code",-32001},{"message","write failed"}}}} }; }
+    QByteArray line;
+    if (!readLine(fd, line)) { ::close(fd); return QJsonArray{ QJsonObject{{"error", QJsonObject{{"code",-32002},{"message","read failed"}}}} }; }
+    ::close(fd);
+    QJsonParseError pe{};
+    QJsonDocument doc = QJsonDocument::fromJson(line, &pe);
+    if (pe.error != QJsonParseError::NoError || !doc.isArray()) {
+        return QJsonArray{ QJsonObject{{"error", QJsonObject{{"code",-32700},{"message","parse error"}}}} };
+    }
+    return doc.array();
+}
+
+QJsonObject RpcClient::ping()     { return call("ping"); }
+QJsonObject RpcClient::version()  { return call("version"); }
+QJsonObject RpcClient::enumerate(){ return call("enumerate"); }
+
+QJsonArray RpcClient::listChannels() {
+    QJsonObject r = call("listChannels");
+    if (r.contains("result") && r["result"].isArray()) return r["result"].toArray();
+    return QJsonArray{};
 }

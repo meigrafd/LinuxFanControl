@@ -57,7 +57,7 @@ static bool read_line(int fd, std::string& out) {
         }
         if (ch == '\n') break;
         out.push_back(ch);
-        if (out.size() > (1u<<20)) return false; // 1MB guard
+        if (out.size() > (1u << 20)) return false; // 1MB guard
     }
     return true;
 }
@@ -68,8 +68,8 @@ Daemon::Daemon()
 , srvFd_(-1)
 , running_(false)
 , hw_(new Hwmon())
-, engine_(new Engine())
-{}
+, engine_(new Engine()) {
+}
 
 Daemon::~Daemon() {
     shutdown();
@@ -154,7 +154,7 @@ bool Daemon::pumpOnce(int timeoutMs) {
             reply = dispatch(req);
         }
     } catch (const std::exception& e) {
-        reply = error_obj(nullptr, -32700, std::string("Parse error: ")+e.what());
+        reply = error_obj(nullptr, -32700, std::string("Parse error: ") + e.what());
     }
 
     const std::string payload = reply.dump() + "\n";
@@ -332,58 +332,58 @@ bool Daemon::rpcCreateChannel(const std::string& name,
     chs.push_back(std::move(c));
     engine_->setChannels(std::move(chs));
     return true;
-                              }
+}
 
-                              bool Daemon::rpcDeleteChannel(const std::string& id) {
-                                  if (id.empty()) return false;
-                                  auto chs = engine_->snapshot();
-                                  const auto n0 = chs.size();
-                                  chs.erase(std::remove_if(chs.begin(), chs.end(),
-                                                           [&](const Channel& c){ return c.id == id; }),
-                                            chs.end());
-                                  if (chs.size() == n0) return false;
-                                  engine_->setChannels(std::move(chs));
-                                  return true;
-                              }
+bool Daemon::rpcDeleteChannel(const std::string& id) {
+    if (id.empty()) return false;
+    auto chs = engine_->snapshot();
+    const auto n0 = chs.size();
+    chs.erase(std::remove_if(chs.begin(), chs.end(),
+                            [&](const Channel& c){ return c.id == id; }),
+            chs.end());
+    if (chs.size() == n0) return false;
+    engine_->setChannels(std::move(chs));
+    return true;
+}
 
-                              bool Daemon::rpcSetChannelMode(const std::string& id, const std::string& mode) {
-                                  engine_->updateChannelMode(id, mode);
-                                  return true;
-                              }
+bool Daemon::rpcSetChannelMode(const std::string& id, const std::string& mode) {
+    engine_->updateChannelMode(id, mode);
+    return true;
+}
 
-                              bool Daemon::rpcSetChannelManual(const std::string& id, double pct) {
-                                  engine_->updateChannelManual(id, pct);
-                                  return true;
-                              }
+bool Daemon::rpcSetChannelManual(const std::string& id, double pct) {
+    engine_->updateChannelManual(id, pct);
+    return true;
+}
 
-                              bool Daemon::rpcSetChannelCurve(const std::string& id,
-                                                              const std::vector<std::pair<double,double>>& pts) {
-                                  std::vector<CurvePoint> v;
-                                  v.reserve(pts.size());
-                                  for (auto& p : pts) v.push_back(CurvePoint{p.first, p.second});
-                                  engine_->updateChannelCurve(id, v);
-                                  return true;
-                                                              }
+bool Daemon::rpcSetChannelCurve(const std::string& id,
+                                const std::vector<std::pair<double,double>>& pts) {
+    std::vector<CurvePoint> v;
+    v.reserve(pts.size());
+    for (auto& p : pts) v.push_back(CurvePoint{p.first, p.second});
+    engine_->updateChannelCurve(id, v);
+    return true;
+}
 
-                                                              bool Daemon::rpcSetChannelHystTau(const std::string& id, double hyst, double tau) {
-                                                                  engine_->updateChannelHystTau(id, hyst, tau);
-                                                                  return true;
-                                                              }
+bool Daemon::rpcSetChannelHystTau(const std::string& id, double hyst, double tau) {
+    engine_->updateChannelHystTau(id, hyst, tau);
+    return true;
+}
 
-                                                              bool Daemon::rpcDeleteCoupling(const std::string& /*id*/) {
-                                                                  // placeholder: depends on your internal model; return true for now
-                                                                  return true;
-                                                              }
+bool Daemon::rpcDeleteCoupling(const std::string& /*id*/) {
+    // placeholder: depends on your internal model; return true for now
+    return true;
+}
 
-                                                              // -------------------- JSON helpers ---------------------
-                                                              json Daemon::error_obj(const json& id, int code, const std::string& msg) {
-                                                                  json r = { {"jsonrpc","2.0"}, {"error", {{"code", code}, {"message", msg}}} };
-                                                                  if (!id.is_null()) r["id"] = id;
-                                                                  return r;
-                                                              }
+// -------------------- JSON helpers ---------------------
+json Daemon::error_obj(const json& id, int code, const std::string& msg) {
+    json r = { {"jsonrpc","2.0"}, {"error", {{"code", code}, {"message", msg}}} };
+    if (!id.is_null()) r["id"] = id;
+    return r;
+}
 
-                                                              json Daemon::result_obj(const json& id, const json& result) {
-                                                                  json r = { {"jsonrpc","2.0"}, {"result", result} };
-                                                                  if (!id.is_null()) r["id"] = id;
-                                                                  return r;
-                                                              }
+json Daemon::result_obj(const json& id, const json& result) {
+    json r = { {"jsonrpc","2.0"}, {"result", result} };
+    if (!id.is_null()) r["id"] = id;
+    return r;
+}

@@ -1,3 +1,3 @@
-cd /mnt/Github/LinuxFanControl/build/
-[[ -z $(pidmof lfcd) ]] && ./lfcd &
-./lfc-gui
+cd /mnt/Github/LinuxFanControl/build/src
+[[ -z $(pidof lfcd) ]] && ./daemon/lfcd &
+./gui/lfc-gui
