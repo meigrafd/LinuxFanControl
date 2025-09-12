@@ -62,8 +62,8 @@ void DetectDialog::onRefresh() {
 }
 
 void DetectDialog::populate(const QJsonObject& enumerateResult) {
-    sensors_. = enumerateResult.value("sensors").toArray();
-    pwms_     = enumerateResult.value("pwms").toArray();
+    sensors_ = enumerateResult.value("sensors").toArray();
+    pwms_    = enumerateResult.value("pwms").toArray();
 
     tbl_->setRowCount(0);
     for (const auto& v : pwms_) {

@@ -1,25 +1,37 @@
 #include "TelemetryWorker.h"
 #include "RpcClient.h"
-#include <QThread>
-#include <QJsonValue>
+
+#include <QTimer>
 #include <QJsonObject>
+#include <QJsonArray>
 
-TelemetryWorker::TelemetryWorker(QObject* parent) : QObject(parent) {}
+TelemetryWorker::TelemetryWorker(RpcClient* rpc, QObject* parent)
+: QObject(parent), rpc_(rpc), timer_(nullptr) {}
 
-void TelemetryWorker::start() {
-    running_ = true;
-    while (running_) {
-        RpcClient cli;
-        std::string err;
-        auto res = cli.call("listChannels", QJsonObject{}, 8000, &err);
-        if (!res) {
-            emit workerError(QString::fromStdString(err));
-            QThread::msleep(500);
-            continue;
-        }
-        emit tickReady(res->toArray());
-        QThread::msleep(1000);
+void TelemetryWorker::start(int intervalMs) {
+    if (!timer_) {
+        timer_ = new QTimer(this);
+        connect(timer_, &QTimer::timeout, this, &TelemetryWorker::pollOnce);
     }
+    if (!timer_->isActive()) {
+        timer_->start(intervalMs);
+    }
+    // Initial tick
+    pollOnce();
 }
 
-void TelemetryWorker::stop() { running_ = false; }
+void TelemetryWorker::stop() {
+    if (timer_) timer_->stop();
+}
+
+void TelemetryWorker::pollOnce() {
+    if (!rpc_) return;
+
+    // Use RpcClient overload with timeout; unwrap "result" as array.
+    auto res = rpc_->call("listChannels", QJsonObject{}, /*timeoutMs*/ 4000, static_cast<std::string*>(nullptr));
+    QJsonArray arr;
+    if (res && res->contains("result") && (*res)["result"].isArray()) {
+        arr = (*res)["result"].toArray();
+    }
+    emit tickReady(arr);
+}
