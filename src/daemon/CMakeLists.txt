@@ -1,6 +1,8 @@
-# Daemon (lfcd) — link against libsensors (pkg-config optional, manual paths supported)
+# Daemon (lfcd) — libsensors + JSON-RPC (nlohmann-json)
 cmake_minimum_required(VERSION 3.20)
 project(lfcd LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Option to use pkg-config (can be disabled from CLI)
 option(USE_PKGCONFIG_SENSORS "Use pkg-config to find libsensors" ON)
@@ -34,6 +36,13 @@ endif()
 message(STATUS "libsensors include: ${SENSORS_INCLUDE_DIRS}")
 message(STATUS "libsensors libs   : ${SENSORS_LIBRARIES}")
 
+# nlohmann-json (header-only)
+find_path(NLOHMANN_JSON_INCLUDE_DIR nlohmann/json.hpp)
+if (NOT NLOHMANN_JSON_INCLUDE_DIR)
+  message(FATAL_ERROR "nlohmann/json.hpp not found. Install nlohmann-json-devel.")
+endif()
+message(STATUS "nlohmann-json include: ${NLOHMANN_JSON_INCLUDE_DIR}")
+
 add_executable(lfcd
   src/main.cpp
   src/Daemon.cpp
@@ -48,6 +57,7 @@ add_executable(lfcd
 
 target_include_directories(lfcd PRIVATE
   ${SENSORS_INCLUDE_DIRS}
+  ${NLOHMANN_JSON_INCLUDE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_link_libraries(lfcd PRIVATE
