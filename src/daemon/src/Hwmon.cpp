@@ -14,6 +14,8 @@
 #include <vector>
 #include <algorithm>
 #include <cmath>
+#include <cctype>
+#include <limits>
 
 // -------------------------
 // small string helpers
@@ -57,9 +59,9 @@ static bool write_all(const std::string& p, const std::string& text, std::string
 static double clamp01(double v) { return std::max(0.0, std::min(1.0, v)); }
 
 // -------------------------
-// temperature discovery
+// temperatures
 // -------------------------
-std::vector<TempSensorInfo> Hwmon::discoverTemps() const {
+std::vector<TempSensorInfo> Hwmon::discoverTemps() {
     std::vector<TempSensorInfo> out;
     DIR* d = ::opendir("/sys/class/hwmon");
     if (!d) return out;
@@ -97,7 +99,7 @@ std::vector<TempSensorInfo> Hwmon::discoverTemps() const {
                     if (it!=labels.end()) lab = it->second;
 
                     TempSensorInfo info;
-                    // NOTE: TempSensorInfo currently provides name/label/path (no device field).
+                    // NOTE: TempSensorInfo provides name/label/path.
                     info.name  = name;
                     info.label = lab;
                     info.path  = base + "/" + fn;
@@ -112,10 +114,27 @@ std::vector<TempSensorInfo> Hwmon::discoverTemps() const {
     return out;
 }
 
+double Hwmon::readTempC(const std::string& path) {
+    std::ifstream f(path);
+    if (!f.good()) return std::numeric_limits<double>::quiet_NaN();
+
+    std::string s; std::getline(f, s);
+    if (s.empty()) return std::numeric_limits<double>::quiet_NaN();
+
+    char* endp = nullptr;
+    errno = 0;
+    const long long raw = std::strtoll(s.c_str(), &endp, 10);
+    if (errno!=0 || endp==s.c_str()) return std::numeric_limits<double>::quiet_NaN();
+
+    // hwmon often uses millidegree
+    if (raw > 200) return static_cast<double>(raw) / 1000.0;
+    return static_cast<double>(raw);
+}
+
 // -------------------------
 // PWM discovery
 // -------------------------
-std::vector<PwmDevice> Hwmon::discoverPwms() const {
+std::vector<PwmDevice> Hwmon::discoverPwms() {
     std::vector<PwmDevice> out;
 
     DIR* d = ::opendir("/sys/class/hwmon");
@@ -144,20 +163,21 @@ std::vector<PwmDevice> Hwmon::discoverPwms() const {
 
             // pwm number
             std::string num;
-            for (size_t i=3;i<fn.size() && std::isdigit(static_cast<unsigned char>(fn[i]));++i) num.push_back(fn[i]);
+            for (size_t i=3;i<fn.size() && std::isdigit(static_cast<unsigned char>(fn[i]));++i)
+                num.push_back(fn[i]);
             if (num.empty()) continue;
 
             const std::string pwmPath    = base + "/" + fn;
             const std::string enablePath = base + "/pwm" + num + "_enable";
             std::string tachPath;
 
-            // try fanN_input with matching index (common convention)
+            // try fanN_input with matching index (most common)
             const std::string fanCandidate = base + "/fan" + num + "_input";
             struct stat st{};
             if (::stat(fanCandidate.c_str(), &st)==0 && S_ISREG(st.st_mode)) {
                 tachPath = fanCandidate;
             } else {
-                // fallback: pick first fan*_input if any
+                // fallback: first fan*_input if any
                 for (const auto& tf : entries) {
                     if (starts_with(tf, "fan") && ends_with(tf, "_input")) {
                         tachPath = base + "/" + tf;
@@ -167,14 +187,12 @@ std::vector<PwmDevice> Hwmon::discoverPwms() const {
             }
 
             PwmDevice pd;
-            // NOTE: PwmDevice must have these members as declared in Hwmon.h.
-            // Common schema used across the project:
-            //   std::string label, pwm, enable, tach;
-            // If names differ, adjust here accordingly.
-            pd.label  = hw + ":" + devName + ":" + fn;
-            pd.pwm    = pwmPath;
-            pd.enable = enablePath;
-            pd.tach   = tachPath;
+            // IMPORTANT: field names chosen to match our project mappings (snake_case).
+            // If your Hwmon.h uses other names, adapt here accordingly.
+            pd.id             = hw + ":" + devName + ":" + fn;
+            pd.pwm_path       = pwmPath;
+            pd.enable_path    = enablePath;
+            pd.fan_input_path = tachPath;
 
             out.push_back(std::move(pd));
         }
@@ -185,47 +203,26 @@ std::vector<PwmDevice> Hwmon::discoverPwms() const {
 }
 
 // -------------------------
-// temp read helper
-// -------------------------
-double Hwmon::readTempC(const std::string& path) const {
-    std::ifstream f(path);
-    if (!f.good()) return std::numeric_limits<double>::quiet_NaN();
-
-    std::string s; std::getline(f, s);
-    if (s.empty()) return std::numeric_limits<double>::quiet_NaN();
-
-    char* endp = nullptr;
-    errno = 0;
-    const long long raw = std::strtoll(s.c_str(), &endp, 10);
-    if (errno!=0 || endp==s.c_str()) return std::numeric_limits<double>::quiet_NaN();
-
-    // millidegree -> degree (common in hwmon)
-    if (raw > 200) return static_cast<double>(raw) / 1000.0;
-    return static_cast<double>(raw);
-}
-
-// -------------------------
 // PWM write helper
 // -------------------------
-bool Hwmon::setPwmPercent(const PwmDevice& dev, double percent, std::string* err) const {
+bool Hwmon::setPwmPercent(const PwmDevice& dev, double percent, std::string* err) {
     // clamp 0..100 and convert to 0..255
     const int duty255 = static_cast<int>(std::lround(clamp01(percent/100.0) * 255.0));
 
     // Best-effort: set manual (1) if enable file exists
-    if (!dev.enable.empty()) {
+    if (!dev.enable_path.empty()) {
         struct stat st{};
-        if (::stat(dev.enable.c_str(), &st)==0 && S_ISREG(st.st_mode)) {
+        if (::stat(dev.enable_path.c_str(), &st)==0 && S_ISREG(st.st_mode)) {
             std::string eerr;
-            if (!write_all(dev.enable, "1", &eerr)) {
-                // Some drivers reject writes while busy or unsupported -> keep going,
-                // but surface the error for the caller.
+            if (!write_all(dev.enable_path, "1", &eerr)) {
                 if (err) *err = std::string("pwm_enable write failed: ") + eerr;
+                // continue anyway; some drivers reject this while still allowing pwm writes
             }
         }
     }
 
     // Write pwm value
-    std::ofstream f(dev.pwm);
+    std::ofstream f(dev.pwm_path);
     if (!f.good()) {
         if (err) *err = std::string("open pwm failed: ") + std::strerror(errno);
         return false;
