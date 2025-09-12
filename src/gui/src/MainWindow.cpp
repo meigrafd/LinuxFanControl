@@ -14,6 +14,7 @@
 #include <QVBoxLayout>
 #include <QGridLayout>
 #include <QFrame>
+#include <QTimer>      // <-- fixes "incomplete type QTimer" error
 
 MainWindow::MainWindow(QWidget* parent)
 : QMainWindow(parent)
