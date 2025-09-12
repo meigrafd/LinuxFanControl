@@ -1,5 +1,6 @@
 #pragma once
-// Engine interface aligned with Engine.cpp & Daemon.cpp usage
+// Engine interface and data model used by the daemon.
+// Comments in English per project preference.
 
 #include <string>
 #include <vector>
@@ -7,26 +8,32 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <cstddef>
 
 struct CurvePoint { double x{0.0}; double y{0.0}; };
 
 struct Channel {
-    std::string id;           // string id
+    std::string id;           // string id (stable)
     std::string name;
-    std::string sensor_path;  // temp source
-    std::string pwm_path;     // pwm sysfs
+
+    // I/O bindings
+    std::string sensor_path;  // temp source (/sys/class/hwmon/.../tempN_input)
+    std::string pwm_path;     // pwm sysfs (/sys/.../pwmN)
     std::string enable_path;  // pwmN_enable
     std::string tach_path;    // fanN_input
-    std::string mode;         // "Auto"/"Manual"
 
-    // Names match your Engine.cpp usage:
+    // Mode & parameters
+    std::string mode;         // "Auto" / "Manual"
     double      manual_pct{0.0};
     double      hyst_c{0.0};
     double      tau_s{0.0};
-
     std::vector<CurvePoint> curve;
     double min_pct{0.0};
     double max_pct{100.0};
+
+    // Telemetry (for UI)
+    double last_temp{std::numeric_limits<double>::quiet_NaN()};
+    double last_out{std::numeric_limits<double>::quiet_NaN()};
 };
 
 class Engine {
@@ -38,28 +45,21 @@ public:
     void stop();
     bool running() const { return running_; }
 
-    // mutations used by Daemon JSON-RPC (stubs keep linking)
-    int  createChannel(const std::string&, const std::string&, const std::string&) { return 0; }
-    bool deleteChannel(int) { return false; }
-    bool setMode(int, const std::string&) { return false; }
-    bool setManual(int, double) { return false; }
-    bool setCurve(int, const std::vector<std::pair<double,double>>&) { return false; }
-    bool setHystTau(int, double, double) { return false; }
-    bool deleteCoupling(int) { return false; }
+    // mutations used by Daemon / RPC
+    void updateChannelMode (const std::string& id, const std::string& mode);
+    void updateChannelManual(const std::string& id, double pct);
+    void updateChannelCurve (const std::string& id, const std::vector<CurvePoint>& pts);
+    void updateChannelHystTau(const std::string& id, double hyst, double tau);
 
-    // optional getter if Daemon still calls channels()
-    const std::vector<Channel>& channels() const { return chans_; }
-
-    // helpers
+    // helper
     static double evalCurve(const std::vector<CurvePoint>& pts, double x);
 
 private:
     void loop();
 
 private:
-    std::vector<Channel> chans_;   // name matches Engine.cpp
+    std::vector<Channel> chans_;
     std::atomic<bool>    running_{false};
     std::thread          th_;
-    std::mutex           mu_;      // name matches Engine.cpp
-    // controller_ remains where you define it
+    std::mutex           mu_;
 };
