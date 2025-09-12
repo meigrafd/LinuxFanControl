@@ -23,7 +23,7 @@ bool RpcClient::connect(std::string* err) {
     std::memset(addr.sun_path, 0, sizeof(addr.sun_path));
     std::memcpy(addr.sun_path, p.constData(), p.size());
     if (::connect(fd, (sockaddr*)&addr, sizeof(addr)) != 0) {
-        if (err) *err = "connect() failed (is daemon running?)";
+        if (err) *err = "connect() failed (is lfcd running?)";
         ::close(fd); return false;
     }
     fd_ = fd;
@@ -50,7 +50,7 @@ bool RpcClient::readLine(QByteArray& out, int timeoutMs, std::string* err) {
     while (true) {
         pollfd pfd{ fd_, POLLIN, 0 };
         int pr = ::poll(&pfd, 1, timeoutMs);
-        if (pr <= 0) { if (err) *err = "timeout or poll() failed"; return false; }
+        if (pr <= 0) { if (err) *err = "timeout waiting for response"; return false; }
         char ch;
         ssize_t n = ::read(fd_, &ch, 1);
         if (n <= 0) { if (err) *err = "read() failed"; return false; }
@@ -77,8 +77,8 @@ std::optional<QJsonValue> RpcClient::call(const QString& method,
     if (!doc.isObject()) { if (err) *err = "invalid JSON"; return std::nullopt; }
     QJsonObject obj = doc.object();
     if (obj.contains("error")) {
-        if (err) *err = obj["error"].toVariant().toString().toStdString();
+        if (err) *err = obj["error"].toString().toStdString();
         return std::nullopt;
     }
     return obj.value("result");
-                                          }
+}

@@ -5,7 +5,6 @@
 #include <QComboBox>
 #include <QSlider>
 #include <QPushButton>
-#include <QStyle>
 
 FanCard::FanCard(const Model& m, QWidget* parent) : QFrame(parent), m_(m) {
     setProperty("card", true);
@@ -63,12 +62,6 @@ void FanCard::applyCardStyle() {
     }
     QPushButton { padding: 6px 10px; }
     )");
-}
-
-void FanCard::setTexts(const QString& editText, const QString& sensorText, const QString& tempText, const QString& outText) {
-    // Button text handled by parent (optional)
-    // Labels are static keys already translated by parent if needed
-    (void)editText; (void)sensorText; (void)tempText; (void)outText;
 }
 
 void FanCard::updateTelemetry(double tempC, double outPct) {

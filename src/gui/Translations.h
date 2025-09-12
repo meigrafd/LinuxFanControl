@@ -15,7 +15,7 @@
 class Translations {
 public:
     explicit Translations(QString sourceDir = {});
-    void setLanguage(const QString& lang);       // loads and activates
+    void setLanguage(const QString& lang);
     QString language() const { return lang_; }
     QString t(const QString& key, const QVariantMap& args = {}) const;
 

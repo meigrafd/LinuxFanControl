@@ -3,6 +3,9 @@
 #include "RpcClient.h"
 #include "widgets/FanCard.h"
 #include "widgets/SensorCard.h"
+#include "dialogs/DetectDialog.h"
+#include "dialogs/ChannelEditorDialog.h"
+#include "TelemetryWorker.h"
 
 #include <QToolBar>
 #include <QAction>
@@ -17,24 +20,32 @@
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QFileDialog>
 #include <QApplication>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     buildUi();
     applyTheme(theme_);
     retranslate();
-
-    connect(&tick_, &QTimer::timeout, this, &MainWindow::tick);
-    tick_.start(1000);
-
+    startTelemetry();
     refreshAll();
+}
+
+MainWindow::~MainWindow() {
+    stopTelemetry();
 }
 
 void MainWindow::buildUi() {
     auto* tb = addToolBar("tb");
+
     auto* actTheme = new QAction(this);
+    actTheme->setText("Theme");
     connect(actTheme, &QAction::triggered, this, &MainWindow::onToggleTheme);
     tb->addAction(actTheme);
+
+    auto* actImport = new QAction(tr("Import FanControl config…"), this);
+    connect(actImport, &QAction::triggered, this, &MainWindow::importFanControlJson);
+    tb->addAction(actImport);
 
     tb->addSeparator();
     comboLang_ = new QComboBox(); comboLang_->addItems({"en","de"});
@@ -63,7 +74,7 @@ void MainWindow::buildUi() {
     splitter_ = new QSplitter(Qt::Orientation::Vertical, this);
     setCentralWidget(splitter_);
 
-    // Top: Channels
+    // Top: Channel tiles
     auto* top = new QWidget(); auto* topV = new QVBoxLayout(top);
     topV->addWidget(new QLabel(t("channels")));
     saChannels_ = new QScrollArea(); saChannels_->setWidgetResizable(true);
@@ -72,7 +83,7 @@ void MainWindow::buildUi() {
     topV->addWidget(saChannels_, 1);
     splitter_->addWidget(top);
 
-    // Bottom: Sources
+    // Bottom: Sources with selection & create
     auto* bottom = new QWidget(); auto* bottomV = new QVBoxLayout(bottom);
 
     auto* row = new QHBoxLayout();
@@ -126,7 +137,6 @@ void MainWindow::applyTheme(const QString& theme) {
 
 void MainWindow::retranslate() {
     setWindowTitle("Linux Fan Control");
-    // Update toolbar texts (we recreate texts on next refresh)
 }
 
 void MainWindow::onToggleTheme() {
@@ -154,7 +164,6 @@ void MainWindow::rebuildChannelCards() {
         m.enablePath = ch.enablePath; m.mode = ch.mode;
         m.manualPct = ch.manualPct; m.lastTemp = ch.lastTemp; m.lastOut = ch.lastOut;
         auto* card = new FanCard(m);
-        // Context menu
         card->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(card, &QWidget::customContextMenuRequested, this, [this, card](const QPoint& pos){ onChannelContextMenu(card, pos); });
         connect(card, &FanCard::editRequested, this, &MainWindow::onEditChannel);
@@ -194,6 +203,37 @@ void MainWindow::rebuildSources() {
     }
     wrapSensors_->update();
     wrapPwms_->update();
+}
+
+void MainWindow::startTelemetry() {
+    stopTelemetry();
+    teleThread_ = new QThread(this);
+    tele_ = new TelemetryWorker();
+    tele_->moveToThread(teleThread_);
+    connect(teleThread_, &QThread::started, tele_, &TelemetryWorker::start);
+    connect(teleThread_, &QThread::finished, tele_, &QObject::deleteLater);
+    connect(this, &QObject::destroyed, tele_, &TelemetryWorker::stop);
+    connect(tele_, &TelemetryWorker::tickReady, this, [this](QJsonArray arr){
+        for (auto v : arr) {
+            auto o = v.toObject();
+            QString id = o["id"].toString();
+            auto it = chans_.find(id);
+            if (it != chans_.end()) {
+                it->lastTemp = o["last_temp"].toDouble();
+                it->lastOut  = o["last_out"].toDouble();
+            }
+        }
+        tick();
+    });
+    teleThread_->start();
+}
+
+void MainWindow::stopTelemetry() {
+    if (!teleThread_) return;
+    QMetaObject::invokeMethod(tele_, "stop", Qt::QueuedConnection);
+    teleThread_->quit();
+    teleThread_->wait(2000);
+    teleThread_ = nullptr; tele_ = nullptr;
 }
 
 bool MainWindow::rpcEnumerate() {
@@ -280,9 +320,6 @@ void MainWindow::refreshChannels() {
 }
 
 void MainWindow::tick() {
-    // Update live values
-    if (!rpcListChannels()) return;
-    // Update cards quickly
     auto* fl = dynamic_cast<FlowLayout*>(wrapChannels_->layout());
     for (int i = 0; i < fl->count(); ++i) {
         auto* w = fl->itemAt(i)->widget();
@@ -294,16 +331,15 @@ void MainWindow::tick() {
 }
 
 void MainWindow::onOpenDetect() {
-    // Keep it simple: just call daemon's detection, then refresh channels
-    RpcClient cli; std::string err;
-    auto res = cli.call("detectCoupling", QJsonObject{{"hold_s",10.0},{"min_delta_c",1.0},{"rpm_delta_threshold",80}}, 60000, &err);
-    if (!res) { QMessageBox::warning(this, "LFC", QString::fromStdString(err)); return; }
-    QMessageBox::information(this, "LFC", tr_.t("detection_done", {{"n", res->toObject().size()}}));
+    DetectDialog dlg(this);
+    if (dlg.exec() == QDialog::Accepted) {
+        auto res = dlg.result();
+        QMessageBox::information(this, "LFC", tr_.t("detection_done", {{"n", res.size()}}));
+    }
     refreshChannels();
 }
 
 void MainWindow::onCreateFromSelection() {
-    // Pair first selected sensor with all selected writable PWMs
     QString sensorPath;
     for (const auto& s : temps_) if (selSensors_.value(s.label)) { sensorPath = s.path; break; }
     if (sensorPath.isEmpty()) { QMessageBox::information(this, "LFC", tr_.t("select_sources_first")); return; }
@@ -325,15 +361,7 @@ void MainWindow::onEngine(bool start) {
 }
 
 void MainWindow::onEditChannel(const QString& id) {
-    // Minimal: rename via dialog (curve editor can be added later)
-    auto it = chans_.find(id);
-    if (it == chans_.end()) return;
-    bool ok=false;
-    QString newName = QInputDialog::getText(this, "LFC", tr_.t("rename_prompt"), QLineEdit::Normal, it->name, &ok);
-    if (!ok || newName.trimmed().isEmpty()) return;
-    // Frontend rename: (daemon can add RPC later)
-    it->name = newName;
-    rebuildChannelCards();
+    openChannelEditor(id);
 }
 
 void MainWindow::onChannelContextMenu(FanCard* card, const QPoint& pos) {
@@ -349,4 +377,68 @@ void MainWindow::onChannelContextMenu(FanCard* card, const QPoint& pos) {
             refreshChannels();
         }
     }
+}
+
+void MainWindow::openChannelEditor(const QString& id) {
+    auto it = chans_.find(id); if (it == chans_.end()) return;
+    ChannelEditorDialog::Model m;
+    m.id = it->id; m.name = it->name;
+    m.hyst = 0.5; m.tau = 2.0;
+    m.curve = { {20,0},{35,25},{50,50},{70,80} }; // TODO: fetch from daemon if exposed
+
+    ChannelEditorDialog dlg(m, this);
+    connect(&dlg, &ChannelEditorDialog::saveRequested, this, [this](QString cid, QString newName, QVector<QPointF> curve, double hyst, double tau){
+        rpcSetChannelCurve(cid, curve);
+        rpcSetChannelHystTau(cid, hyst, tau);
+        auto it = chans_.find(cid); if (it!=chans_.end()) it->name = newName;
+        rebuildChannelCards();
+    });
+    dlg.exec();
+}
+
+bool MainWindow::rpcSetChannelCurve(const QString& id, const QVector<QPointF>& pts) {
+    QJsonArray arr;
+    for (auto& p : pts) arr.push_back(QJsonArray{ p.x(), p.y() });
+    RpcClient cli; std::string err;
+    return cli.call("setChannelCurve", QJsonObject{{"id",id},{"curve",arr}}, 10000, &err).has_value();
+}
+
+bool MainWindow::rpcSetChannelHystTau(const QString& id, double hyst, double tau) {
+    RpcClient cli; std::string err;
+    return cli.call("setChannelHystTau", QJsonObject{{"id",id},{"hyst",hyst},{"tau",tau}}, 10000, &err).has_value();
+}
+
+void MainWindow::importFanControlJson() {
+    QString path = QFileDialog::getOpenFileName(this, "Import FanControl JSON", QString(), "JSON (*.json)");
+    if (path.isEmpty()) return;
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) { QMessageBox::warning(this, "LFC", "Failed to open file."); return; }
+    auto doc = QJsonDocument::fromJson(f.readAll());
+    if (!doc.isObject()) { QMessageBox::warning(this, "LFC", "Invalid JSON."); return; }
+    auto root = doc.object();
+
+    int created = 0;
+    QString defaultSensor;
+    if (!temps_.isEmpty()) defaultSensor = temps_.first().path;
+
+    auto tryCreate = [&](const QString& name){
+        auto it = std::find_if(pwms_.begin(), pwms_.end(), [&](const Pwm& p){ return name.contains(p.label, Qt::CaseInsensitive); });
+        if (it == pwms_.end()) return;
+        if (rpcCreateChannel(it->label, defaultSensor, it->pwmPath, it->enablePath)) ++created;
+    };
+        if (root.contains("Controls") && root["Controls"].isArray()) {
+            for (auto v : root["Controls"].toArray()) {
+                auto o = v.toObject();
+                QString nm = o["Name"].toString();
+                if (!nm.isEmpty()) tryCreate(nm);
+            }
+        } else if (root.contains("MixedCurves") && root["MixedCurves"].isArray()) {
+            for (auto v : root["MixedCurves"].toArray()) {
+                auto o = v.toObject();
+                QString nm = o["Name"].toString();
+                if (!nm.isEmpty()) tryCreate(nm);
+            }
+        }
+        QMessageBox::information(this, "LFC", tr_.t("created_n", {{"n", created}}));
+        refreshChannels();
 }

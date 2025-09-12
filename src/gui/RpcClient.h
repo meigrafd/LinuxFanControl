@@ -1,16 +1,13 @@
 #pragma once
 #include <string>
 #include <optional>
-#include <functional>
-#include <vector>
 #include <QString>
 #include <QByteArray>
 #include <QJsonObject>
 #include <QJsonValue>
 
 /* Simple JSON-RPC 2.0 over UNIX domain socket (newline-delimited JSON).
- * Blocking calls with timeout. Suitable for GUI thread for short ops;
- * heavy ops should go into a worker thread.
+ * Blocking calls with timeout. GUI offloads heavy calls to worker threads.
  */
 class RpcClient {
 public:
@@ -20,7 +17,6 @@ public:
     bool connect(std::string* err = nullptr);
     void close();
 
-    // Call method with params (QJsonObject or convertible), returns result object.
     std::optional<QJsonValue> call(const QString& method,
                                    const QJsonObject& params,
                                    int timeoutMs,

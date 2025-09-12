@@ -1,7 +1,6 @@
 #pragma once
 #include <QFrame>
 #include <QString>
-#include <QJsonObject>
 
 class QLabel;
 class QComboBox;
@@ -19,7 +18,6 @@ public:
     };
     explicit FanCard(const Model& m, QWidget* parent = nullptr);
 
-    void setTexts(const QString& editText, const QString& sensorText, const QString& tempText, const QString& outText);
     void updateTelemetry(double tempC, double outPct);
     void rename(const QString& newName);
     QString id() const { return m_.id; }

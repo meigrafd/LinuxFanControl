@@ -14,6 +14,12 @@
 # EXTERNAL cache entries
 ########################
 
+//Build daemon
+BUILD_DAEMON:BOOL=ON
+
+//Build Qt6 GUI
+BUILD_GUI:BOOL=ON
+
 //Path to a program.
 CMAKE_ADDR2LINE:FILEPATH=/usr/bin/addr2line
 
@@ -22,7 +28,7 @@ CMAKE_AR:FILEPATH=/usr/bin/ar
 
 //Choose the type of build, options are: None Debug Release RelWithDebInfo
 // MinSizeRel ...
-CMAKE_BUILD_TYPE:STRING=Release
+CMAKE_BUILD_TYPE:STRING=RelWithDebInfo
 
 //Enable/Disable color output during build.
 CMAKE_COLOR_MAKEFILE:BOOL=ON
@@ -122,7 +128,7 @@ CMAKE_PROJECT_DESCRIPTION:STATIC=
 CMAKE_PROJECT_HOMEPAGE_URL:STATIC=
 
 //Value Computed by CMake
-CMAKE_PROJECT_NAME:STATIC=lfc-gui
+CMAKE_PROJECT_NAME:STATIC=LinuxFanControl
 
 //Path to a program.
 CMAKE_RANLIB:FILEPATH=/usr/bin/ranlib
@@ -189,17 +195,29 @@ CMAKE_TAPI:FILEPATH=CMAKE_TAPI-NOTFOUND
 // Studio IDE projects all commands are done without /nologo.
 CMAKE_VERBOSE_MAKEFILE:BOOL=FALSE
 
-//The directory containing a CMake configuration file for Qt6.
-Qt6_DIR:PATH=Qt6_DIR-NOTFOUND
+//Value Computed by CMake
+LinuxFanControl_BINARY_DIR:STATIC=/mnt/Github/LinuxFanControl/build
 
 //Value Computed by CMake
-lfc-gui_BINARY_DIR:STATIC=/mnt/Github/LinuxFanControl/build
+LinuxFanControl_IS_TOP_LEVEL:STATIC=ON
 
 //Value Computed by CMake
-lfc-gui_IS_TOP_LEVEL:STATIC=ON
+LinuxFanControl_SOURCE_DIR:STATIC=/mnt/Github/LinuxFanControl
+
+//Arguments to supply to pkg-config
+PKG_CONFIG_ARGN:STRING=
+
+//pkg-config executable
+PKG_CONFIG_EXECUTABLE:FILEPATH=/usr/bin/pkg-config
 
 //Value Computed by CMake
-lfc-gui_SOURCE_DIR:STATIC=/mnt/Github/LinuxFanControl/src
+lfcd_BINARY_DIR:STATIC=/mnt/Github/LinuxFanControl/build/src/daemon
+
+//Value Computed by CMake
+lfcd_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+lfcd_SOURCE_DIR:STATIC=/mnt/Github/LinuxFanControl/src/daemon
 
 
 ########################
@@ -272,7 +290,7 @@ CMAKE_GENERATOR_PLATFORM:INTERNAL=
 CMAKE_GENERATOR_TOOLSET:INTERNAL=
 //Source directory with the top level CMakeLists.txt file for this
 // project
-CMAKE_HOME_DIRECTORY:INTERNAL=/mnt/Github/LinuxFanControl/src
+CMAKE_HOME_DIRECTORY:INTERNAL=/mnt/Github/LinuxFanControl
 //Install .so files without execute permission.
 CMAKE_INSTALL_SO_NO_EXE:INTERNAL=0
 //ADVANCED property for variable: CMAKE_LINKER
@@ -292,7 +310,7 @@ CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_NM
 CMAKE_NM-ADVANCED:INTERNAL=1
 //number of local generators
-CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=1
+CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=3
 //ADVANCED property for variable: CMAKE_OBJCOPY
 CMAKE_OBJCOPY-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_OBJDUMP
@@ -337,6 +355,37 @@ CMAKE_TAPI-ADVANCED:INTERNAL=1
 CMAKE_UNAME:INTERNAL=/usr/bin/uname
 //ADVANCED property for variable: CMAKE_VERBOSE_MAKEFILE
 CMAKE_VERBOSE_MAKEFILE-ADVANCED:INTERNAL=1
+//Details about finding PkgConfig
+FIND_PACKAGE_MESSAGE_DETAILS_PkgConfig:INTERNAL=[/usr/bin/pkg-config][v2.3.0()]
+//ADVANCED property for variable: PKG_CONFIG_ARGN
+PKG_CONFIG_ARGN-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: PKG_CONFIG_EXECUTABLE
+PKG_CONFIG_EXECUTABLE-ADVANCED:INTERNAL=1
+SENSORS_CFLAGS:INTERNAL=
+SENSORS_CFLAGS_I:INTERNAL=
+SENSORS_CFLAGS_OTHER:INTERNAL=
+SENSORS_FOUND:INTERNAL=
+SENSORS_INCLUDEDIR:INTERNAL=
+SENSORS_LIBDIR:INTERNAL=
+SENSORS_LIBS:INTERNAL=
+SENSORS_LIBS_L:INTERNAL=
+SENSORS_LIBS_OTHER:INTERNAL=
+SENSORS_LIBS_PATHS:INTERNAL=
+SENSORS_MODULE_NAME:INTERNAL=
+SENSORS_PREFIX:INTERNAL=
+SENSORS_STATIC_CFLAGS:INTERNAL=
+SENSORS_STATIC_CFLAGS_I:INTERNAL=
+SENSORS_STATIC_CFLAGS_OTHER:INTERNAL=
+SENSORS_STATIC_LIBDIR:INTERNAL=
+SENSORS_STATIC_LIBS:INTERNAL=
+SENSORS_STATIC_LIBS_L:INTERNAL=
+SENSORS_STATIC_LIBS_OTHER:INTERNAL=
+SENSORS_STATIC_LIBS_PATHS:INTERNAL=
+SENSORS_VERSION:INTERNAL=
+SENSORS_libsensors_INCLUDEDIR:INTERNAL=
+SENSORS_libsensors_LIBDIR:INTERNAL=
+SENSORS_libsensors_PREFIX:INTERNAL=
+SENSORS_libsensors_VERSION:INTERNAL=
 //linker supports push/pop state
 _CMAKE_CXX_LINKER_PUSHPOP_STATE_SUPPORTED:INTERNAL=TRUE
 //linker supports push/pop state

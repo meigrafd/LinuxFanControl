@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QCoreApplication>
 
 static QStringList localeDirs(const QString& srcDir) {
     QStringList dirs;
@@ -54,7 +55,6 @@ void Translations::setLanguage(const QString& lang) { load(lang); }
 
 QString Translations::t(const QString& key, const QVariantMap& args) const {
     QString s = map_.value(key, key);
-    // naive {name} formatter
     for (auto it = args.begin(); it != args.end(); ++it) {
         s.replace("{" + it.key() + "}", it.value().toString());
     }
