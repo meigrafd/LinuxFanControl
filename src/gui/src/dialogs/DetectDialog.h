@@ -1,21 +1,39 @@
 #pragma once
+// Detection dialog: enumerates sensors + PWMs via RPC and displays a selection.
+// Comments in English per project guideline.
+
 #include <QDialog>
 #include <QJsonObject>
-class QPlainTextEdit;
-class QProgressBar;
+#include <QJsonArray>
+
 class QPushButton;
+class QTableWidget;
+class RpcClient;
 
 class DetectDialog : public QDialog {
     Q_OBJECT
 public:
-    explicit DetectDialog(QWidget* parent=nullptr);
-    QJsonObject result() const { return result_; }
+    explicit DetectDialog(RpcClient* rpc, QWidget* parent = nullptr);
+
+    // Access selections after Accepted
+    QJsonArray selectedPwms() const;     // array of objects {label,pwm,enable,tach}
+    QJsonArray sensors() const;          // last enumerated sensors
+
+private slots:
+    void onRefresh();
+    void onAccept();
+
 private:
-    QPlainTextEdit* log_ = nullptr;
-    QProgressBar* bar_ = nullptr;
-    QPushButton *btnRun_=nullptr, *btnClose_=nullptr;
-    QJsonObject result_;
-    void append(const QString& s);
-    void runDetect();
-    void onDone(const QJsonObject& r, const QString& err);
+    void buildUi();
+    void populate(const QJsonObject& enumerateResult);
+
+private:
+    RpcClient*   rpc_{nullptr};
+    QTableWidget* tbl_{nullptr};
+    QPushButton*  btnRefresh_{nullptr};
+    QPushButton*  btnOk_{nullptr};
+    QPushButton*  btnCancel_{nullptr};
+
+    QJsonArray pwms_;
+    QJsonArray sensors_;
 };

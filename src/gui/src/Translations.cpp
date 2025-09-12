@@ -1,62 +1,36 @@
-#include "Translations.h"
-#include <QFile>
-#include <QDir>
-#include <QJsonDocument>
+#include "TelemetryWorker.h"
+#include "RpcClient.h"
+
+#include <QTimer>
 #include <QJsonObject>
-#include <QCoreApplication>
+#include <QJsonArray>
 
-static QStringList localeDirs(const QString& srcDir) {
-    QStringList dirs;
-    if (qEnvironmentVariableIsSet("LFCD_LOCALES"))
-        dirs << qEnvironmentVariable("LFCD_LOCALES");
-    dirs << (QCoreApplication::applicationDirPath() + "/locales");
-    if (!srcDir.isEmpty()) dirs << (srcDir + "/locales");
-    return dirs;
+TelemetryWorker::TelemetryWorker(RpcClient* rpc, QObject* parent)
+: QObject(parent), rpc_(rpc) {}
+
+void TelemetryWorker::start(int intervalMs) {
+    if (!timer_) {
+        timer_ = new QTimer(this);
+        connect(timer_, &QTimer::timeout, this, &TelemetryWorker::pollOnce);
+    }
+    if (!timer_->isActive()) {
+        timer_->start(intervalMs);
+    }
+    // Initial tick
+    pollOnce();
 }
 
-Translations::Translations(QString sourceDir) : sourceDir_(std::move(sourceDir)) {
-    load(lang_);
+void TelemetryWorker::stop() {
+    if (timer_) timer_->stop();
 }
 
-QString Translations::findLocaleFile(const QString& lang) const {
-    const auto dirs = localeDirs(sourceDir_);
-    for (const auto& d : dirs) {
-        QString p1 = QDir(d).filePath(lang + "/messages.json");
-        QString p2 = QDir(d).filePath(lang + ".json");
-        if (QFile::exists(p1)) return p1;
-        if (QFile::exists(p2)) return p2;
+void TelemetryWorker::pollOnce() {
+    if (!rpc_) return;
+    // Use RpcClient overload with timeout; unwrap "result" as array.
+    auto res = rpc_->call("listChannels", QJsonObject{}, /*timeoutMs*/ 4000, static_cast<std::string*>(nullptr));
+    QJsonArray arr;
+    if (res && res->contains("result") && (*res)["result"].isArray()) {
+        arr = (*res)["result"].toArray();
     }
-    return {};
-}
-
-void Translations::load(const QString& lang) {
-    map_.clear();
-    QString path = findLocaleFile(lang);
-    QString use = lang;
-    if (path.isEmpty() && lang != "en") {
-        path = findLocaleFile("en");
-        use = "en";
-    }
-    if (!path.isEmpty()) {
-        QFile f(path);
-        if (f.open(QIODevice::ReadOnly)) {
-            auto doc = QJsonDocument::fromJson(f.readAll());
-            if (doc.isObject()) {
-                for (auto it = doc.object().begin(); it != doc.object().end(); ++it) {
-                    map_.insert(it.key(), it.value().toString());
-                }
-            }
-        }
-    }
-    lang_ = use;
-}
-
-void Translations::setLanguage(const QString& lang) { load(lang); }
-
-QString Translations::t(const QString& key, const QVariantMap& args) const {
-    QString s = map_.value(key, key);
-    for (auto it = args.begin(); it != args.end(); ++it) {
-        s.replace("{" + it.key() + "}", it.value().toString());
-    }
-    return s;
+    emit tickReady(arr);
 }
