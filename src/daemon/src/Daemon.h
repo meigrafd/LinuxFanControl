@@ -1,60 +1,34 @@
 #pragma once
-// Daemon interface (JSON-RPC 2.0 with batch).
-// Adds: detectCalibrate (port of Python auto-setup: perturbation + calibration).
-// Also enforces single-instance via Unix socket probing.
-// Comments in English per project guideline.
+/*
+ * Linux Fan Control (lfcd) - Daemon interface
+ * (c) 2025 meigrafd & contributors - MIT License
+ *
+ * Notes:
+ *  - This header declares a single Daemon class used by main.cpp.
+ *  - It matches Daemon.cpp (constructor with optional debug flag, run/init/stop).
+ *  - RpcServer is used for JSON-RPC 2.0 stdin/stdout loop.
+ */
 
+#include <cstdint>
 #include <string>
-#include <atomic>
-#include <nlohmann/json.hpp>
-
-class Hwmon;
-class Engine;
+#include "RpcServer.h"
 
 class Daemon {
 public:
-    Daemon();
+    // Constructor with optional debug flag; also acts as a default constructor.
+    explicit Daemon(bool debug = false);
     ~Daemon();
 
-    bool init();                  // bind/listen (returns false if another instance is running)
-    bool pumpOnce(int timeoutMs); // accept one client with timeout; true => keep looping
-    void shutdown();              // stop server
+    // Initialize subsystems (lightweight; no long-running work here).
+    bool init();
+
+    // Enter the JSON-RPC processing loop (blocking until stdin closes).
+    int run();
+
+    // Cooperative stop hook (no-op unless server gains stop support).
+    void requestStop();
 
 private:
-    // RPC plumbing
-    nlohmann::json dispatch(const nlohmann::json& req);
-
-    // Core RPCs
-    nlohmann::json rpcEnumerate();
-    nlohmann::json rpcListChannels();
-
-    bool rpcCreateChannel(const std::string& name,
-                          const std::string& sensor,
-                          const std::string& pwm);
-    bool rpcDeleteChannel(const std::string& id);
-    bool rpcSetChannelMode(const std::string& id, const std::string& mode);
-    bool rpcSetChannelManual(const std::string& id, double pct);
-    bool rpcSetChannelCurve(const std::string& id,
-                            const std::vector<std::pair<double,double>>& pts);
-    bool rpcSetChannelHystTau(const std::string& id, double hyst, double tau);
-    bool rpcDeleteCoupling(const std::string& id);
-
-    // Auto-setup (detection + calibration), returns JSON summary.
-    nlohmann::json rpcDetectCalibrate();
-
-    static nlohmann::json error_obj(const nlohmann::json& id, int code, const std::string& msg);
-    static nlohmann::json result_obj(const nlohmann::json& id, const nlohmann::json& result);
-
-    // single-instance helpers
-    bool isAlreadyRunning() const; // try connect to existing socket
-
-private:
-    std::string  sockPath_;
-    int          srvFd_;
-    std::atomic<bool> running_;
-    bool         debug_; // controlled by env LFC_DEBUG
-
-    // owned components
-    Hwmon*  hw_;
-    Engine* engine_;
+    bool debug_ = false;
+    RpcServer server_;
 };
