@@ -1,4 +1,5 @@
 #include "Engine.h"
+#include "Hwmon.h"
 #include <chrono>
 #include <algorithm>
 
