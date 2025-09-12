@@ -1,0 +1,18 @@
+{
+  "language": "Sprache",
+  "refresh": "Aktualisieren",
+  "detect": "Erkennen",
+  "engine_start_short": "Start",
+  "engine_stop_short": "Stop",
+  "channels": "Channels",
+  "create_from_selection": "Aus Auswahl erstellen",
+  "sensors": "Sensoren",
+  "pwms": "PWM-Ausgänge",
+  "select_sources_first": "Bitte mindestens einen Sensor und einen PWM auswählen.",
+  "created_n": "{n} Channel(s) erstellt.",
+  "detection_done": "Erkennung abgeschlossen. {n} Zuordnung(en) gefunden.",
+  "rename": "Umbenennen",
+  "delete": "Löschen",
+  "rename_prompt": "Neuer Name:",
+  "confirm_delete": "Diesen Channel löschen?"
+}

@@ -1,0 +1,18 @@
+{
+  "language": "Language",
+  "refresh": "Refresh",
+  "detect": "Detect",
+  "engine_start_short": "Start",
+  "engine_stop_short": "Stop",
+  "channels": "Channels",
+  "create_from_selection": "Create from selection",
+  "sensors": "Sensors",
+  "pwms": "PWM outputs",
+  "select_sources_first": "Select at least one sensor and one PWM.",
+  "created_n": "Created {n} channel(s).",
+  "detection_done": "Detection finished. Found {n} mapping(s).",
+  "rename": "Rename",
+  "delete": "Delete",
+  "rename_prompt": "New name:",
+  "confirm_delete": "Delete this channel?"
+}
