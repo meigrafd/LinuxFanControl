@@ -8,12 +8,12 @@
 #include <cstring>
 #include <stdexcept>
 #include <algorithm>
+#include <cmath> // std::lround
 
 using namespace std;
 namespace fs = std::filesystem;
 
-// --- discovery -------------------------------------------------------------
-
+// -------------------- discovery: temps --------------------
 std::vector<TempSensorInfo> Hwmon::discoverTemps() const {
     std::vector<TempSensorInfo> out;
     const fs::path base("/sys/class/hwmon");
@@ -29,7 +29,7 @@ std::vector<TempSensorInfo> Hwmon::discoverTemps() const {
             if (f) std::getline(f, devname);
         }
 
-        // Build map tempN -> label (if label files exist)
+        // tempN -> label (if *_label exists)
         std::unordered_map<std::string, std::string> labelByTemp;
         for (auto& e : fs::directory_iterator(dir)) {
             const std::string fn = e.path().filename().string();
@@ -37,7 +37,7 @@ std::vector<TempSensorInfo> Hwmon::discoverTemps() const {
                 std::ifstream fl(e.path());
                 std::string lab;
                 if (fl) std::getline(fl, lab);
-                const auto n = fn.substr(0, fn.find('_')); // tempN
+                const auto n = fn.substr(0, fn.find('_')); // "tempN"
                 labelByTemp[n] = lab;
             }
         }
@@ -45,21 +45,21 @@ std::vector<TempSensorInfo> Hwmon::discoverTemps() const {
         for (auto& e : fs::directory_iterator(dir)) {
             const std::string fn = e.path().filename().string();
             if (fn.rfind("temp", 0) == 0 && fn.size() > 6 && fn.ends_with("_input")) {
-                const std::string n = fn.substr(0, fn.find('_')); // tempN
+                const std::string n   = fn.substr(0, fn.find('_')); // tempN
                 const std::string raw = (labelByTemp.count(n) ? labelByTemp[n] : n);
-                // crude type suggestion
+
+                // type guess
+                std::string low = raw; std::transform(low.begin(), low.end(), low.begin(), ::tolower);
                 std::string type = "Unknown";
-                const std::string low = raw;
-                auto contains = [&](const char* pat){
-                    return low.find(pat) != std::string::npos;
-                };
-                if (contains("cpu") || contains("tctl") || contains("tdie")) type = "CPU";
-                else if (contains("gpu") || contains("junction") || contains("hotspot")) type = "GPU";
-                else if (contains("nvme")) type = "NVMe";
-                else if (contains("ambient")) type = "Ambient";
-                else if (contains("water") || contains("liquid")) type = "Water";
+                auto has = [&](const char* s){ return low.find(s) != std::string::npos; };
+                if (has("cpu") || has("tctl") || has("tdie")) type = "CPU";
+                else if (has("gpu") || has("hotspot") || has("junction")) type = "GPU";
+                else if (has("nvme")) type = "NVMe";
+                else if (has("ambient")) type = "Ambient";
+                else if (has("water") || has("liquid")) type = "Water";
 
                 TempSensorInfo info;
+                info.name  = raw; // short
                 info.label = devname.empty() ? (dir.filename().string()+":"+raw) : (devname+":"+raw);
                 info.path  = e.path().string();
                 info.type  = type;
@@ -70,6 +70,7 @@ std::vector<TempSensorInfo> Hwmon::discoverTemps() const {
     return out;
 }
 
+// -------------------- discovery: pwms ---------------------
 std::vector<PwmDevice> Hwmon::discoverPwms() const {
     std::vector<PwmDevice> out;
     const fs::path base("/sys/class/hwmon");
@@ -83,7 +84,7 @@ std::vector<PwmDevice> Hwmon::discoverPwms() const {
             if (fn.rfind("pwm", 0) == 0 && fn.size() >= 4 && std::isdigit(static_cast<unsigned char>(fn[3]))) {
                 PwmDevice dev;
                 dev.pwm_path = e.path().string();
-                const std::string n = fn.substr(3); // number
+                const std::string n = fn.substr(3); // "N"
                 const fs::path enable = dir / ("pwm"+n+"_enable");
                 if (fs::exists(enable)) dev.enable_path = enable.string();
                 const fs::path tach = dir / ("fan"+n+"_input");
@@ -95,13 +96,11 @@ std::vector<PwmDevice> Hwmon::discoverPwms() const {
     return out;
 }
 
-// --- helpers ---------------------------------------------------------------
-
+// -------------------- helpers -----------------------------
 double Hwmon::readTempC(const std::string& path) {
     std::ifstream f(path);
     if (!f) return std::numeric_limits<double>::quiet_NaN();
-    long long raw = 0;
-    f >> raw;
+    long long raw = 0; f >> raw;
     return milli_to_c(static_cast<double>(raw));
 }
 

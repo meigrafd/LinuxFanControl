@@ -1,41 +1,56 @@
 #pragma once
-// Minimal Engine surface so Daemon can link; real logic remains in your implementation.
+// Header aligned to Engine.cpp expectations (per your build log)
 
 #include <string>
 #include <vector>
 #include <utility>
+#include <thread>
+#include <atomic>
+#include <mutex>
+
+struct CurvePoint { double x{0.0}; double y{0.0}; };
 
 struct Channel {
-    int         id{0};
+    std::string id;           // string id
     std::string name;
-    std::string sensorPath;
-    std::string pwmPath;
-    std::string enablePath;
-    std::string tachPath;
-    std::string mode;       // "Auto" / "Manual"
+    std::string sensor_path;  // temp source
+    std::string pwm_path;     // pwm sysfs
+    std::string enable_path;  // pwmN_enable
+    std::string tach_path;    // fanN_input
+    std::string mode;         // "Auto"/"Manual"
     double      manualValue{0.0};
     double      hystC{0.0};
     double      tauS{0.0};
-    std::vector<std::pair<double,double>> curve;
+    std::vector<CurvePoint> curve;
     double min_pct{0.0};
     double max_pct{100.0};
 };
 
 class Engine {
 public:
-    void start();
+    // lifecycle
+    void setChannels(std::vector<Channel> chs);
+    std::vector<Channel> snapshot();
+    bool start();
     void stop();
-    bool running() const;
+    bool running() const { return running_; }
 
-    // Keep daemon building; replace with your real implementations later.
-    int  createChannel(const std::string&, const std::string&, const std::string&) { return 0; }
-    bool deleteChannel(int) { return false; }
-    bool setMode(int, const std::string&) { return false; }
-    bool setManual(int, double) { return false; }
-    bool setCurve(int, const std::vector<std::pair<double,double>>&) { return false; }
-    bool setHystTau(int, double, double) { return false; }
-    bool deleteCoupling(int) { return false; }
-    const std::vector<Channel>& channels() const {
-        static const std::vector<Channel> empty; return empty;
-    }
+    // mutations used by Daemon
+    void updateChannelMode(const std::string& id, const std::string& mode);
+    void updateChannelManual(const std::string& id, double pct);
+    void updateChannelCurve(const std::string& id, const std::vector<CurvePoint>& pts);
+    void updateChannelHystTau(const std::string& id, double hyst, double tau);
+
+    // helpers
+    static double evalCurve(const std::vector<CurvePoint>& pts, double x);
+
+private:
+    void loop();
+
+private:
+    std::vector<Channel> channels_;
+    std::atomic<bool>    running_{false};
+    std::thread          th_;
+    std::mutex           mtx_;
+    // (controller_ remains in Engine.cpp TU if you keep it there)
 };
