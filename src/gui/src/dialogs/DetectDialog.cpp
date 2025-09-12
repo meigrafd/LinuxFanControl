@@ -1,3 +1,8 @@
+/*
+ * Linux Fan Control (LFC)
+ * (c) 2025 meigrafd & contributors - MIT License
+ */
+
 #include "dialogs/DetectDialog.h"
 #include "RpcClient.h"
 
@@ -20,9 +25,7 @@ public:
 public slots:
     void run() {
         emit log("Detecting sensors & PWM outputs…");
-        // Create a fresh RpcClient on this worker thread to avoid cross-thread sockets.
-        RpcClient rpc;
-
+        RpcClient rpc; // separate socket on worker thread
         auto res = rpc.call("detectCalibrate");  // blocking, but we're in worker thread
         if (!res.contains("result")) {
             emit failed("detectCalibrate failed");
@@ -70,8 +73,8 @@ void DetectDialog::buildUi() {
 
     auto* h = new QHBoxLayout();
     h->addStretch(1);
-    btnStart_{new QPushButton("Start", this)};
-    btnCancel_{new QPushButton("Close", this)};
+    btnStart_  = new QPushButton("Start", this);
+    btnCancel_ = new QPushButton("Close", this);
     h->addWidget(btnStart_);
     h->addWidget(btnCancel_);
 
@@ -150,5 +153,5 @@ void DetectDialog::onWorkerFailed(const QString& err) {
     reject();
 }
 
-// IMPORTANT for AUTOMOC when Q_OBJECT is in this .cpp:
+// IMPORTANT for AUTOMOC when Q_OBJECT is only in this .cpp:
 #include "DetectDialog.moc"

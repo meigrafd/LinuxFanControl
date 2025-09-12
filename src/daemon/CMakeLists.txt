@@ -1,72 +1,81 @@
-# Daemon (lfcd) — libsensors + JSON-RPC (nlohmann-json)
-cmake_minimum_required(VERSION 3.20)
-project(lfcd LANGUAGES CXX)
-set(CMAKE_CXX_STANDARD 20)
+cmake_minimum_required(VERSION 3.16)
+
+# ------------------------------------------------------------------
+# Linux Fan Control - Daemon (lfcd)
+# Links against libsensors and pthread; uses header-only src/common/.
+# ------------------------------------------------------------------
+project(lfcd CXX)
+
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Option to use pkg-config (can be disabled from CLI)
-option(USE_PKGCONFIG_SENSORS "Use pkg-config to find libsensors" ON)
+find_package(Threads REQUIRED)
+find_package(PkgConfig QUIET)
 
-# 1) Try pkg-config (optional)
-if (USE_PKGCONFIG_SENSORS)
-  find_package(PkgConfig)
-  if (PkgConfig_FOUND)
-    pkg_check_modules(SENSORS QUIET libsensors)
+# You can override these from the command line:
+#   -DSENSORS_INCLUDE_DIRS=/usr/include
+#   -DSENSORS_LIBRARIES=/usr/lib64/libsensors.so
+set(SENSORS_INCLUDE_DIRS "${SENSORS_INCLUDE_DIRS}" CACHE PATH "libsensors include directory")
+set(SENSORS_LIBRARIES    "${SENSORS_LIBRARIES}"    CACHE FILEPATH "libsensors library file (.so)")
+
+if(NOT SENSORS_INCLUDE_DIRS OR NOT SENSORS_LIBRARIES)
+  if(PKG_CONFIG_FOUND)
+    pkg_check_modules(LIBSENSORS QUIET libsensors)
+    if(LIBSENSORS_FOUND)
+      message(STATUS "libsensors include (pkg): ${LIBSENSORS_INCLUDE_DIRS}")
+      message(STATUS "libsensors libs    (pkg): ${LIBSENSORS_LINK_LIBRARIES}")
+      set(SENSORS_INCLUDE_DIRS ${LIBSENSORS_INCLUDE_DIRS})
+      # Prefer full .so path if available, else fall back to -lsensors
+      if(LIBSENSORS_LINK_LIBRARIES)
+        set(SENSORS_LIBRARIES ${LIBSENSORS_LINK_LIBRARIES})
+      else()
+        set(SENSORS_LIBRARIES sensors)
+      endif()
+    endif()
   endif()
 endif()
 
-# 2) Fallback / manual override: accept -DSENSORS_INCLUDE_DIRS and -DSENSORS_LIBRARIES
-if (NOT SENSORS_FOUND)
-  if (NOT SENSORS_INCLUDE_DIRS)
-    find_path(SENSORS_INCLUDE_DIRS sensors/sensors.h PATH_SUFFIXES include)
-  endif()
-  if (NOT SENSORS_LIBRARIES)
-    find_library(SENSORS_LIBRARIES NAMES sensors libsensors)
-  endif()
-  if (SENSORS_INCLUDE_DIRS AND SENSORS_LIBRARIES)
-    set(SENSORS_FOUND TRUE)
-  endif()
+if(NOT SENSORS_INCLUDE_DIRS OR NOT SENSORS_LIBRARIES)
+  message(FATAL_ERROR "libsensors not found. Supply paths with:
+  -DSENSORS_INCLUDE_DIRS=/usr/include -DSENSORS_LIBRARIES=/usr/lib64/libsensors.so
+  or install pkg-config + libsensors-devel.")
 endif()
 
-if (NOT SENSORS_FOUND)
-  message(FATAL_ERROR "libsensors not found. Install lm_sensors-devel OR pass -DSENSORS_INCLUDE_DIRS and -DSENSORS_LIBRARIES.")
+# Sources (use GLOB to avoid mismatches while files are shifting)
+file(GLOB_RECURSE DAEMON_SOURCES CONFIGURE_DEPENDS
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cxx
+)
+if(DAEMON_SOURCES STREQUAL "")
+  message(FATAL_ERROR "No daemon sources found under ${CMAKE_CURRENT_SOURCE_DIR}/src")
 endif()
-
-# Log what we are going to use
-message(STATUS "libsensors include: ${SENSORS_INCLUDE_DIRS}")
-message(STATUS "libsensors libs   : ${SENSORS_LIBRARIES}")
-
-# nlohmann-json (header-only)
-find_path(NLOHMANN_JSON_INCLUDE_DIR nlohmann/json.hpp)
-if (NOT NLOHMANN_JSON_INCLUDE_DIR)
-  message(FATAL_ERROR "nlohmann/json.hpp not found. Install nlohmann-json-devel.")
-endif()
-message(STATUS "nlohmann-json include: ${NLOHMANN_JSON_INCLUDE_DIR}")
 
 add_executable(lfcd
-  src/main.cpp
-  src/Daemon.cpp
-  src/Daemon.h
-  src/Hwmon.cpp
-  src/Hwmon.h
-  src/Engine.cpp
-  src/Engine.h
-  src/RpcServer.cpp
-  src/RpcServer.h
+  ${DAEMON_SOURCES}
 )
 
 target_include_directories(lfcd PRIVATE
-  ${SENSORS_INCLUDE_DIRS}
-  ${NLOHMANN_JSON_INCLUDE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${CMAKE_SOURCE_DIR}/src/common
-)
-target_link_libraries(lfcd PRIVATE
-  ${SENSORS_LIBRARIES}
+  ${SENSORS_INCLUDE_DIRS}
 )
 
-if (DEFINED SENSORS_CFLAGS_OTHER)
-  target_compile_options(lfcd PRIVATE ${SENSORS_CFLAGS_OTHER})
+# Allow either absolute path to libsensors.so or -lsensors
+if(EXISTS "${SENSORS_LIBRARIES}")
+  target_link_libraries(lfcd PRIVATE "${SENSORS_LIBRARIES}" Threads::Threads)
+else()
+  target_link_libraries(lfcd PRIVATE ${SENSORS_LIBRARIES} Threads::Threads)
+endif()
+
+# rpath helper for non-standard libsensors path
+if(EXISTS "${SENSORS_LIBRARIES}")
+  get_filename_component(_sens_dir "${SENSORS_LIBRARIES}" DIRECTORY)
+  if(_sens_dir)
+    set_target_properties(lfcd PROPERTIES
+      BUILD_RPATH "${_sens_dir}"
+      INSTALL_RPATH "${_sens_dir}")
+  endif()
 endif()
 
 install(TARGETS lfcd RUNTIME DESTINATION bin)

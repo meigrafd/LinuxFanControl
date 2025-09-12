@@ -5,8 +5,8 @@ Clone vom Windows tool "Fan Control" für Linux, da mir CoolerControl usw zu un�
 - Hintergrundprozess mit der Logik von GUI getrennt, damit die Lüftersteuerung auch ohne GUI läuft.
   - Einbindung von libsensors + /sys/class/hwmon um möglichst alle Lüfter und Sensoren zu erkennen.
   - Hybrid Protokoll: JSON-RPC 2.0 für Config/Control. Telemetry läuft über POSIX Shared Memory (SHM) Ringbuffer - deutlich performanter, kein RPC-Polling.
-- Theme im GUI umschaltbar.
 - Multilanguage support über i18n json Dateien.
+- Theme support.
 - Automatische Erkennung und Kalibrierung der verfügbaren Sensoren und Lüfter.
 - Nicht relevante Sensoren können abgewählt und ausgeblendet werden.
 - Steuerung über Mix, Trigger oder Graph.

@@ -1,3 +1,4 @@
 *.patch
 build/
 patch.sh
+cleanup_candidates.txt

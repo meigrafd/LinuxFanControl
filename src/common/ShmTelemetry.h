@@ -1,3 +1,8 @@
+/*
+ * Linux Fan Control (LFC)
+ * (c) 2025 meigrafd & contributors - MIT License
+ */
+
 #pragma once
 // Shared-memory telemetry ring (header-only).
 // Binary frames: {ts_ns, id[64], duty, temp}. Simple SPSC-style ring.

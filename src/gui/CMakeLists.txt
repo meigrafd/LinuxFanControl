@@ -1,4 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
+
+# ------------------------------------------------------------------
+# Linux Fan Control - GUI (lfc-gui)
+# Qt6 Widgets; AUTOMOC/AUTOUIC/AUTORCC enabled. Includes src/common/.
+# ------------------------------------------------------------------
 project(lfc_gui CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -10,31 +15,49 @@ set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 COMPONENTS Core Widgets REQUIRED)
 
+# Sources (glob for flexibility while files evolve)
+file(GLOB_RECURSE GUI_SOURCES CONFIGURE_DEPENDS
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cxx
+)
+
+if(GUI_SOURCES STREQUAL "")
+  message(FATAL_ERROR "No GUI sources found under ${CMAKE_CURRENT_SOURCE_DIR}/src")
+endif()
+
 add_executable(lfc-gui
-    src/main.cpp
-    src/RpcClient.cpp
-    src/MainWindow.cpp
-    src/dialogs/DetectDialog.cpp
-    src/widgets/FanTile.cpp
-
-    src/telemetry/ShmSubscriber.cpp
-    src/import/FanControlImporter.cpp
-
-    # Headers for AUTOMOC
-    src/MainWindow.h
-    src/dialogs/DetectDialog.h
-    src/widgets/FanTile.h
-    src/telemetry/ShmSubscriber.h
-    src/import/FanControlImporter.h
+  ${GUI_SOURCES}
 )
 
 target_include_directories(lfc-gui PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/widgets
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/dialogs
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/telemetry
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/import
-    ${CMAKE_SOURCE_DIR}/src/common
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/widgets
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/dialogs
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/telemetry
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/import
+  ${CMAKE_SOURCE_DIR}/src/common
 )
 
-target_link_libraries(lfc-gui Qt6::Core Qt6::Widgets)
+target_link_libraries(lfc-gui
+  Qt6::Core
+  Qt6::Widgets
+)
+
+# Optional: copy theme assets next to the binary on build
+add_custom_command(TARGET lfc-gui POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+          $<TARGET_FILE_DIR:lfc-gui>/assets/themes
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          ${CMAKE_SOURCE_DIR}/assets/themes/dark.qss
+          ${CMAKE_SOURCE_DIR}/assets/themes/light.qss
+          $<TARGET_FILE_DIR:lfc-gui>/assets/themes
+  VERBATIM
+)
+
+install(TARGETS lfc-gui RUNTIME DESTINATION bin)
+install(FILES
+  ${CMAKE_SOURCE_DIR}/assets/themes/dark.qss
+  ${CMAKE_SOURCE_DIR}/assets/themes/light.qss
+  DESTINATION share/linuxfancontrol/assets/themes
+)

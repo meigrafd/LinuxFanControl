@@ -1,3 +1,8 @@
+/*
+ * Linux Fan Control (LFC)
+ * (c) 2025 meigrafd & contributors - MIT License
+ */
+
 #include "MainWindow.h"
 #include "RpcClient.h"
 #include "dialogs/DetectDialog.h"
@@ -22,63 +27,68 @@
 #include <QPalette>
 #include <QFileDialog>
 #include <QMessageBox>
+#include <QFile>
+#include <QDir>
+#include <QDateTime>
+#include <QPainter>
 
-// Theme helpers (unchanged)
-static void applyBlueTheme(bool dark) {
-    QPalette pal;
-    if (dark) {
-        pal.setColor(QPalette::Window, QColor("#0e1b2a"));
-        pal.setColor(QPalette::Base,   QColor("#13273d"));
-        pal.setColor(QPalette::AlternateBase, QColor("#0e1b2a"));
-        pal.setColor(QPalette::Button, QColor("#1b3a5b"));
-        pal.setColor(QPalette::ButtonText, Qt::white);
-        pal.setColor(QPalette::Text, Qt::white);
-        pal.setColor(QPalette::WindowText, Qt::white);
-        pal.setColor(QPalette::Highlight, QColor("#3a7bd5"));
-        pal.setColor(QPalette::HighlightedText, Qt::white);
-    } else {
-        pal = qApp->style()->standardPalette();
-    }
-    qApp->setPalette(pal);
+// --- Theme loader (from .qss files) ---
+static QString readTextFile(const QString& rel) {
+    const QString base = QCoreApplication::applicationDirPath();
+    QFile f(base + "/" + rel);
+    if (!f.open(QIODevice::ReadOnly|QIODevice::Text)) return {};
+    return QString::fromUtf8(f.readAll());
 }
-static QString tileStyle(bool dark) {
-    if (dark) {
-        return QStringLiteral(
-            "QWidget#fanTile {"
-            "  background: #1a3250;"
-            "  border: 1px solid #2a4a75;"
-            "  border-radius: 10px;"
-            "}"
-            "QPushButton {"
-            "  background:#2a4a75; color:white; border:0px; padding:4px 8px; border-radius:5px;"
-            "}"
-            "QPushButton:hover { background:#35609b; }"
-            "QLabel { color:#e8f0ff; }"
-            "QLabel#title { font-weight:600; }"
-        );
-    } else {
-        return QStringLiteral(
-            "QWidget#fanTile {"
-            "  background: #eaf1ff;"
-            "  border: 1px solid #c9d7ff;"
-            "  border-radius: 10px;"
-            "}"
-            "QPushButton {"
-            "  background:#d2e0ff; color:#123; border:0px; padding:4px 8px; border-radius:5px;"
-            "}"
-            "QPushButton:hover { background:#bcd1ff; }"
-            "QLabel { color:#123; }"
-            "QLabel#title { font-weight:600; }"
-        );
-    }
+static void applyThemeFile(const QString& relQss) {
+    qApp->setStyleSheet(readTextFile(relQss));
 }
 
-// MainWindow
+// --- Simple animated logo: rotate a fan-glyph via timer (no external binary needed) ---
+class RotLogo : public QWidget {
+    Q_OBJECT
+public:
+    explicit RotLogo(QWidget* p=nullptr) : QWidget(p) {
+        setFixedSize(28, 28);
+        t_.setInterval(30);
+        connect(&t_, &QTimer::timeout, this, [this]{ ang_ = (ang_ + 6) % 360; update(); });
+        t_.start();
+    }
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter g(this);
+        g.setRenderHint(QPainter::Antialiasing, true);
+        g.translate(width()/2.0, height()/2.0);
+        g.rotate(ang_);
+        g.setPen(Qt::NoPen);
+        g.setBrush(QColor("#3a7bd5"));
+        for (int i=0;i<3;++i) {
+            g.save();
+            g.rotate(120*i);
+            g.drawRoundedRect(QRectF(2,-4,10,8), 3, 3);
+            g.restore();
+        }
+        g.setBrush(QColor("#1b3a5b"));
+        g.drawEllipse(QPointF(0,0), 3.5, 3.5);
+    }
+private:
+    QTimer t_;
+    int ang_{0};
+};
+
+// ASCII-ish prefixes for tiles
+static QString fanPrefix()  { return "[FAN] ";  }
+static QString tempPrefix() { return "[TEMP] "; }
+static QString autoPrefix() { return "[AUTO] "; }
+static QString manPrefix()  { return "[MAN] ";  }
+
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     rpc_ = new RpcClient();
     shm_ = new ShmSubscriber(this);
 
     auto* tb = addToolBar("toolbar");
+    tb->setMovable(false);
+    tb->addWidget(new RotLogo(tb)); // animated logo
+
     actSetup_   = new QAction("Setup", this);
     actImport_  = new QAction("Import…", this);
     actRefresh_ = new QAction("Refresh", this);
@@ -153,7 +163,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     v->addWidget(sensorsPanel_);
 
     resize(1280, 900);
-    applyBlueTheme(true);
+
+    // Apply default theme from file
+    applyThemeFile("assets/themes/dark.qss");
+    isDark_ = true;
     actTheme_->setText("Light Mode");
 
     connect(shm_, &ShmSubscriber::tickReady, this, &MainWindow::onTelemetry);
@@ -168,15 +181,8 @@ MainWindow::~MainWindow() {
 
 void MainWindow::switchTheme() {
     isDark_ = !isDark_;
-    applyBlueTheme(isDark_);
+    applyThemeFile(isDark_ ? "assets/themes/dark.qss" : "assets/themes/light.qss");
     actTheme_->setText(isDark_ ? "Light Mode" : "Dark Mode");
-    for (int i = 0; i < channelsList_->count(); ++i) {
-        if (auto* w = channelsList_->itemWidget(channelsList_->item(i))) {
-            if (w->objectName() == "fanTile") {
-                w->setStyleSheet(tileStyle(isDark_));
-            }
-        }
-    }
 }
 
 void MainWindow::startEngine() {
@@ -203,7 +209,6 @@ void MainWindow::applyHideSensors() {
         if (hiddenSensors_.contains(label)) continue;
 
         auto* roww = new QWidget;
-        roww->setObjectName("sensorRow");
         auto* h = new QHBoxLayout(roww);
         h->setContentsMargins(8,6,8,6);
         h->setSpacing(6);
@@ -226,9 +231,10 @@ void MainWindow::showEmptyState(bool on) {
 QWidget* MainWindow::makeFanTileWidget(const QJsonObject& ch) {
     auto* tile = new FanTile(this);
     tile->setObjectName("fanTile");
-    tile->setStyleSheet(tileStyle(isDark_));
-    tile->setTitle(ch.value("name").toString());
-    tile->setSensor(ch.value("sensor").toString());
+    const QString nm = ch.value("name").toString();
+    const QString sn = ch.value("sensor").toString();
+    tile->setTitle(fanPrefix() + nm);
+    tile->setSensor(tempPrefix() + sn);
     return tile;
 }
 
@@ -369,3 +375,5 @@ void MainWindow::onTelemetry(const QJsonArray& channels) {
         }
     }
 }
+
+#include "MainWindow.moc"

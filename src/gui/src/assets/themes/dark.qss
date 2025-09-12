@@ -1,0 +1,13 @@
+/* Linux Fan Control - Dark Blue Theme */
+QMainWindow { background:#0e1b2a; }
+QToolBar { background:#0e1b2a; border:0; spacing:8px; }
+QStatusBar { background:#0e1b2a; color:#e8f0ff; }
+QLabel { color:#e8f0ff; }
+QPushButton { background:#1b3a5b; color:#ffffff; border:0; padding:6px 10px; border-radius:6px; }
+QPushButton:hover { background:#2a4a75; }
+QListWidget { background:#13273d; border:1px solid #2a4a75; }
+QListView::item { margin:6px; }
+QGroupBox, QWidget#sensorRow { background:#13273d; border:1px solid #2a4a75; border-radius:8px; }
+QCheckBox { color:#e8f0ff; }
+QPlainTextEdit { background:#13273d; color:#e8f0ff; border:1px solid #2a4a75; }
+QProgressBar { background:#13273d; border:1px solid #2a4a75; color:#e8f0ff; }
