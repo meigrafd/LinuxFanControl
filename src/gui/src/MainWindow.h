@@ -1,9 +1,6 @@
 #pragma once
-// MainWindow — dashboard-like UI mirroring FanControl.Release:
-// - TOP: draggable compact tiles for channels
-// - Sensors panel collapsed by default (only visible after Setup/Refresh)
-// - Bottom Curves area hidden until channels exist
-// - No auto-detection: show empty-state hint and a Setup button
+// MainWindow — dashboard-like UI mirroring FanControl.Release,
+// now with SHM telemetry (ShmSubscriber) and Import menu.
 // Comments in English.
 
 #include <QMainWindow>
@@ -20,7 +17,7 @@ class QPushButton;
 class QAction;
 
 class RpcClient;
-class TelemetryWorker;
+class ShmSubscriber;
 class FanTile;
 
 struct ChannelCardRefs {
@@ -35,25 +32,26 @@ public:
 
 private slots:
     void refresh();
-    void detect();          // opens DetectDialog (no freeze)
+    void detect();          // opens DetectDialog
     void startEngine();
     void stopEngine();
     void switchTheme();
     void applyHideSensors();
     void onTelemetry(const QJsonArray& channels);
+    void onImport();
 
 private:
     void buildUi();
     void showEmptyState(bool on);
     QWidget* makeFanTileWidget(const QJsonObject& ch);
-    QString chooseSensorForPwm(const QString& pwmLabel, const QJsonArray& sensors) const;
+    QString chooseSensorForPwm(const QJsonArray& sensors, const QString& pwmLabel) const;
 
     void rebuildSensors(const QJsonArray& sensors);
     void rebuildChannels(const QJsonArray& channels);
 
 private:
     RpcClient*       rpc_{};
-    TelemetryWorker* tw_{};
+    ShmSubscriber*   shm_{};
 
     // TOP: draggable channel tiles (fans)
     QListWidget* channelsList_{};
@@ -76,6 +74,7 @@ private:
     QAction*     actStart_{};
     QAction*     actStop_{};
     QAction*     actTheme_{};
+    QAction*     actImport_{};
 
     QJsonArray sensorsCache_;
     QJsonArray pwmsCache_;

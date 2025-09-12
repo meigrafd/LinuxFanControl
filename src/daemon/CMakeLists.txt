@@ -59,6 +59,7 @@ target_include_directories(lfcd PRIVATE
   ${SENSORS_INCLUDE_DIRS}
   ${NLOHMANN_JSON_INCLUDE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${CMAKE_SOURCE_DIR}/src/common
 )
 target_link_libraries(lfcd PRIVATE
   ${SENSORS_LIBRARIES}

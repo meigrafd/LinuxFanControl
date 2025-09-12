@@ -1,6 +1,6 @@
-// Daemon.cpp — JSON-RPC 2.0 daemon with batch support over Unix domain socket.
-// Adds detectCalibrate(): safe PWM perturbations to infer coupling + calibration (min/spinup).
-// Mirrors the Python single-file logic (safe floor; snapshot/restore).
+// Daemon.cpp — JSON-RPC 2.0 daemon with batch support and SHM telemetry.
+// Control path: JSON-RPC (batch). Data path: shared memory ring.
+// Comments in English per project guideline.
 
 #include "Daemon.h"
 #include "Hwmon.h"
@@ -22,10 +22,13 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <atomic>
 
 #include <nlohmann/json.hpp>
+#include "common/ShmTelemetry.h"
 
 using json = nlohmann::json;
+using namespace std::chrono_literals;
 
 // -------------------- small helpers --------------------
 static std::string getenv_or(const char* k, const char* defv) {
@@ -84,6 +87,52 @@ static inline double milli_to_c(double v) {
     return (v > 200.0 ? v / 1000.0 : v);
 }
 
+// -------------------- Telemetry publisher (SHM) --------------------
+class TelemetryPublisher {
+public:
+    TelemetryPublisher() = default;
+    ~TelemetryPublisher() { stop(); }
+
+    bool start(Engine* engine, const std::string& shmName, uint32_t capacity = 4096, int period_ms = 200) {
+        stop();
+        engine_ = engine;
+        periodMs_ = period_ms;
+        if (!lfc::shm::createOrOpen(map_, shmName.c_str(), capacity, /*create*/true)) {
+            std::fprintf(stderr, "[daemon] SHM create failed: %s\n", shmName.c_str());
+            return false;
+        }
+        running_.store(true);
+        thr_ = std::thread([this]() { this->run(); });
+        return true;
+    }
+
+    void stop() {
+        running_.store(false);
+        if (thr_.joinable()) thr_.join();
+        lfc::shm::destroy(map_);
+    }
+
+private:
+    void run() {
+        while (running_.load()) {
+            // Pull latest snapshot and publish a frame per channel
+            auto chs = engine_->snapshot();
+            const uint64_t ts = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+                for (const auto& c : chs) {
+                    lfc::shm::writeFrame(map_, c.id.c_str(), c.last_out, c.last_temp, ts);
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(periodMs_));
+        }
+    }
+
+    Engine* engine_{nullptr};
+    int periodMs_{200};
+    std::atomic<bool> running_{false};
+    std::thread thr_;
+    lfc::shm::Mapping map_;
+};
+
 // -------------------- lifecycle ------------------------
 Daemon::Daemon()
 : sockPath_(getenv_or("LFC_SOCK", "/tmp/lfcd.sock"))
@@ -91,7 +140,8 @@ Daemon::Daemon()
 , running_(false)
 , debug_(std::getenv("LFC_DEBUG") != nullptr)
 , hw_(new Hwmon())
-, engine_(new Engine()) {}
+, engine_(new Engine())
+{}
 
 Daemon::~Daemon() {
     shutdown();
@@ -102,6 +152,8 @@ Daemon::~Daemon() {
 bool Daemon::isAlreadyRunning() const {
     return try_connect(sockPath_);
 }
+
+static TelemetryPublisher g_pub; // single publisher instance
 
 bool Daemon::init() {
     if (running_) return true;
@@ -133,6 +185,10 @@ bool Daemon::init() {
         ::close(srvFd_); srvFd_ = -1;
         return false;
     }
+
+    // Init SHM publisher (engine is not running yet; publisher will still publish last snapshot)
+    const std::string shmName = getenv_or("LFC_SHM", "/lfc_telemetry");
+    (void)g_pub.start(engine_, shmName, 4096, 200);
 
     running_ = true;
     std::fprintf(stderr, "[daemon] listening on %s\n", sockPath_.c_str());
@@ -194,6 +250,7 @@ bool Daemon::pumpOnce(int timeoutMs) {
 void Daemon::shutdown() {
     if (!running_) return;
     running_ = false;
+    g_pub.stop();
     if (srvFd_ >= 0) {
         ::shutdown(srvFd_, SHUT_RDWR);
         ::close(srvFd_);
@@ -202,7 +259,7 @@ void Daemon::shutdown() {
     ::unlink(sockPath_.c_str());
 }
 
-// -------------------- RPC dispatch ---------------------
+// -------------------- RPC dispatch (unchanged control path) ---------------------
 json Daemon::dispatch(const json& req) {
     if (!req.is_object()) return error_obj(nullptr, -32600, "Invalid Request");
 
@@ -222,7 +279,7 @@ json Daemon::dispatch(const json& req) {
 
     try {
         if (method == "ping")         return result_obj(id, json{{"pong", true}});
-        if (method == "version")      return result_obj(id, json{{"name","lfcd"},{"protocol","jsonrpc2-batch"},{"version","1.0"}});
+        if (method == "version")      return result_obj(id, json{{"name","lfcd"},{"protocol","jsonrpc2-batch"},{"version","1.1"}});
         if (method == "enumerate")    return result_obj(id, rpcEnumerate());
         if (method == "listChannels") return result_obj(id, rpcListChannels());
         if (method == "detectCalibrate") return result_obj(id, rpcDetectCalibrate());
@@ -268,7 +325,8 @@ json Daemon::dispatch(const json& req) {
             return result_obj(id, json{{"ok", rpcSetChannelHystTau(cid, hyst, tau)}});
         }
         if (method == "engineStart") {
-            return result_obj(id, json{{"ok", engine_->start()}});
+            bool ok = engine_->start();
+            return result_obj(id, json{{"ok", ok}});
         }
         if (method == "engineStop") {
             engine_->stop();

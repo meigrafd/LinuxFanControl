@@ -14,21 +14,27 @@ add_executable(lfc-gui
     src/main.cpp
     src/RpcClient.cpp
     src/MainWindow.cpp
-    src/TelemetryWorker.cpp
     src/dialogs/DetectDialog.cpp
     src/widgets/FanTile.cpp
 
+    src/telemetry/ShmSubscriber.cpp
+    src/import/FanControlImporter.cpp
+
     # Headers for AUTOMOC
     src/MainWindow.h
-    src/TelemetryWorker.h
     src/dialogs/DetectDialog.h
     src/widgets/FanTile.h
+    src/telemetry/ShmSubscriber.h
+    src/import/FanControlImporter.h
 )
 
 target_include_directories(lfc-gui PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/widgets
     ${CMAKE_CURRENT_SOURCE_DIR}/src/dialogs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/telemetry
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/import
+    ${CMAKE_SOURCE_DIR}/src/common
 )
 
 target_link_libraries(lfc-gui Qt6::Core Qt6::Widgets)

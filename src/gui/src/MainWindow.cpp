@@ -1,8 +1,9 @@
 #include "MainWindow.h"
 #include "RpcClient.h"
-#include "TelemetryWorker.h"
 #include "dialogs/DetectDialog.h"
 #include "widgets/FanTile.h"
+#include "telemetry/ShmSubscriber.h"
+#include "import/FanControlImporter.h"
 
 #include <QToolBar>
 #include <QAction>
@@ -19,9 +20,10 @@
 #include <QCheckBox>
 #include <QTimer>
 #include <QPalette>
-#include <QFrame>
+#include <QFileDialog>
+#include <QMessageBox>
 
-// ---- Deep-blue theme close to FanControl look ----
+// Theme helpers (unchanged)
 static void applyBlueTheme(bool dark) {
     QPalette pal;
     if (dark) {
@@ -39,7 +41,6 @@ static void applyBlueTheme(bool dark) {
     }
     qApp->setPalette(pal);
 }
-
 static QString tileStyle(bool dark) {
     if (dark) {
         return QStringLiteral(
@@ -72,23 +73,28 @@ static QString tileStyle(bool dark) {
     }
 }
 
-MainWindow::MainWindow(QWidget* parent)
-: QMainWindow(parent) {
+// MainWindow
+MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     rpc_ = new RpcClient();
-    tw_  = new TelemetryWorker(rpc_, this);
+    shm_ = new ShmSubscriber(this);
 
     auto* tb = addToolBar("toolbar");
     actSetup_   = new QAction("Setup", this);
+    actImport_  = new QAction("Import…", this);
     actRefresh_ = new QAction("Refresh", this);
     actStart_   = new QAction("Start", this);
     actStop_    = new QAction("Stop", this);
     actTheme_   = new QAction("Light Mode", this);
+
     connect(actSetup_,   &QAction::triggered, this, &MainWindow::detect);
+    connect(actImport_,  &QAction::triggered, this, &MainWindow::onImport);
     connect(actRefresh_, &QAction::triggered, this, &MainWindow::refresh);
     connect(actStart_,   &QAction::triggered, this, &MainWindow::startEngine);
     connect(actStop_,    &QAction::triggered, this, &MainWindow::stopEngine);
     connect(actTheme_,   &QAction::triggered, this, &MainWindow::switchTheme);
+
     tb->addAction(actSetup_);
+    tb->addAction(actImport_);
     tb->addAction(actRefresh_);
     tb->addSeparator();
     tb->addAction(actStart_);
@@ -96,20 +102,20 @@ MainWindow::MainWindow(QWidget* parent)
     tb->addSeparator();
     tb->addAction(actTheme_);
 
-    // ---- Central single layout ----
+    // Central
     auto* central = new QWidget(this);
     auto* v = new QVBoxLayout(central);
     v->setContentsMargins(12,12,12,12);
     v->setSpacing(12);
     setCentralWidget(central);
 
-    // Empty state overlay
+    // Empty state
     emptyState_ = new QWidget(central);
     auto* ev = new QVBoxLayout(emptyState_);
     ev->setContentsMargins(20,40,20,40);
     ev->setSpacing(12);
     auto* title = new QLabel("<b>No channels yet</b>", emptyState_);
-    auto* desc  = new QLabel("Click <i>Setup</i> to detect sensors and calibrate fans.", emptyState_);
+    auto* desc  = new QLabel("Click <i>Setup</i> to detect sensors and calibrate fans, or <i>Import</i>.", emptyState_);
     btnEmptySetup_ = new QPushButton("Setup", emptyState_);
     btnEmptySetup_->setFixedWidth(120);
     ev->addWidget(title, 0, Qt::AlignHCenter);
@@ -118,7 +124,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(btnEmptySetup_, &QPushButton::clicked, this, &MainWindow::detect);
     v->addWidget(emptyState_);
 
-    // TOP: draggable tiles
+    // TOP tiles
     channelsList_ = new QListWidget(this);
     channelsList_->setViewMode(QListView::IconMode);
     channelsList_->setMovement(QListView::Snap);
@@ -129,7 +135,7 @@ MainWindow::MainWindow(QWidget* parent)
     channelsList_->setGridSize(QSize(280, 110));
     v->addWidget(channelsList_);
 
-    // Sensors panel hidden by default (can be shown after setup)
+    // Sensors hidden by default
     sensorsPanel_ = new QWidget(this);
     auto* spLay = new QVBoxLayout(sensorsPanel_);
     spLay->setContentsMargins(0,0,0,0);
@@ -150,19 +156,20 @@ MainWindow::MainWindow(QWidget* parent)
     applyBlueTheme(true);
     actTheme_->setText("Light Mode");
 
-    connect(tw_, &TelemetryWorker::tickReady, this, &MainWindow::onTelemetry);
-    tw_->start(1000);
+    connect(shm_, &ShmSubscriber::tickReady, this, &MainWindow::onTelemetry);
+    shm_->start("/lfc_telemetry", 200);
 
-    QTimer::singleShot(120, this, &MainWindow::refresh);
+    QTimer::singleShot(100, this, &MainWindow::refresh);
 }
 
-MainWindow::~MainWindow() = default;
+MainWindow::~MainWindow() {
+    if (shm_) shm_->stop();
+}
 
 void MainWindow::switchTheme() {
     isDark_ = !isDark_;
     applyBlueTheme(isDark_);
     actTheme_->setText(isDark_ ? "Light Mode" : "Dark Mode");
-
     for (int i = 0; i < channelsList_->count(); ++i) {
         if (auto* w = channelsList_->itemWidget(channelsList_->item(i))) {
             if (w->objectName() == "fanTile") {
@@ -252,10 +259,9 @@ void MainWindow::rebuildChannels(const QJsonArray& channels) {
 
 void MainWindow::rebuildSensors(const QJsonArray& sensors) {
     sensorsCache_ = sensors;
-    // only show after Setup/Refresh if needed
 }
 
-QString MainWindow::chooseSensorForPwm(const QString& pwmLabel, const QJsonArray& sensors) const {
+QString MainWindow::chooseSensorForPwm(const QJsonArray& sensors, const QString& pwmLabel) const {
     auto pickByType = [&](const QString& type) -> QString {
         for (const auto& it : sensors) {
             const auto s = it.toObject();
@@ -265,18 +271,16 @@ QString MainWindow::chooseSensorForPwm(const QString& pwmLabel, const QJsonArray
         }
         return {};
     };
-
     if (pwmLabel.contains("amdgpu", Qt::CaseInsensitive))
         if (auto p = pickByType("GPU"); !p.isEmpty()) return p;
         if (pwmLabel.contains("k10temp", Qt::CaseInsensitive) || pwmLabel.contains("coretemp", Qt::CaseInsensitive))
             if (auto p = pickByType("CPU"); !p.isEmpty()) return p;
-
             if (!sensors.isEmpty()) return sensors.first().toObject().value("path").toString();
             return {};
 }
 
 void MainWindow::detect() {
-    DetectDialog dlg(rpc_, this);
+    DetectDialog dlg(this);
     if (dlg.exec() != QDialog::Accepted) {
         statusBar()->showMessage("Setup cancelled", 1500);
         return;
@@ -319,7 +323,19 @@ void MainWindow::detect() {
         statusBar()->showMessage("Setup completed, engine started", 1800);
     }
 
-    sensorsPanel_->setVisible(true);   // allow user to hide some sensors
+    sensorsPanel_->setVisible(true);
+    refresh();
+}
+
+void MainWindow::onImport() {
+    const QString path = QFileDialog::getOpenFileName(this, "Import FanControl JSON", QString(), "JSON (*.json)");
+    if (path.isEmpty()) return;
+    QString err;
+    if (!Importer::importFanControlJson(rpc_, path, &err)) {
+        QMessageBox::warning(this, "Import failed", err.isEmpty()? "Unknown error" : err);
+        return;
+    }
+    statusBar()->showMessage("Import completed", 1800);
     refresh();
 }
 
