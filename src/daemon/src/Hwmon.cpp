@@ -61,7 +61,7 @@ static double clamp01(double v) { return std::max(0.0, std::min(1.0, v)); }
 // -------------------------
 // temperatures
 // -------------------------
-std::vector<TempSensorInfo> Hwmon::discoverTemps() {
+std::vector<TempSensorInfo> Hwmon::discoverTemps() const {
     std::vector<TempSensorInfo> out;
     DIR* d = ::opendir("/sys/class/hwmon");
     if (!d) return out;
@@ -134,7 +134,7 @@ double Hwmon::readTempC(const std::string& path) {
 // -------------------------
 // PWM discovery
 // -------------------------
-std::vector<PwmDevice> Hwmon::discoverPwms() {
+std::vector<PwmDevice> Hwmon::discoverPwms() const {
     std::vector<PwmDevice> out;
 
     DIR* d = ::opendir("/sys/class/hwmon");
