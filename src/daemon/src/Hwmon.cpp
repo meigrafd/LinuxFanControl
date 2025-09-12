@@ -187,12 +187,11 @@ std::vector<PwmDevice> Hwmon::discoverPwms() const {
             }
 
             PwmDevice pd;
-            // IMPORTANT: field names chosen to match our project mappings (snake_case).
-            // If your Hwmon.h uses other names, adapt here accordingly.
-            pd.id             = hw + ":" + devName + ":" + fn;
-            pd.pwm_path       = pwmPath;
-            pd.enable_path    = enablePath;
-            pd.fan_input_path = tachPath;
+            // IMPORTANT: match to struct PwmDevice in Hwmon.h
+            pd.label  = hw + ":" + devName + ":" + fn;
+            pd.pwm    = pwmPath;
+            pd.enable = enablePath;
+            pd.tach   = tachPath;
 
             out.push_back(std::move(pd));
         }
@@ -210,11 +209,11 @@ bool Hwmon::setPwmPercent(const PwmDevice& dev, double percent, std::string* err
     const int duty255 = static_cast<int>(std::lround(clamp01(percent/100.0) * 255.0));
 
     // Best-effort: set manual (1) if enable file exists
-    if (!dev.enable_path.empty()) {
+    if (!dev.enable.empty()) {
         struct stat st{};
-        if (::stat(dev.enable_path.c_str(), &st)==0 && S_ISREG(st.st_mode)) {
+        if (::stat(dev.enable.c_str(), &st)==0 && S_ISREG(st.st_mode)) {
             std::string eerr;
-            if (!write_all(dev.enable_path, "1", &eerr)) {
+            if (!write_all(dev.enable, "1", &eerr)) {
                 if (err) *err = std::string("pwm_enable write failed: ") + eerr;
                 // continue anyway; some drivers reject this while still allowing pwm writes
             }
@@ -222,7 +221,7 @@ bool Hwmon::setPwmPercent(const PwmDevice& dev, double percent, std::string* err
     }
 
     // Write pwm value
-    std::ofstream f(dev.pwm_path);
+    std::ofstream f(dev.pwm);
     if (!f.good()) {
         if (err) *err = std::string("open pwm failed: ") + std::strerror(errno);
         return false;
