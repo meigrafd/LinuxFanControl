@@ -98,7 +98,7 @@ std::vector<TempSensorInfo> Hwmon::discoverTemps() const {
                     if (it!=labels.end()) lab = it->second;
 
                     TempSensorInfo info;
-                    // NOTE: TempSensorInfo should provide name/label/path.
+                    // TempSensorInfo fields: name/label/path
                     info.name  = name;
                     info.label = lab;
                     info.path  = base + "/" + fn;
@@ -186,11 +186,11 @@ std::vector<PwmDevice> Hwmon::discoverPwms() const {
             }
 
             PwmDevice pd;
-            // IMPORTANT: match common field names (adjust to your Hwmon.h if needed)
-            pd.name       = hw + ":" + devName + ":" + fn;
-            pd.pwmPath    = pwmPath;
-            pd.enablePath = enablePath;
-            pd.tachPath   = tachPath;
+            // PwmDevice fields: label / pwm_path / enable_path / tach_path
+            pd.label       = hw + ":" + devName + ":" + fn;
+            pd.pwm_path    = pwmPath;
+            pd.enable_path = enablePath;
+            pd.tach_path   = tachPath;
 
             out.push_back(std::move(pd));
         }
@@ -208,11 +208,11 @@ bool Hwmon::setPwmPercent(const PwmDevice& dev, double percent, std::string* err
     const int duty255 = static_cast<int>(std::lround(clamp01(percent/100.0) * 255.0));
 
     // Best-effort: set manual (1) if enable file exists
-    if (!dev.enablePath.empty()) {
+    if (!dev.enable_path.empty()) {
         struct stat st{};
-        if (::stat(dev.enablePath.c_str(), &st)==0 && S_ISREG(st.st_mode)) {
+        if (::stat(dev.enable_path.c_str(), &st)==0 && S_ISREG(st.st_mode)) {
             std::string eerr;
-            if (!write_all(dev.enablePath, "1", &eerr)) {
+            if (!write_all(dev.enable_path, "1", &eerr)) {
                 if (err) *err = std::string("pwm_enable write failed: ") + eerr;
                 // continue anyway; some drivers reject this while still allowing pwm writes
             }
@@ -220,7 +220,7 @@ bool Hwmon::setPwmPercent(const PwmDevice& dev, double percent, std::string* err
     }
 
     // Write pwm value
-    std::ofstream f(dev.pwmPath);
+    std::ofstream f(dev.pwm_path);
     if (!f.good()) {
         if (err) *err = std::string("open pwm failed: ") + std::strerror(errno);
         return false;

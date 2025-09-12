@@ -1,32 +1,34 @@
+/*
+ * Linux Fan Control (LFC) - hwmon interfaces
+ * (c) 2025 meigrafd & contributors - MIT License (see LICENSE)
+ */
+
 #pragma once
 #include <string>
 #include <vector>
-#include <limits>
 
+// Simple temperature sensor descriptor discovered via /sys/class/hwmon
 struct TempSensorInfo {
-    std::string name;
-    std::string label;
-    std::string path;
-    std::string type;
+    std::string name;   // hwmon device name (e.g., "k10temp", "amdgpu", ...)
+    std::string label;  // label for tempN (or "tempN" if no label file)
+    std::string path;   // full path to tempN_input
 };
 
+// Simple PWM device descriptor discovered via /sys/class/hwmon
 struct PwmDevice {
-    std::string pwm_path;
-    std::string enable_path;
-    std::string tach_path;
-    double min_pct{0.0};
-    double max_pct{100.0};
+    std::string label;       // human-readable id, e.g. "hwmon4:amdgpu:pwm1"
+    std::string pwm_path;    // /sys/class/hwmon/.../pwmN
+    std::string enable_path; // /sys/class/hwmon/.../pwmN_enable (may be empty)
+    std::string tach_path;   // /sys/class/hwmon/.../fanN_input (may be empty)
 };
-using PwmOutputInfo = PwmDevice; // Daemon compatibility
 
 class Hwmon {
 public:
+    // Enumerate temperature sensors and pwm devices from /sys/class/hwmon
     std::vector<TempSensorInfo> discoverTemps() const;
-    std::vector<PwmDevice>      discoverPwms()  const;
+    std::vector<PwmDevice>      discoverPwms() const;
 
-    static double readTempC(const std::string& path);
-    static bool   setPwmPercent(const PwmDevice& dev, double pct, std::string* err=nullptr);
-
-private:
-    static double milli_to_c(double v) { return (v > 200.0 ? v/1000.0 : v); }
+    // Helpers
+    static double readTempC(const std::string& path); // returns °C or NaN
+    static bool   setPwmPercent(const PwmDevice& dev, double percent, std::string* err);
 };
