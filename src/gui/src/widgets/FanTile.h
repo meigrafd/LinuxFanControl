@@ -1,7 +1,6 @@
 #pragma once
 // FanTile - compact channel card similar to FanControl tiles.
-// Shows: title, sensor, duty, temp, Edit button. Dragging is handled by the QListWidget host.
-// Comments in English (per project).
+// Shows: title, sensor, duty, temp, Edit button.
 
 #include <QWidget>
 #include <QString>
@@ -20,7 +19,7 @@ public:
     void setTemp(double celsius);
 
 signals:
-    void editRequested(); // emitted when user clicks Edit
+    void editRequested();
 
 private:
     QLabel*  title_{nullptr};

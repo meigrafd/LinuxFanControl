@@ -4,6 +4,11 @@ project(lfc_gui CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# --- IMPORTANT: enable Qt automoc/uis ---
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTOUIC ON)
+set(CMAKE_AUTORCC ON)
+
 find_package(Qt6 COMPONENTS Core Widgets REQUIRED)
 
 add_executable(lfc-gui
@@ -13,9 +18,16 @@ add_executable(lfc-gui
     src/TelemetryWorker.cpp
     src/dialogs/DetectDialog.cpp
     src/Translations.cpp
-
     src/widgets/FanTile.cpp
     src/widgets/CollapsiblePanel.cpp
+
+    # Headers with Q_OBJECT must be listed so AUTOMOC runs:
+    src/MainWindow.h
+    src/TelemetryWorker.h
+    src/dialogs/DetectDialog.h
+    src/Translations.h
+    src/widgets/FanTile.h
+    src/widgets/CollapsiblePanel.h
 )
 
 target_include_directories(lfc-gui PRIVATE
