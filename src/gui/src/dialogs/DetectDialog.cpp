@@ -9,17 +9,21 @@
 #include <QPushButton>
 #include <QThread>
 #include <QTimer>
+#include <QObject>
 
+// Worker lives entirely in its own thread and uses its own RpcClient instance.
 class DetectWorker : public QObject {
     Q_OBJECT
 public:
-    explicit DetectWorker(RpcClient* rpc, QObject* parent=nullptr) : QObject(parent), rpc_(rpc) {}
+    explicit DetectWorker(QObject* parent=nullptr) : QObject(parent) {}
 
 public slots:
     void run() {
         emit log("Detecting sensors & PWM outputs…");
-        // Single blocking RPC — we run it in this thread to avoid UI freeze.
-        auto res = rpc_->call("detectCalibrate");
+        // Create a fresh RpcClient on this worker thread to avoid cross-thread sockets.
+        RpcClient rpc;
+
+        auto res = rpc.call("detectCalibrate");  // blocking, but we're in worker thread
         if (!res.contains("result")) {
             emit failed("detectCalibrate failed");
             return;
@@ -32,13 +36,12 @@ signals:
     void log(const QString& line);
     void finished(const QJsonObject& res);
     void failed(const QString& err);
-
-private:
-    RpcClient* rpc_{nullptr};
 };
 
-DetectDialog::DetectDialog(RpcClient* rpc, QWidget* parent)
-: QDialog(parent), rpc_(rpc) {
+// ------------------ DetectDialog ------------------
+
+DetectDialog::DetectDialog(QWidget* parent)
+: QDialog(parent) {
     setWindowTitle("Auto-Setup (Detect & Calibrate)");
     resize(720, 420);
     buildUi();
@@ -67,8 +70,8 @@ void DetectDialog::buildUi() {
 
     auto* h = new QHBoxLayout();
     h->addStretch(1);
-    btnStart_ = new QPushButton("Start", this);
-    btnCancel_ = new QPushButton("Close", this);
+    btnStart_{new QPushButton("Start", this)};
+    btnCancel_{new QPushButton("Close", this)};
     h->addWidget(btnStart_);
     h->addWidget(btnCancel_);
 
@@ -92,15 +95,16 @@ void DetectDialog::onStart() {
 
     // Worker thread
     thread_ = new QThread(this);
-    worker_ = new DetectWorker(rpc_);
+    worker_ = new DetectWorker();
     worker_->moveToThread(thread_);
 
-    connect(thread_, &QThread::started, worker_, &DetectWorker::run);
-    connect(worker_, &DetectWorker::log, this, &DetectDialog::onWorkerLog);
-    connect(worker_, &DetectWorker::finished, this, &DetectDialog::onWorkerFinished);
-    connect(worker_, &DetectWorker::failed, this, &DetectDialog::onWorkerFailed);
-    connect(worker_, &DetectWorker::finished, worker_, &DetectWorker::deleteLater);
-    connect(worker_, &DetectWorker::failed,   worker_, &DetectWorker::deleteLater);
+    connect(thread_, &QThread::started, worker_, [this]() {
+        static_cast<DetectWorker*>(worker_)->run();
+    });
+    connect(worker_, SIGNAL(log(QString)), this, SLOT(onWorkerLog(QString)));
+    connect(worker_, SIGNAL(finished(QJsonObject)), this, SLOT(onWorkerFinished(QJsonObject)));
+    connect(worker_, SIGNAL(failed(QString)), this, SLOT(onWorkerFailed(QString)));
+    connect(worker_, &QObject::destroyed, thread_, &QThread::quit);
     connect(thread_, &QThread::finished, thread_, &QThread::deleteLater);
 
     thread_->start();
@@ -112,8 +116,7 @@ void DetectDialog::onCancel() {
         reject();
         return;
     }
-    // The current daemon RPC is blocking; we can't cancel mid-flight.
-    // Communicate this clearly and wait until it returns.
+    // Current daemon RPC is blocking; we cannot cancel mid-flight safely.
     onWorkerLog("Cancel requested: current phase will finish, then dialog closes.");
     btnCancel_->setEnabled(false);
 }
@@ -130,12 +133,7 @@ void DetectDialog::onWorkerFinished(const QJsonObject& res) {
     btnCancel_->setText("Close");
     btnCancel_->setEnabled(true);
 
-    if (thread_) {
-        thread_->quit();
-        thread_->wait(3000);
-        thread_->deleteLater();
-        thread_ = nullptr;
-    }
+    if (worker_) { worker_->deleteLater(); worker_ = nullptr; }
     accept();
 }
 
@@ -148,11 +146,9 @@ void DetectDialog::onWorkerFailed(const QString& err) {
     btnCancel_->setText("Close");
     btnCancel_->setEnabled(true);
 
-    if (thread_) {
-        thread_->quit();
-        thread_->wait(3000);
-        thread_->deleteLater();
-        thread_ = nullptr;
-    }
+    if (worker_) { worker_->deleteLater(); worker_ = nullptr; }
     reject();
 }
+
+// IMPORTANT for AUTOMOC when Q_OBJECT is in this .cpp:
+#include "DetectDialog.moc"
