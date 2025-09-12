@@ -1,24 +1,20 @@
-/*
- * Linux Fan Control (LFC) - Detect/Calibrate Dialog
- * (c) 2025 meigrafd & contributors - MIT License (see LICENSE)
- */
-
 #pragma once
+/*
+ * Detect/Calibrate dialog (non-blocking, shows daemon logs).
+ * (c) 2025 meigrafd & contributors - MIT
+ */
 #include <QDialog>
 #include <QJsonObject>
-#include <QJsonArray>
-
-class QPlainTextEdit;
-class QProgressBar;
-class QPushButton;
+class QPlainTextEdit; class QProgressBar; class QPushButton;
 class RpcClient;
 
 class DetectDialog : public QDialog {
     Q_OBJECT
 public:
     explicit DetectDialog(RpcClient* rpc, QWidget* parent = nullptr);
+    // Overload to keep MainWindow.cpp (DetectDialog dlg(this);) compiling:
+    explicit DetectDialog(QWidget* parent);
 
-    // Last result from detectCalibrate
     QJsonObject result() const { return result_; }
 
 private slots:

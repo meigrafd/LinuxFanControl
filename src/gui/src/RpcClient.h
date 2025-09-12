@@ -1,10 +1,8 @@
 #pragma once
 /*
- * Linux Fan Control (LFC) - GUI RpcClient
- * Spawns/owns the daemon process (lfcd) and speaks JSON-RPC 2.0 over stdio.
- * (c) 2025 meigrafd & contributors - MIT License (see LICENSE)
+ * GUI side JSON-RPC client (spawns daemon) for lfc-gui.
+ * (c) 2025 meigrafd & contributors - MIT
  */
-
 #include <QObject>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -13,6 +11,7 @@
 #include <QMutex>
 #include <QWaitCondition>
 #include <QMap>
+#include <QSet>
 
 class RpcClient : public QObject {
     Q_OBJECT
@@ -20,20 +19,21 @@ public:
     explicit RpcClient(QObject* parent = nullptr);
     ~RpcClient() override;
 
-    // Start daemon if not running yet. Returns true on success.
     bool ensureRunning(QString* err = nullptr);
+    bool isRunning() const;
 
-    // Synchronous JSON-RPC call. Returns (result, errorString). Timeout in ms.
+    // Generic calls
     QPair<QJsonValue, QString> call(const QString& method,
                                     const QJsonObject& params = {},
                                     int timeoutMs = 60000);
-
-    // JSON-RPC 2.0 batch call. Each item should be an object with "jsonrpc","id","method","params".
-    // Returns full parsed array or error string on failure.
     QPair<QJsonArray, QString> callBatch(const QJsonArray& batch,
                                          int timeoutMs = 60000);
 
-    bool isRunning() const;
+    // Convenience wrappers used by GUI
+    QJsonArray listSensors(QString* err = nullptr);
+    QJsonArray listPwms(QString* err = nullptr);
+    QJsonObject enumerate(QString* err = nullptr);  // {sensors, pwms}
+    QJsonArray listChannels(QString* err = nullptr); // may be empty if daemon not yet supports
 
 signals:
     void daemonCrashed(int exitCode, QProcess::ExitStatus status);
@@ -45,30 +45,21 @@ private slots:
     void onFinished(int exitCode, QProcess::ExitStatus status);
 
 private:
-    // Internal: send raw JSON line; returns false on immediate I/O error.
     bool sendJsonLine(const QJsonObject& obj);
     bool sendJsonLineRaw(const QJsonDocument& doc);
-
-    // Internal: blocking wait for response id/batch until timeout.
     bool waitForId(const QString& id, QJsonValue* out, QString* err, int timeoutMs);
     bool waitForBatchIds(const QSet<QString>& ids, QJsonArray* out, QString* err, int timeoutMs);
-
-    // Launch command built from env: LFC_DAEMON_WRAPPER + LFC_DAEMON + LFC_DAEMON_ARGS
     bool launchDaemon(QString* err);
-
     QString nextId();
+    static QString shellQuote(const QString& s);
 
 private:
     QProcess* proc_{nullptr};
     QByteArray buf_;
-    mutable QMutex mtx_;                 // protects maps & waiters
+    mutable QMutex mtx_;
     QWaitCondition cond_;
-
-    // pending single responses: id -> value or error envelope
     QMap<QString, QJsonValue> pending_;
-    // pending batch: collect raw envelopes by id
     QMap<QString, QJsonObject> pendingEnv_;
-
     quint64 seq_{1};
     bool debug_{false};
 };
