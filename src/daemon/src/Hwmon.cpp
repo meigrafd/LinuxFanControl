@@ -21,7 +21,7 @@ static std::string read_all(const std::string& p) {
     std::ifstream f(p);
     if (!f.good()) return {};
     std::string s; std::getline(f, s);
-    // trim
+    // trim trailing newlines
     s.erase(std::remove_if(s.begin(), s.end(), [](unsigned char c){ return c=='\r'||c=='\n'; }), s.end());
     return s;
 }
@@ -30,43 +30,52 @@ std::vector<TempSensorInfo> Hwmon::discoverTemps() const {
     std::vector<TempSensorInfo> out;
     DIR* d = ::opendir("/sys/class/hwmon");
     if (!d) return out;
+
     while (auto* e = ::readdir(d)) {
-        if (e->d_name[0]=='.') continue;
-        std::string base = std::string("/sys/class/hwmon/") + e->d_name;
-        std::string name = read_all(base + "/name");
-        // labels
+        if (!e || e->d_name[0]=='.') continue;
+        const std::string base = std::string("/sys/class/hwmon/") + e->d_name;
+        const std::string name = read_all(base + "/name");
+
+        // collect labels
         std::vector<std::pair<std::string,std::string>> labels;
-        DIR* d2 = ::opendir(base.c_str());
-        if (!d2) continue;
-        while (auto* e2 = ::readdir(d2)) {
-            std::string fn = e2->d_name;
-            if (fn.rfind("temp", 0)==0 && fn.size()>6 && ends_with(fn, "_label")) {
-                std::string key = fn.substr(0, fn.size()-6);
-                std::string lab = read_all(base + "/" + fn);
-                labels.emplace_back(key, lab);
+        if (DIR* d2 = ::opendir(base.c_str())) {
+            while (auto* e2 = ::readdir(d2)) {
+                if (!e2) continue;
+                std::string fn = e2->d_name;
+                if (fn.rfind("temp", 0)==0 && fn.size()>6 && ends_with(fn, "_label")) {
+                    const std::string key = fn.substr(0, fn.size()-6);
+                    const std::string lab = read_all(base + "/" + fn);
+                    labels.emplace_back(key, lab);
+                }
             }
+            ::closedir(d2);
         }
-        ::closedir(d2);
-        // inputs
-        d2 = ::opendir(base.c_str());
-        if (!d2) continue;
-        while (auto* e2 = ::readdir(d2)) {
-            std::string fn = e2->d_name;
-            if (fn.rfind("temp", 0)==0 && fn.size()>6 && ends_with(fn, "_input")) {
-                std::string key = fn.substr(0, fn.size()-6);
-                std::string lab = key;
-                auto it = std::find_if(labels.begin(), labels.end(), [&](auto& p){ return p.first==key; });
-                if (it!=labels.end()) lab = it->second;
-                TempSensorInfo info;
-                info.device = e->d_name;
-                info.name   = name;
-                info.label  = lab;
-                info.path   = base + "/" + fn;
-                out.push_back(info);
+
+        // collect inputs
+        if (DIR* d2 = ::opendir(base.c_str())) {
+            while (auto* e2 = ::readdir(d2)) {
+                if (!e2) continue;
+                std::string fn = e2->d_name;
+                if (fn.rfind("temp", 0)==0 && fn.size()>6 && ends_with(fn, "_input")) {
+                    const std::string key = fn.substr(0, fn.size()-6);
+                    std::string lab = key;
+                    auto it = std::find_if(labels.begin(), labels.end(),
+                                           [&](const auto& p){ return p.first==key; });
+                    if (it!=labels.end()) lab = it->second;
+
+                    TempSensorInfo info;
+                    // NOTE: TempSensorInfo has no 'device' field in current header.
+                    // We only set fields that certainly exist: name/label/path.
+                    info.name  = name;
+                    info.label = lab;
+                    info.path  = base + "/" + fn;
+                    out.push_back(std::move(info));
+                }
             }
+            ::closedir(d2);
         }
-        ::closedir(d2);
     }
+
     ::closedir(d);
     return out;
 }

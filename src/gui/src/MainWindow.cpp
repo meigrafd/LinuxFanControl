@@ -37,6 +37,7 @@
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QJsonDocument>
+#include <QPainter>    // <-- FIX: required for RotLogo paintEvent
 #include <cmath>
 
 // ---------- Helper: read stylesheet from file ----------
@@ -95,7 +96,7 @@ public:
         form->addRow("Response τ", spinTau_);
         v->addLayout(form);
 
-        // Minimal curve table (x=temp, y=duty). Keep simple and robust.
+        // Minimal, robust curve table
         tbl_ = new QTableWidget(this);
         tbl_->setColumnCount(2);
         tbl_->setHorizontalHeaderLabels(QStringList()<<"Temp (°C)"<<"Duty (%)");
@@ -128,11 +129,11 @@ public:
         sliderManual_->setValue(std::lround(ch.value("manual").toDouble(0.0)));
         spinHyst_->setValue(ch.value("hyst").toDouble(0.0));
         spinTau_->setValue(ch.value("tau").toDouble(0.0));
-        // curve points: expect array of {x,y}
+        // curve points: array of {x,y}
         tbl_->setRowCount(0);
         for (const auto& it : ch.value("curve").toArray()) {
-            auto p = it.toObject();
-            int r = tbl_->rowCount(); tbl_->insertRow(r);
+            const auto p = it.toObject();
+            const int r = tbl_->rowCount(); tbl_->insertRow(r);
             tbl_->setItem(r,0,new QTableWidgetItem(QString::number(p.value("x").toDouble())));
             tbl_->setItem(r,1,new QTableWidgetItem(QString::number(p.value("y").toDouble())));
         }
@@ -148,8 +149,8 @@ public:
         QJsonArray pts;
         for (int r=0;r<tbl_->rowCount();++r) {
             bool ok1=false, ok2=false;
-            double x = tbl_->item(r,0) ? tbl_->item(r,0)->text().toDouble(&ok1) : 0.0;
-            double y = tbl_->item(r,1) ? tbl_->item(r,1)->text().toDouble(&ok2) : 0.0;
+            const double x = tbl_->item(r,0) ? tbl_->item(r,0)->text().toDouble(&ok1) : 0.0;
+            const double y = tbl_->item(r,1) ? tbl_->item(r,1)->text().toDouble(&ok2) : 0.0;
             if (ok1 && ok2) pts.push_back(QJsonObject{{"x",x},{"y",y}});
         }
         out["curve"] = pts;
@@ -255,7 +256,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     resize(1280, 900);
 
-    // Theme files
+    // Theme
     applyThemeFile("assets/themes/dark.qss");
     isDark_ = true;
     actTheme_->setText("Light Mode");
@@ -313,8 +314,8 @@ QWidget* MainWindow::makeFanTileWidget(const QJsonObject& ch) {
     auto* tile = new FanTile(this);
     const QString nm = ch.value("name").toString();
     const QString sn = ch.value("sensor").toString();
-    tile->setTitle(fanPrefix() + nm);
-    tile->setSensor(tempPrefix() + sn);
+    tile->setTitle("[FAN] " + nm);
+    tile->setSensor("[TEMP] " + sn);
     return tile;
 }
 
@@ -326,7 +327,7 @@ void MainWindow::rebuildChannels(const QJsonArray& channels) {
     showEmptyState(channels.isEmpty());
 
     for (const auto& it : channels) {
-        auto obj = it.toObject();
+        const auto obj = it.toObject();
         const QString id = obj.value("id").toString();
 
         auto* tile = qobject_cast<FanTile*>(makeFanTileWidget(obj));
@@ -434,7 +435,6 @@ void MainWindow::onTelemetry(const QJsonArray& channels) {
     }
 }
 
-// ----- open editor and perform Batch RPC -----
 void MainWindow::openEditorForChannel(const QString& channelId, const QJsonObject& channelObj) {
     EditorDialog dlg(this);
     dlg.loadFrom(channelObj);
@@ -443,7 +443,7 @@ void MainWindow::openEditorForChannel(const QString& channelId, const QJsonObjec
     const auto patch = dlg.toPatchJson();
     QJsonArray pts = patch.value("curve").toArray();
 
-    // Prepare JSON-RPC 2.0 batch
+    // JSON-RPC 2.0 batch patch
     QJsonArray batch;
     int id=1;
 
@@ -468,7 +468,6 @@ void MainWindow::openEditorForChannel(const QString& channelId, const QJsonObjec
             });
         }
     }
-    // curve + hysteresis/tau
     if (!pts.isEmpty()) {
         batch.push_back(QJsonObject{
             {"jsonrpc","2.0"},{"id",QString::number(id++)},
