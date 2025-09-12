@@ -1,44 +1,52 @@
 #pragma once
-// Daemon: orchestrates hwmon scan and exposes a JSON-RPC 2.0 (batch-only) API over a Unix domain socket.
+// Daemon interface expected by src/daemon/src/main.cpp
+// - init(): bind/listen on Unix domain socket
+// - pumpOnce(timeout_ms): accept+serve exactly one client (or timeout), return true while running
+// - shutdown(): close & unlink socket
 // Comments in English per project preference.
 
 #include <string>
-#include <vector>
-#include <mutex>
-#include <optional>
+#include <atomic>
 #include <nlohmann/json.hpp>
-#include "Engine.h"
-#include "Hwmon.h"
-#include "RpcServer.h"
+
+class Hwmon;
+class Engine;
 
 class Daemon {
 public:
-    bool init();
-    void shutdown();
-    void pumpOnce(int pollMs);
+    Daemon();
+    ~Daemon();
+
+    bool init();                 // bind/listen
+    bool pumpOnce(int timeoutMs);// accept one client with timeout; true => keep looping
+    void shutdown();             // stop server
 
 private:
-    Hwmon hw_;
-    RpcServer rpc_;
-    std::mutex mtx_; // protects cached lists
-    std::vector<TempSensorInfo> temps_;
-    std::vector<PwmOutputInfo>  pwms_;
-    Engine engine_;
+    // RPC plumbing
+    nlohmann::json dispatch(const nlohmann::json& req);
+    nlohmann::json rpcEnumerate();
+    nlohmann::json rpcListChannels();
 
-    // Socket entrypoint: expects a single line containing a JSON array (batch).
-    std::string onCommand(const std::string& jsonLine);
+    bool rpcCreateChannel(const std::string& name,
+                          const std::string& sensor,
+                          const std::string& pwm);
+    bool rpcDeleteChannel(const std::string& id);
+    bool rpcSetChannelMode(const std::string& id, const std::string& mode);
+    bool rpcSetChannelManual(const std::string& id, double pct);
+    bool rpcSetChannelCurve(const std::string& id,
+                            const std::vector<std::pair<double,double>>& pts);
+    bool rpcSetChannelHystTau(const std::string& id, double hyst, double tau);
+    bool rpcDeleteCoupling(const std::string& id);
 
-    // JSON-RPC
-    std::string handleJsonRpcBatch(const std::string& jsonText);   // returns JSON text (+ '\n')
-    nlohmann::json jsonRpcCall(const nlohmann::json& req);         // single request -> response or null (notification)
+    static nlohmann::json error_obj(const nlohmann::json& id, int code, const std::string& msg);
+    static nlohmann::json result_obj(const nlohmann::json& id, const nlohmann::json& result);
 
-    // Legacy JSON builders (used to compose results quickly)
-    std::string jsonListTemps() const;
-    std::string jsonListPwms()  const;
-    std::string jsonEnumerate() const;
-    std::string jsonListChannels() const;
+private:
+    std::string  sockPath_;
+    int          srvFd_;
+    std::atomic<bool> running_;
 
-    // Helpers
-    static std::string jsonEscape(const std::string& s);
-    static std::vector<std::pair<double,double>> parsePoints(const std::string& payload);
+    // owned components
+    Hwmon*  hw_;
+    Engine* engine_;
 };
