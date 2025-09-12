@@ -1,23 +1,27 @@
 #pragma once
+// Very small line-based RPC over Unix Domain Socket. One request per line; response is a JSON string.
+
 #include <string>
 #include <functional>
+#include <thread>
+#include <atomic>
 
-/* Minimal UNIX socket server (newline-delimited JSON).
- * For each line: std::string handle(std::string line) -> response line.
- */
 class RpcServer {
 public:
     using Handler = std::function<std::string(const std::string&)>;
-    RpcServer(const std::string& sockPath, Handler h);
+
+    RpcServer() = default;
     ~RpcServer();
 
-    bool start();
+    bool start(const std::string& sockPath, Handler h);
     void stop();
-    void pump(int timeoutMs); // accept + read/write
 
 private:
-    int srv_ = -1;
-    int cli_ = -1;
+    int fd_ = -1;
+    std::thread th_;
+    std::atomic<bool> running_{false};
     std::string path_;
     Handler handler_;
+
+    void loop();
 };
