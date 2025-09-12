@@ -1,9 +1,8 @@
 #pragma once
-// Daemon interface expected by src/daemon/src/main.cpp
-// - init(): bind/listen on Unix domain socket (single-instance guard)
-// - pumpOnce(timeout_ms): accept+serve exactly one client (or timeout)
-// - shutdown(): close & unlink socket
-// Comments in English per project preference.
+// Daemon interface (JSON-RPC 2.0 with batch).
+// Adds: detectCalibrate (port of Python auto-setup: perturbation + calibration).
+// Also enforces single-instance via Unix socket probing.
+// Comments in English per project guideline.
 
 #include <string>
 #include <atomic>
@@ -24,6 +23,8 @@ public:
 private:
     // RPC plumbing
     nlohmann::json dispatch(const nlohmann::json& req);
+
+    // Core RPCs
     nlohmann::json rpcEnumerate();
     nlohmann::json rpcListChannels();
 
@@ -37,6 +38,9 @@ private:
                             const std::vector<std::pair<double,double>>& pts);
     bool rpcSetChannelHystTau(const std::string& id, double hyst, double tau);
     bool rpcDeleteCoupling(const std::string& id);
+
+    // Auto-setup (detection + calibration), returns JSON summary.
+    nlohmann::json rpcDetectCalibrate();
 
     static nlohmann::json error_obj(const nlohmann::json& id, int code, const std::string& msg);
     static nlohmann::json result_obj(const nlohmann::json& id, const nlohmann::json& result);

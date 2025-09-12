@@ -1,5 +1,6 @@
 // Daemon.cpp — JSON-RPC 2.0 daemon with batch support over Unix domain socket.
-// Matches main.cpp expectations: init(), pumpOnce(int), shutdown().
+// Adds detectCalibrate(): safe PWM perturbations to infer coupling + calibration (min/spinup).
+// Mirrors the Python single-file logic (safe floor; snapshot/restore).
 
 #include "Daemon.h"
 #include "Hwmon.h"
@@ -19,6 +20,7 @@
 #include <chrono>
 #include <fstream>
 #include <algorithm>
+#include <cmath>
 
 #include <nlohmann/json.hpp>
 
@@ -74,6 +76,13 @@ static bool try_connect(const std::string& sockPath) {
     return ok;
 }
 
+static inline double clamp(double v, double lo, double hi) {
+    return std::max(lo, std::min(hi, v));
+}
+static inline double milli_to_c(double v) {
+    return (v > 200.0 ? v / 1000.0 : v);
+}
+
 // -------------------- lifecycle ------------------------
 Daemon::Daemon()
 : sockPath_(getenv_or("LFC_SOCK", "/tmp/lfcd.sock"))
@@ -81,8 +90,7 @@ Daemon::Daemon()
 , running_(false)
 , debug_(std::getenv("LFC_DEBUG") != nullptr)
 , hw_(new Hwmon())
-, engine_(new Engine()) {
-}
+, engine_(new Engine()) {}
 
 Daemon::~Daemon() {
     shutdown();
@@ -91,20 +99,17 @@ Daemon::~Daemon() {
 }
 
 bool Daemon::isAlreadyRunning() const {
-    // if a server is already bound/accepting on the socket, connecting will succeed
     return try_connect(sockPath_);
 }
 
 bool Daemon::init() {
     if (running_) return true;
 
-    // single-instance guard
     if (isAlreadyRunning()) {
         std::fprintf(stderr, "[daemon] another instance is already running at %s\n", sockPath_.c_str());
         return false;
     }
 
-    // remove stale socket if present
     ::unlink(sockPath_.c_str());
 
     srvFd_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
@@ -137,36 +142,29 @@ bool Daemon::pumpOnce(int timeoutMs) {
     if (!running_) return false;
     if (srvFd_ < 0) return false;
 
-    // poll with timeout
     struct pollfd pfd{};
     pfd.fd = srvFd_;
     pfd.events = POLLIN;
     int pr = ::poll(&pfd, 1, timeoutMs);
     if (pr < 0) {
-        if (errno == EINTR) return true; // keep running
+        if (errno == EINTR) return true;
         std::fprintf(stderr, "[daemon] poll() failed: %s\n", std::strerror(errno));
         return false;
     }
-    if (pr == 0) {
-        // timeout: nothing to accept this round
-        return true;
-    }
+    if (pr == 0) return true;
 
     int cfd = ::accept4(srvFd_, nullptr, nullptr, 0);
     if (cfd < 0) {
         if (errno == EINTR) return true;
         std::fprintf(stderr, "[daemon] accept() failed: %s\n", std::strerror(errno));
-        return true; // keep server alive
+        return true;
     }
 
-    // read exactly one line of JSON (object or array for batch)
     std::string line;
     bool have = read_line(cfd, line);
     if (!have) { ::close(cfd); return true; }
 
-    if (debug_) {
-        std::fprintf(stderr, "[daemon] RX: %s\n", line.c_str());
-    }
+    if (debug_) std::fprintf(stderr, "[daemon] RX: %s\n", line.c_str());
 
     json reply;
     try {
@@ -175,7 +173,7 @@ bool Daemon::pumpOnce(int timeoutMs) {
             json arr = json::array();
             for (auto& one : req) {
                 json r = dispatch(one);
-                if (r.contains("id")) arr.push_back(std::move(r)); // notifications => no "id"
+                if (r.contains("id")) arr.push_back(std::move(r));
             }
             reply = arr;
         } else {
@@ -186,9 +184,7 @@ bool Daemon::pumpOnce(int timeoutMs) {
     }
 
     const std::string payload = reply.dump() + "\n";
-    if (debug_) {
-        std::fprintf(stderr, "[daemon] TX: %s", payload.c_str());
-    }
+    if (debug_) std::fprintf(stderr, "[daemon] TX: %s", payload.c_str());
     write_all(cfd, payload.data(), payload.size());
     ::close(cfd);
     return true;
@@ -228,6 +224,7 @@ json Daemon::dispatch(const json& req) {
         if (method == "version")      return result_obj(id, json{{"name","lfcd"},{"protocol","jsonrpc2-batch"},{"version","1.0"}});
         if (method == "enumerate")    return result_obj(id, rpcEnumerate());
         if (method == "listChannels") return result_obj(id, rpcListChannels());
+        if (method == "detectCalibrate") return result_obj(id, rpcDetectCalibrate());
 
         if (method == "createChannel") {
             const std::string name   = params.value("name",   "");
@@ -304,7 +301,6 @@ json Daemon::rpcEnumerate() {
 
     json jp = json::array();
     for (auto& p : pwms) {
-        // form "<hwmonX>:<pwmN>" label
         std::string label = p.pwm_path;
         auto pos = label.rfind('/');
         if (pos != std::string::npos) {
@@ -404,8 +400,239 @@ bool Daemon::rpcSetChannelHystTau(const std::string& id, double hyst, double tau
 }
 
 bool Daemon::rpcDeleteCoupling(const std::string& /*id*/) {
-    // placeholder: depends on your internal model; return true for now
     return true;
+}
+
+// -------------------- detect + calibrate ----------------
+
+// Safe read helpers
+static inline bool read_text(const std::string& path, std::string& out) {
+    out.clear();
+    std::ifstream f(path);
+    if (!f) return false;
+    std::getline(f, out);
+    return true;
+}
+static inline bool write_text(const std::string& path, const std::string& val) {
+    std::ofstream f(path);
+    if (!f) return false;
+    f << val;
+    return static_cast<bool>(f);
+}
+static inline bool write_pwm_pct(const std::string& path, double pct) {
+    int raw = static_cast<int>(std::round(clamp(pct, 0.0, 100.0) * 255.0 / 100.0));
+    return write_text(path, std::to_string(raw));
+}
+static inline double pct_from_raw(const std::string& raw) {
+    try { int x = std::stoi(raw); if (x<0) return NAN; return clamp(x * 100.0 / 255.0, 0.0, 100.0); }
+    catch (...) { return NAN; }
+}
+static inline int read_rpm(const std::string& tachPath) {
+    std::ifstream f(tachPath);
+    if (!f) return -1;
+    int v=0; f>>v; return f ? v : -1;
+}
+static inline double read_temp(const std::string& path) {
+    std::ifstream f(path);
+    if (!f) return NAN;
+    double v=0; f>>v; return f ? milli_to_c(v) : NAN;
+}
+
+json Daemon::rpcDetectCalibrate() {
+    const int floor_pct = 20;
+    const int delta_pct = 25; // strong step so audible (as requested)
+    const double dwell_s = 10.0; // longer dwell for clear response
+    const int repeats = 1;
+    const int rpm_threshold = 100;
+    const int step = 5;
+    const double settle_s = 1.0;
+
+    auto temps = hw_->discoverTemps();
+    auto pwms  = hw_->discoverPwms();
+
+    // snapshot enable/pwm
+    struct Snap { std::string enable; std::string pwm; bool has_en=false, has_pwm=false; };
+    std::map<std::string, Snap> snaps; // by label
+
+    auto label_of_pwm = [](const std::string& pwm_path) {
+        std::string label = pwm_path;
+        auto pos = label.rfind('/');
+        if (pos != std::string::npos) {
+            auto base = label.substr(pos+1);
+            auto dir  = label.substr(0, pos);
+            auto pos2 = dir.rfind('/');
+            if (pos2 != std::string::npos) dir = dir.substr(pos2+1);
+            label = dir + ":" + base;
+        }
+        return label;
+    };
+
+    // temp map path->value
+    auto read_all_temps = [&](std::map<std::string,double>& out) {
+        out.clear();
+        for (auto& t : temps) {
+            double v = read_temp(t.path);
+            if (std::isfinite(v)) out[t.path] = v;
+        }
+    };
+
+    // Build results
+    json jSensors = json::array();
+    for (auto& t : temps) {
+        jSensors.push_back(json{
+            {"name", t.name}, {"label", t.label}, {"path", t.path}, {"type", t.type}
+        });
+    }
+    json jPwms = json::array();
+    for (auto& p : pwms) {
+        jPwms.push_back(json{
+            {"label", label_of_pwm(p.pwm_path)},
+                        {"pwm",   p.pwm_path},
+                        {"enable",p.enable_path},
+                        {"tach",  p.tach_path}
+        });
+    }
+
+    // Coupling inference
+    json mapping = json::object();
+    for (auto& p : pwms) {
+        const std::string lbl = label_of_pwm(p.pwm_path);
+
+        // snapshot
+        Snap s{};
+        if (!p.enable_path.empty()) { s.has_en = read_text(p.enable_path, s.enable); }
+        s.has_pwm = read_text(p.pwm_path, s.pwm);
+        snaps[lbl] = s;
+
+        // try set manual if enable exists
+        if (p.enable_path.size()) {
+            // write "1", but don't bail if not supported
+            write_text(p.enable_path, "1");
+        }
+
+        std::string prev_raw;
+        read_text(p.pwm_path, prev_raw);
+        double prev_pct = pct_from_raw(prev_raw);
+        if (!std::isfinite(prev_pct)) prev_pct = 35.0;
+        double start_pct = std::max<double>(floor_pct, prev_pct);
+
+        // write lower bound (never below floor)
+        auto safe_write = [&](double pct) {
+            write_pwm_pct(p.pwm_path, std::max<double>(floor_pct, pct));
+        };
+
+        // If writing is unsupported (e.g. amdgpu Errno 95), skip but keep snapshot restore
+        bool write_ok = safe_write(start_pct); // initial write to test FS
+        if (!write_ok) {
+            if (debug_) std::fprintf(stderr, "[detect] skip %s: write not supported\n", p.pwm_path.c_str());
+            continue;
+        }
+
+        std::map<std::string,double> t_low, t_base;
+        for (int rep = 0; rep < repeats; ++rep) {
+            double low = std::max<double>(floor_pct, start_pct - std::abs(delta_pct));
+            safe_write(low);
+            std::this_thread::sleep_for(std::chrono::milliseconds(int(dwell_s * 1000)));
+            read_all_temps(t_low);
+
+            safe_write(start_pct);
+            std::this_thread::sleep_for(std::chrono::milliseconds(int(dwell_s * 1000)));
+            read_all_temps(t_base);
+        }
+
+        // score by |low - base|
+        double best_v = 0.0;
+        std::string best_path;
+        for (auto& t : temps) {
+            auto itL = t_low.find(t.path);
+            auto itB = t_base.find(t.path);
+            if (itL!=t_low.end() && itB!=t_base.end()) {
+                double sc = std::fabs(itL->second - itB->second);
+                if (sc > best_v) { best_v = sc; best_path = t.path; }
+            }
+        }
+        if (!best_path.empty()) {
+            // label lookup for sensor
+            std::string sLabel = best_path;
+            for (auto& t : temps) if (t.path==best_path) { sLabel = t.label; break; }
+            mapping[lbl] = json{{"sensor_label", sLabel}, {"sensor_path", best_path}, {"score", best_v}};
+        }
+
+        // restore to start
+        safe_write(start_pct);
+        // restore enable + raw if we had snapshot
+        if (s.has_en) write_text(p.enable_path, s.enable);
+        if (s.has_pwm) write_text(p.pwm_path, s.pwm);
+    }
+
+    // Calibration
+    json cal_res = json::object();
+    for (auto& p : pwms) {
+        const std::string lbl = label_of_pwm(p.pwm_path);
+        const auto itS = snaps.find(lbl);
+        const int floorHere = floor_pct;
+
+        // set manual if possible
+        if (!p.enable_path.empty()) write_text(p.enable_path, "1");
+
+        // graceful PWM test
+        std::string prev_raw;
+        read_text(p.pwm_path, prev_raw);
+        double prev_pct = pct_from_raw(prev_raw);
+        if (!std::isfinite(prev_pct)) prev_pct = 35.0;
+
+        auto safe_write = [&](double pct) {
+            return write_pwm_pct(p.pwm_path, std::max<double>(floorHere, pct));
+        };
+        if (!safe_write(prev_pct)) {
+            cal_res[lbl] = json{{"ok", false}, {"error","PWM write not supported"}};
+            // restore snapshot if any
+            if (itS!=snaps.end()) {
+                if (itS->second.has_en) write_text(p.enable_path, itS->second.enable);
+                if (itS->second.has_pwm) write_text(p.pwm_path, itS->second.pwm);
+            }
+            continue;
+        }
+
+        int spinup = -1;
+        int rpm_at_min = 0;
+
+        for (int duty = std::max(0, floorHere); duty <= 100; duty += step) {
+            safe_write(duty);
+            std::this_thread::sleep_for(std::chrono::milliseconds(int(settle_s * 1000)));
+            int rpm = (p.tach_path.empty() ? -1 : read_rpm(p.tach_path));
+            if (rpm >= rpm_threshold) { spinup = duty; rpm_at_min = rpm; break; }
+        }
+        if (spinup < 0) {
+            cal_res[lbl] = json{{"ok", false}, {"error","No spin detected"}, {"min_pct", 100}};
+            // restore
+            if (itS!=snaps.end()) {
+                if (itS->second.has_en) write_text(p.enable_path, itS->second.enable);
+                if (itS->second.has_pwm) write_text(p.pwm_path, itS->second.pwm);
+            }
+            continue;
+        }
+
+        int min_stable = spinup;
+        for (int duty = spinup; duty >= floorHere; duty -= step) {
+            safe_write(duty);
+            std::this_thread::sleep_for(std::chrono::milliseconds(int(settle_s * 1000)));
+            int rpm = (p.tach_path.empty() ? -1 : read_rpm(p.tach_path));
+            if (rpm >= rpm_threshold) {
+                min_stable = duty;
+            } else break;
+        }
+
+        cal_res[lbl] = json{{"ok", true}, {"spinup_pct", spinup}, {"min_pct", min_stable}, {"rpm_at_min", rpm_at_min}};
+
+        // restore snapshot
+        if (itS!=snaps.end()) {
+            if (itS->second.has_en) write_text(p.enable_path, itS->second.enable);
+            if (itS->second.has_pwm) write_text(p.pwm_path, itS->second.pwm);
+        }
+    }
+
+    return json{{"sensors", jSensors}, {"pwms", jPwms}, {"mapping", mapping}, {"cal_res", cal_res}};
 }
 
 // -------------------- JSON helpers ---------------------
