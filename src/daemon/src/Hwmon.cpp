@@ -58,6 +58,36 @@ static bool write_all(const std::string& p, const std::string& text, std::string
 static double clamp01(double v) { return std::max(0.0, std::min(1.0, v)); }
 
 // -------------------------
+// classification heuristic
+// -------------------------
+std::string Hwmon::classifyType(const std::string& hwmonName, const std::string& label) {
+    auto in = [](const std::string& s, const char* needle) {
+        return s.find(needle) != std::string::npos;
+    };
+    std::string n = hwmonName; std::string l = label;
+    std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+    std::transform(l.begin(), l.end(), l.begin(), ::tolower);
+
+    // name-based
+    if (in(n, "k10temp") || in(n, "coretemp") || in(n, "zenpower") || in(n, "pkgtemp")) return "CPU";
+    if (in(n, "amdgpu") || in(n, "nvidia")) return "GPU";
+    if (in(n, "nvme")) return "NVMe";
+    if (in(n, "it8") || in(n, "nct") || in(n, "w83") || in(n, "ec")) return "Motherboard";
+
+    // label-based
+    if (in(l, "cpu") || in(l, "tctl") || in(l, "package") || in(l, "tdie") || in(l, "core")) return "CPU";
+    if (in(l, "gpu") || in(l, "junction") || in(l, "hotspot") || in(l, "edge") || in(l, "vram")) return "GPU";
+    if (in(l, "nvme") || in(l, "ssd") || in(l, "composite")) return "NVMe";
+    if (in(l, "chip") || in(l, "pch") || in(l, "smu") || in(l, "south") || in(l, "north")) return "Chipset";
+    if (in(l, "board") || in(l, "system") || in(l, "systin") || in(l, "case")) return "Motherboard";
+    if (in(l, "vrm") || in(l, "mos") || in(l, "vcore")) return "VRM";
+    if (in(l, "water") || in(l, "coolant") || in(l, "liquid")) return "Water";
+    if (in(l, "ambient") || in(l, "room")) return "Ambient";
+
+    return "Unknown";
+}
+
+// -------------------------
 // temperatures
 // -------------------------
 std::vector<TempSensorInfo> Hwmon::discoverTemps() const {
@@ -98,10 +128,11 @@ std::vector<TempSensorInfo> Hwmon::discoverTemps() const {
                     if (it!=labels.end()) lab = it->second;
 
                     TempSensorInfo info;
-                    // TempSensorInfo fields: name/label/path
+                    // TempSensorInfo fields: name/label/path/type
                     info.name  = name;
                     info.label = lab;
                     info.path  = base + "/" + fn;
+                    info.type  = classifyType(name, lab);
                     out.push_back(std::move(info));
                 }
             }
@@ -186,11 +217,12 @@ std::vector<PwmDevice> Hwmon::discoverPwms() const {
             }
 
             PwmDevice pd;
-            // PwmDevice fields: label / pwm_path / enable_path / tach_path
+            // PwmDevice fields: label / pwm_path / enable_path / tach_path / min_pct / max_pct
             pd.label       = hw + ":" + devName + ":" + fn;
             pd.pwm_path    = pwmPath;
             pd.enable_path = enablePath;
             pd.tach_path   = tachPath;
+            // min_pct/max_pct keep defaults (0..100) until calibration fills them.
 
             out.push_back(std::move(pd));
         }
