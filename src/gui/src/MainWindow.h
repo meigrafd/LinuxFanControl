@@ -1,7 +1,10 @@
 #pragma once
-// MainWindow — dashboard-style UI with draggable tiles for channels.
-// Comments in English (per project), UI strings currently English.
-// Provides: Detect, Start/Stop engine, Dark/Light switch, Sensors hide/apply.
+// MainWindow — dashboard-style UI modernized to mirror FanControl.Release:
+// - TOP: draggable tiles (channels) in a QListWidget (IconMode)
+// - SENSORS: collapsible panel with checkboxes + Apply Hide (not shown at top anymore)
+// - BOTTOM: "Curves / Triggers / Mix" tiles (placeholders for future editing)
+// - Auto-Setup if no channels exist: enumerate -> batch createChannel -> engineStart
+// Comments in English.
 
 #include <QMainWindow>
 #include <QMap>
@@ -9,15 +12,14 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
+class QListWidget;
+class QListWidgetItem;
 class QSplitter;
 class QScrollArea;
 class QWidget;
 class QLabel;
-class QComboBox;
-class QGridLayout;
 class QPushButton;
-class QListWidget;
-class QListWidgetItem;
+class QGridLayout;
 
 class RpcClient;
 class TelemetryWorker;
@@ -37,23 +39,23 @@ public:
     ~MainWindow();
 
 private slots:
-    void refresh();              // refresh from enumerate(); auto-detect if no channels
-    void detect();               // enumerate -> createChannel (batch) -> engineStart
+    void refresh();
+    void detect();
     void startEngine();
     void stopEngine();
     void switchTheme();
     void applyHideSensors();
-    void onTelemetry(const QJsonArray& channels);  // periodic updates
+    void onTelemetry(const QJsonArray& channels);
 
 private:
     void buildUi();
-    void clearGrid(QGridLayout* g);
-
-    QWidget* makeSensorCard(const QJsonObject& sensor, bool checked);
-    QWidget* makeChannelCard(const QJsonObject& ch);
+    QWidget* makeCurveTile(const QString& title);
+    QWidget* makeSensorTile(const QJsonObject& s, bool checked);
+    QWidget* makeChannelTile(const QJsonObject& ch);
 
     void rebuildSensors(const QJsonArray& sensors);
     void rebuildChannels(const QJsonArray& channels);
+    void rebuildCurves(const QJsonArray& channels);
 
     QString chooseSensorForPwm(const QString& pwmLabel, const QJsonArray& sensors) const;
 
@@ -63,25 +65,29 @@ private:
 
     QSplitter*   splitter_{};
 
-    // TOP: draggable tiles
+    // TOP: draggable channel tiles (fans)
     QListWidget* channelsList_{};
+    QMap<QString, ChannelCardRefs> chCards_;      // channel id -> refs
+    QMap<QString, QListWidgetItem*> chItems_;     // channel id -> list item
 
-    // BOTTOM: sensors with hide/apply
-    QScrollArea* saBottom_{};
-    QWidget*     wrapBottom_{};
-    QGridLayout* gridBottom_{};
+    // CENTER: collapsible sensors
+    QWidget*     sensorsPanel_{};
+    QWidget*     sensorsBody_{};
+    QGridLayout* sensorsGrid_{};
     QPushButton* btnApplyHide_{};
+    QSet<QString> hiddenSensors_;
+    QMap<QString, QWidget*> sensorCards_;         // by sensor label
+
+    // BOTTOM: curves/triggers/mix tiles
+    QScrollArea* curvesArea_{};
+    QWidget*     curvesWrap_{};
+    QGridLayout* curvesGrid_{};
 
     QAction*     actDetect_{};
     QAction*     actRefresh_{};
     QAction*     actStart_{};
     QAction*     actStop_{};
     QAction*     actTheme_{};
-
-    QSet<QString> hiddenSensors_;           // by sensor label
-    QMap<QString, QWidget*> sensorCards_;   // label -> card
-    QMap<QString, ChannelCardRefs> chCards_;// channel id -> refs
-    QMap<QString, QListWidgetItem*> chItems_;// channel id -> list item
 
     QJsonArray sensorsCache_;
     QJsonArray pwmsCache_;

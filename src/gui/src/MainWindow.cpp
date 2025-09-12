@@ -1,6 +1,8 @@
 #include "MainWindow.h"
 #include "RpcClient.h"
 #include "TelemetryWorker.h"
+#include "widgets/FanTile.h"
+#include "widgets/CollapsiblePanel.h"
 
 #include <QToolBar>
 #include <QAction>
@@ -10,22 +12,19 @@
 #include <QScrollArea>
 #include <QPushButton>
 #include <QLabel>
-#include <QComboBox>
 #include <QStyleFactory>
 #include <QVBoxLayout>
 #include <QGridLayout>
 #include <QFrame>
 #include <QTimer>
 #include <QMetaObject>
-#include <QSpacerItem>
 #include <QCheckBox>
 #include <QPalette>
 #include <QListWidget>
 #include <QListView>
 #include <QAbstractItemView>
-#include <QHBoxLayout>
 
-static QString cardStyle(bool dark) {
+static QString kCardStyle(bool dark) {
     if (dark) {
         return QStringLiteral(
             "QFrame {"
@@ -57,10 +56,10 @@ MainWindow::MainWindow(QWidget* parent)
     buildUi();
     resize(1280, 900);
 
-    QTimer::singleShot(120, this, &MainWindow::refresh);
-
     connect(tw_, &TelemetryWorker::tickReady, this, &MainWindow::onTelemetry);
     tw_->start(1000);
+
+    QTimer::singleShot(120, this, &MainWindow::refresh);
 }
 
 MainWindow::~MainWindow() = default;
@@ -92,7 +91,7 @@ void MainWindow::buildUi() {
     splitter_->setOrientation(Qt::Vertical);
     setCentralWidget(splitter_);
 
-    // TOP: draggable channel tiles using QListWidget in IconMode
+    // TOP: draggable tiles (channels)
     channelsList_ = new QListWidget(this);
     channelsList_->setViewMode(QListView::IconMode);
     channelsList_->setMovement(QListView::Snap);
@@ -100,40 +99,41 @@ void MainWindow::buildUi() {
     channelsList_->setResizeMode(QListView::Adjust);
     channelsList_->setWrapping(true);
     channelsList_->setSpacing(14);
-    channelsList_->setGridSize(QSize(360, 150)); // tile footprint
+    channelsList_->setGridSize(QSize(360, 150)); // outer footprint incl. margins
     splitter_->addWidget(channelsList_);
 
-    // BOTTOM (Sensors overview with hide/apply)
-    saBottom_ = new QScrollArea(this);
-    saBottom_->setWidgetResizable(true);
-    wrapBottom_ = new QWidget(this);
-    auto* vb = new QVBoxLayout(wrapBottom_);
-    btnApplyHide_ = new QPushButton("Apply Hide", wrapBottom_);
+    // CENTER: collapsible sensors panel
+    auto* sensorsPanel = new CollapsiblePanel("Sensors", this);
+    sensorsPanel_ = sensorsPanel;
+    QWidget* body = sensorsPanel->body();
+    auto* vb = qobject_cast<QVBoxLayout*>(body->layout());
+    if (!vb) vb = new QVBoxLayout(body);
+    btnApplyHide_ = new QPushButton("Apply Hide", body);
     btnApplyHide_->setToolTip("Hide all unchecked sensors from the overview");
     connect(btnApplyHide_, &QPushButton::clicked, this, &MainWindow::applyHideSensors);
     vb->addWidget(btnApplyHide_, 0, Qt::AlignLeft);
 
-    auto* cont = new QWidget(wrapBottom_);
-    gridBottom_ = new QGridLayout(cont);
-    gridBottom_->setContentsMargins(12,12,12,12);
-    gridBottom_->setHorizontalSpacing(12);
-    gridBottom_->setVerticalSpacing(12);
+    auto* cont = new QWidget(body);
+    sensorsGrid_ = new QGridLayout(cont);
+    sensorsGrid_->setContentsMargins(12,12,12,12);
+    sensorsGrid_->setHorizontalSpacing(12);
+    sensorsGrid_->setVerticalSpacing(12);
     vb->addWidget(cont);
 
-    saBottom_->setWidget(wrapBottom_);
-    splitter_->addWidget(saBottom_);
+    splitter_->addWidget(sensorsPanel);
+
+    // BOTTOM: curves/triggers/mix tiles
+    curvesArea_ = new QScrollArea(this);
+    curvesArea_->setWidgetResizable(true);
+    curvesWrap_ = new QWidget(curvesArea_);
+    curvesGrid_ = new QGridLayout(curvesWrap_);
+    curvesGrid_->setContentsMargins(12,12,12,12);
+    curvesGrid_->setHorizontalSpacing(12);
+    curvesGrid_->setVerticalSpacing(12);
+    curvesArea_->setWidget(curvesWrap_);
+    splitter_->addWidget(curvesArea_);
 
     statusBar()->showMessage("Ready", 1500);
-}
-
-void MainWindow::clearGrid(QGridLayout* g) {
-    while (auto* item = g->takeAt(0)) {
-        if (auto* w = item->widget()) {
-            w->hide();
-            w->deleteLater();
-        }
-        delete item;
-    }
 }
 
 void MainWindow::switchTheme() {
@@ -155,25 +155,28 @@ void MainWindow::switchTheme() {
         actTheme_->setText("Dark Mode");
     }
 
-    // restyle existing tiles
-    for (auto it = chCards_.begin(); it != chCards_.end(); ++it) {
-        if (it.value().card) it.value().card->setStyleSheet(cardStyle(isDark_));
-    }
+    // restyle sensor tiles
     for (auto it = sensorCards_.begin(); it != sensorCards_.end(); ++it) {
-        if (it.value()) it.value()->setStyleSheet(cardStyle(isDark_));
+        if (it.value()) it.value()->setStyleSheet(kCardStyle(isDark_));
     }
+    // restyle curve tiles
+    for (int i=0; i<curvesGrid_->count(); ++i) {
+        if (auto* w = curvesGrid_->itemAt(i)->widget())
+            w->setStyleSheet(kCardStyle(isDark_));
+    }
+    // channel tiles inherit app palette; (FanTile has neutral palette-based bg)
 }
 
-// ---------------- tiles ----------------
-
-QWidget* MainWindow::makeSensorCard(const QJsonObject& s, bool checked) {
+QWidget* MainWindow::makeSensorTile(const QJsonObject& s, bool checked) {
     auto* card = new QFrame;
     card->setObjectName("sensorCard");
     card->setFrameShape(QFrame::StyledPanel);
     card->setFrameShadow(QFrame::Raised);
-    card->setStyleSheet(cardStyle(isDark_));
+    card->setStyleSheet(kCardStyle(isDark_));
 
     auto* v = new QVBoxLayout(card);
+    v->setContentsMargins(12,10,12,10);
+    v->setSpacing(6);
     const QString label = s.value("label").toString();
     const QString path  = s.value("path").toString();
     const QString type  = s.value("type").toString("Unknown");
@@ -201,34 +204,76 @@ QWidget* MainWindow::makeSensorCard(const QJsonObject& s, bool checked) {
         return card;
 }
 
-QWidget* MainWindow::makeChannelCard(const QJsonObject& ch) {
+QWidget* MainWindow::makeCurveTile(const QString& title) {
     auto* card = new QFrame;
-    card->setObjectName("channelCard");
+    card->setObjectName("curveCard");
     card->setFrameShape(QFrame::StyledPanel);
     card->setFrameShadow(QFrame::Raised);
-    card->setStyleSheet(cardStyle(isDark_));
+    card->setStyleSheet(kCardStyle(isDark_));
 
     auto* v = new QVBoxLayout(card);
-
-    auto* name = new QLabel(QString("<b>%1</b>").arg(ch.value("name").toString()), card);
+    v->setContentsMargins(12,10,12,10);
+    v->setSpacing(6);
+    auto* name = new QLabel(QString("<b>%1</b>").arg(title), card);
     name->setObjectName("tileTitle");
     name->setTextFormat(Qt::RichText);
-
-    auto* sensor = new QLabel(QString("sensor: %1").arg(ch.value("sensor").toString()), card);
-    auto* duty   = new QLabel(QString("duty: -- %"), card);
-    auto* temp   = new QLabel(QString("temp: -- °C"), card);
-
     v->addWidget(name);
-    v->addWidget(sensor);
-    v->addWidget(duty);
-    v->addWidget(temp);
 
-    const QString id = ch.value("id").toString();
-    chCards_[id] = ChannelCardRefs{card, name, sensor, duty, temp};
+    // Placeholder: you will plug in your curve editor or live preview here
+    v->addWidget(new QLabel("Curve/Trigger/Mix editor (TBD)", card));
     return card;
 }
 
-// --------------- Heuristic sensor choice for PWM ----------------
+QWidget* MainWindow::makeChannelTile(const QJsonObject& ch) {
+    auto* tile = new FanTile(this);
+    tile->setTitle(ch.value("name").toString());
+    tile->setSensor(ch.value("sensor").toString());
+    // duty/temp are fed by onTelemetry()
+
+    connect(tile, &FanTile::editRequested, this, [this, ch](){
+        // TODO: open channel editor dialog (not in scope of this patch)
+        statusBar()->showMessage(QString("Edit %1 (TBD)").arg(ch.value("name").toString()), 1200);
+    });
+
+    // keep a map of labels for telemetry updates
+    const QString id = ch.value("id").toString();
+    ChannelCardRefs refs;
+    refs.card   = tile;
+    // We don't have inner QLabel pointers (FanTile encapsulates), but we still keep the QWidget
+    // For telemetry, we call its setters via find in chCards_
+    chCards_[id] = refs;
+    return tile;
+}
+
+void MainWindow::applyHideSensors() {
+    // rebuild sensor grid, skipping hidden
+    for (int i = sensorsGrid_->count() - 1; i >= 0; --i) {
+        auto* item = sensorsGrid_->takeAt(i);
+        if (auto* w = item->widget()) { w->hide(); w->deleteLater(); }
+        delete item;
+    }
+    sensorCards_.clear();
+    int cols = 4, row=0, col=0;
+    for (const auto& it : sensorsCache_) {
+        const auto s = it.toObject();
+        const QString label = s.value("label").toString();
+        if (hiddenSensors_.contains(label)) continue;
+        auto* w = makeSensorTile(s, /*checked*/true);
+        sensorCards_.insert(label, w);
+        sensorsGrid_->addWidget(w, row, col);
+        if (++col >= cols) { col=0; ++row; }
+    }
+}
+
+void MainWindow::startEngine() {
+    rpc_->call("engineStart");
+    statusBar()->showMessage("Engine started", 1200);
+}
+
+void MainWindow::stopEngine() {
+    rpc_->call("engineStop");
+    statusBar()->showMessage("Engine stopped", 1200);
+}
 
 QString MainWindow::chooseSensorForPwm(const QString& pwmLabel, const QJsonArray& sensors) const {
     auto pickByType = [&](const QString& type) -> QString {
@@ -246,37 +291,8 @@ QString MainWindow::chooseSensorForPwm(const QString& pwmLabel, const QJsonArray
         if (pwmLabel.contains("k10temp", Qt::CaseInsensitive) || pwmLabel.contains("coretemp", Qt::CaseInsensitive))
             if (auto p = pickByType("CPU"); !p.isEmpty()) return p;
 
-            // fallback: first sensor
             if (!sensors.isEmpty()) return sensors.first().toObject().value("path").toString();
             return {};
-}
-
-// ---------------------- Actions ------------------------
-
-void MainWindow::applyHideSensors() {
-    clearGrid(gridBottom_);
-    int cols = 4, row=0, col=0;
-    sensorCards_.clear();
-
-    for (const auto& it : sensorsCache_) {
-        const auto s = it.toObject();
-        const QString label = s.value("label").toString();
-        if (hiddenSensors_.contains(label)) continue;
-        auto* w = makeSensorCard(s, /*checked*/true);
-        sensorCards_.insert(label, w);
-        gridBottom_->addWidget(w, row, col);
-        if (++col >= cols) { col=0; ++row; }
-    }
-}
-
-void MainWindow::startEngine() {
-    rpc_->call("engineStart");
-    statusBar()->showMessage("Engine started", 1200);
-}
-
-void MainWindow::stopEngine() {
-    rpc_->call("engineStop");
-    statusBar()->showMessage("Engine stopped", 1200);
 }
 
 void MainWindow::detect() {
@@ -289,7 +305,7 @@ void MainWindow::detect() {
     const auto sensors = r.value("sensors").toArray();
     const auto pwms    = r.value("pwms").toArray();
 
-    // Build a batch: createChannel for each PWM with a chosen sensor
+    // Batch createChannel for each PWM
     QJsonArray batch;
     int idCounter = 1;
     for (const auto& it : pwms) {
@@ -332,41 +348,44 @@ void MainWindow::refresh() {
         pwmsCache_    = r.value("pwms").toArray();
         rebuildSensors(sensorsCache_);
 
-        // If no channels exist yet, run detection once
+        // if no channels yet, run detection once
         auto ch = rpc_->listChannels();
         if (ch.isEmpty() && !pwmsCache_.isEmpty()) {
             detect();
             return;
         }
         rebuildChannels(ch);
+        rebuildCurves(ch); // placeholder tiles per channel
     } else {
         statusBar()->showMessage("daemon not reachable", 1500);
     }
 }
 
 void MainWindow::onTelemetry(const QJsonArray& channels) {
-    // Update tile labels for duty/temp
+    // Update FanTiles by id
     for (const auto& it : channels) {
         const auto ch = it.toObject();
         const QString id   = ch.value("id").toString();
         const double lastOut  = ch.contains("last_out")  ? ch["last_out"].toDouble()  : NAN;
         const double lastTemp = ch.contains("last_temp") ? ch["last_temp"].toDouble() : NAN;
 
-        auto refsIt = chCards_.find(id);
-        if (refsIt == chCards_.end()) continue;
-        auto& refs = refsIt.value();
-
-        if (std::isfinite(lastOut))
-            refs.duty->setText(QString("duty: %1 %").arg(QString::number(lastOut, 'f', 0)));
-        if (std::isfinite(lastTemp))
-            refs.temp->setText(QString("temp: %1 °C").arg(QString::number(lastTemp, 'f', 1)));
+        auto* item = chItems_.value(id, nullptr);
+        if (!item) continue;
+        auto* w = channelsList_->itemWidget(item);
+        if (auto* tile = qobject_cast<FanTile*>(w)) {
+            if (std::isfinite(lastOut))  tile->setDuty(lastOut);
+            if (std::isfinite(lastTemp)) tile->setTemp(lastTemp);
+        }
     }
 }
 
-// ---------------- rebuild sections ---------------------
-
 void MainWindow::rebuildSensors(const QJsonArray& sensors) {
-    clearGrid(gridBottom_);
+    // clear grid
+    for (int i = sensorsGrid_->count() - 1; i >= 0; --i) {
+        auto* item = sensorsGrid_->takeAt(i);
+        if (auto* w = item->widget()) { w->hide(); w->deleteLater(); }
+        delete item;
+    }
     sensorCards_.clear();
 
     int cols = 4, row=0, col=0;
@@ -374,10 +393,10 @@ void MainWindow::rebuildSensors(const QJsonArray& sensors) {
         const auto s = it.toObject();
         const QString label = s.value("label").toString();
         const bool checked = !hiddenSensors_.contains(label);
-        auto* w = makeSensorCard(s, checked);
+        auto* w = makeSensorTile(s, checked);
         sensorCards_.insert(label, w);
         if (checked) {
-            gridBottom_->addWidget(w, row, col);
+            sensorsGrid_->addWidget(w, row, col);
             if (++col >= cols) { col=0; ++row; }
         }
     }
@@ -392,15 +411,31 @@ void MainWindow::rebuildChannels(const QJsonArray& channels) {
         auto obj = it.toObject();
         const QString id = obj.value("id").toString();
 
-        // create tile widget
-        QWidget* tile = makeChannelCard(obj);
+        QWidget* tile = makeChannelTile(obj);
 
-        // host it in a QListWidgetItem
         auto* item = new QListWidgetItem();
-        item->setSizeHint(QSize(340, 130)); // inner size (card margin is inside)
+        item->setSizeHint(QSize(340, 130));
         item->setData(Qt::UserRole, id);
         channelsList_->addItem(item);
         channelsList_->setItemWidget(item, tile);
         chItems_.insert(id, item);
+    }
+}
+
+void MainWindow::rebuildCurves(const QJsonArray& channels) {
+    // clear grid
+    for (int i = curvesGrid_->count() - 1; i >= 0; --i) {
+        auto* item = curvesGrid_->takeAt(i);
+        if (auto* w = item->widget()) { w->hide(); w->deleteLater(); }
+        delete item;
+    }
+
+    int cols = 2, row=0, col=0;
+    for (const auto& it : channels) {
+        const auto ch = it.toObject();
+        const QString title = ch.value("name").toString() + " — Curve";
+        auto* w = makeCurveTile(title);
+        curvesGrid_->addWidget(w, row, col);
+        if (++col >= cols) { col=0; ++row; }
     }
 }
