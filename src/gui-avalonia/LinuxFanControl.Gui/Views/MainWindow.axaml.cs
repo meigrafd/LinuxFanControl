@@ -1,9 +1,10 @@
 // (c) 2025 LinuxFanControl contributors. MIT License.
+using System;
+using Avalonia;                    // <-- needed for Application.Current
 using Avalonia.Controls;
 using Avalonia.Styling;
 using LinuxFanControl.Gui.ViewModels;
 using LinuxFanControl.Gui.Views.Dialogs;
-using System;
 
 namespace LinuxFanControl.Gui.Views
 {
@@ -12,7 +13,13 @@ namespace LinuxFanControl.Gui.Views
         public MainWindow()
         {
             InitializeComponent();
-            DataContext ??= new MainWindowViewModel();
+
+            var vm = DataContext as MainWindowViewModel ?? new MainWindowViewModel();
+            DataContext = vm;
+
+            // If someone uses the VM commands instead of button Click handlers:
+            vm.RequestSetup += (_, __) => OnSetupClicked(this, new Avalonia.Interactivity.RoutedEventArgs());
+            vm.RequestImport += (_, __) => OnImportClicked(this, new Avalonia.Interactivity.RoutedEventArgs());
         }
 
         private async void OnSetupClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)

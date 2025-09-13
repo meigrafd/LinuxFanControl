@@ -1,28 +1,27 @@
 // (c) 2025 LinuxFanControl contributors. MIT License.
-using System.Threading.Tasks;
-using Avalonia.Controls;
+using System;
 using CommunityToolkit.Mvvm.Input;
-using LinuxFanControl.Gui.Views.Dialogs;
 
 namespace LinuxFanControl.Gui.ViewModels
 {
+    // Keeps commands on the VM but lets the Window open dialogs.
     public partial class MainWindowViewModel
     {
-        [RelayCommand]
-        private async Task OpenSetupAsync(object? topLevel)
-        {
-            // topLevel should be a Window (MainWindow)
-            if (topLevel is not Window owner) return;
-            var dlg = new SetupDialog();
-            await dlg.ShowAsync(owner);
-        }
+        public event EventHandler? RequestSetup;
+        public event EventHandler? RequestImport;
 
-        [RelayCommand]
-        private async Task OpenImportAsync(object? topLevel)
+        private IRelayCommand? _setupCommand;
+        public IRelayCommand SetupCommand => _setupCommand ??= new RelayCommand(() =>
         {
-            if (topLevel is not Window owner) return;
-            var dlg = new ImportDialog();
-            await dlg.ShowAsync(owner);
-        }
+            // Notify view to open Setup dialog (no ShowAsync here).
+            RequestSetup?.Invoke(this, EventArgs.Empty);
+        });
+
+        private IRelayCommand? _importCommand;
+        public IRelayCommand ImportCommand => _importCommand ??= new RelayCommand(() =>
+        {
+            // Notify view to open Import dialog.
+            RequestImport?.Invoke(this, EventArgs.Empty);
+        });
     }
 }
