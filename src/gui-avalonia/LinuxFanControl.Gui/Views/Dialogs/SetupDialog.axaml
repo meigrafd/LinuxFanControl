@@ -9,7 +9,6 @@
   WindowStartupLocation="CenterOwner"
   Title="{Binding Title}">
 
-  <!-- Design-time context (keine zusätzlichen xmlns hier!) -->
   <Design.DataContext>
     <vm:SetupDialogViewModel />
   </Design.DataContext>
@@ -29,7 +28,7 @@
       <!-- Theme -->
       <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="{Binding ThemeLabel}" />
       <ComboBox Grid.Row="0" Grid.Column="2"
-                Items="{Binding AvailableThemes}"
+                ItemsSource="{Binding AvailableThemes}"
                 SelectedItem="{Binding SelectedTheme, Mode=TwoWay}">
         <ComboBox.ItemTemplate>
           <DataTemplate>
@@ -41,7 +40,7 @@
       <!-- Language -->
       <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="{Binding LanguageLabel}" />
       <ComboBox Grid.Row="2" Grid.Column="2"
-                Items="{Binding AvailableLocales}"
+                ItemsSource="{Binding AvailableLocales}"
                 SelectedItem="{Binding SelectedLocale, Mode=TwoWay}">
         <ComboBox.ItemTemplate>
           <DataTemplate>
