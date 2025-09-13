@@ -2,189 +2,110 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Collections.Generic;
 using Avalonia;
-using Avalonia.Controls;
-using Avalonia.Controls.Primitives;
-using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
-using Avalonia.Styling;
 
 namespace LinuxFanControl.Gui.Services
 {
     /// <summary>
-    /// Load & apply simple JSON themes from ./Themes. No hardcoded csproj includes required.
+    /// Loads simple theme JSON files from ./Themes/*.json and applies as resource keys.
+    /// Nothing is hardcoded: all keys in the JSON become resources at Application.Current.Resources[key].
     /// </summary>
     public static class ThemeManager
     {
-        public const string DefaultThemeName = "midnight";
-        public static string DefaultTheme => DefaultThemeName;
-        public static string CurrentTheme { get; private set; } = DefaultThemeName;
+        public static string ThemesDir =>
+        Path.Combine(AppContext.BaseDirectory, "Themes");
 
-        public sealed class ThemeColors
+        public static IReadOnlyList<string> ListThemes()
         {
-            public string background { get; set; } = "#0E1A2B";
-            public string panel      { get; set; } = "#14233A";
-            public string panelAlt   { get; set; } = "#0B1626";
-            public string accent     { get; set; } = "#3B82F6";
-            public string accent2    { get; set; } = "#60A5FA";
-            public string text       { get; set; } = "#E6EDF3";
-            public string textMuted  { get; set; } = "#93A4B3";
-        }
-        public sealed class ThemeSpec
-        {
-            public string name { get; set; } = DefaultThemeName;
-            public ThemeColors colors { get; set; } = new ThemeColors();
+            if (!Directory.Exists(ThemesDir)) return Array.Empty<string>();
+            return Directory.GetFiles(ThemesDir, "*.json")
+            .Select(Path.GetFileNameWithoutExtension)
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .ToList();
         }
 
-        private static string ResolveDir(string name)
-        {
-            var baseDir = AppContext.BaseDirectory;
-            string[] candidates = new[]
-            {
-                Path.Combine(baseDir, name),
-                Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", name)),
-                Path.GetFullPath(Path.Combine(baseDir, "..", "..", name)),
-            };
-            return candidates.FirstOrDefault(Directory.Exists) ?? Path.Combine(baseDir, name);
-        }
+        public static string DefaultTheme()
+        => ListThemes().FirstOrDefault() ?? "midnight";
 
-        public static string ThemesDir => ResolveDir("Themes");
+        public static string CurrentTheme { get; private set; } = "";
 
-        public static string[] ListThemes()
+        public static void Apply(string themeName)
         {
-            try
-            {
-                if (!Directory.Exists(ThemesDir)) return new[] { DefaultThemeName };
-                return Directory.EnumerateFiles(ThemesDir, "*.json")
-                .Select(p => Path.GetFileNameWithoutExtension(p))
-                .Where(n => !string.IsNullOrWhiteSpace(n))
-                .Select(n => n!) // ensure non-null for nullable flow analysis
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-            }
-            catch
-            {
-                return new[] { DefaultThemeName };
-            }
-        }
+            var file = Path.Combine(ThemesDir, $"{themeName}.json");
+            if (!File.Exists(file))
+                throw new FileNotFoundException($"Theme file not found: {file}");
 
-        public static bool ApplyTheme(string themeName)
-        {
-            try
+            var json = File.ReadAllText(file);
+            var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            var app = Application.Current ?? throw new InvalidOperationException("No Avalonia Application running.");
+            var res = app.Resources;
+
+            // Clear only keys that were previously set by ThemeManager (we track by prefix).
+            var toRemove = res.Keys.OfType<object>()
+            .Where(k => k is string s && s.StartsWith("theme:", StringComparison.Ordinal))
+            .ToList();
+            foreach (var k in toRemove) res.Remove(k);
+
+            // Flatten JSON to resources: theme:<path> -> value (Brush/Color/string/double)
+            void put(string key, JsonElement el)
             {
-                var path = Path.Combine(ThemesDir, $"{themeName}.json");
-                ThemeSpec spec;
-                if (File.Exists(path))
+                string resKey = $"theme:{key}";
+                switch (el.ValueKind)
                 {
-                    var json = File.ReadAllText(path);
-                    spec = JsonSerializer.Deserialize<ThemeSpec>(json, new JsonSerializerOptions
-                    {
-                        PropertyNameCaseInsensitive = true
-                    }) ?? new ThemeSpec();
+                    case JsonValueKind.Number:
+                        if (el.TryGetDouble(out var d)) res[resKey] = d;
+                        break;
+                    case JsonValueKind.String:
+                        var s = el.GetString() ?? "";
+                        // try color => SolidColorBrush
+                        if (TryParseColor(s, out var color))
+                            res[resKey] = new SolidColorBrush(color);
+                    else
+                        res[resKey] = s;
+                    break;
+                    case JsonValueKind.True:
+                    case JsonValueKind.False:
+                        res[resKey] = el.GetBoolean();
+                        break;
+                }
+            }
+
+            void walk(JsonElement e, string prefix)
+            {
+                if (e.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var p in e.EnumerateObject())
+                        walk(p.Value, string.IsNullOrEmpty(prefix) ? p.Name : $"{prefix}.{p.Name}");
                 }
                 else
                 {
-                    spec = new ThemeSpec();
+                    put(prefix, e);
                 }
-                Apply(spec);
-                CurrentTheme = string.IsNullOrWhiteSpace(spec.name) ? themeName : spec.name;
-                return true;
             }
-            catch
-            {
-                Apply(new ThemeSpec());
-                CurrentTheme = DefaultThemeName;
-                return false;
-            }
+
+            walk(root, "");
+
+            CurrentTheme = themeName;
         }
 
-        private static void Apply(ThemeSpec spec)
+        static bool TryParseColor(string s, out Color color)
         {
-            if (Application.Current is null) return;
-            var res = Application.Current.Resources;
-
-            var bBg      = new SolidColorBrush(Parse(spec.colors.background));
-            var bPanel   = new SolidColorBrush(Parse(spec.colors.panel));
-            var bPanel2  = new SolidColorBrush(Parse(spec.colors.panelAlt));
-            var bAccent  = new SolidColorBrush(Parse(spec.colors.accent));
-            var bAccent2 = new SolidColorBrush(Parse(spec.colors.accent2));
-            var bText    = new SolidColorBrush(Parse(spec.colors.text));
-            var bText2   = new SolidColorBrush(Parse(spec.colors.textMuted));
-
-            res["ThemeBackgroundBrush"]  = bBg;
-            res["SystemAccentColor"]     = bAccent.Color;
-            res["SystemAccentBrush"]     = bAccent;
-            res["SystemAccentBrush2"]    = bAccent2;
-
-            res["Lfc/Background"]        = bBg;
-            res["Lfc/Panel"]             = bPanel;
-            res["Lfc/PanelAlt"]          = bPanel2;
-            res["Lfc/Accent"]            = bAccent;
-            res["Lfc/Accent2"]           = bAccent2;
-            res["Lfc/Text"]              = bText;
-            res["Lfc/TextMuted"]         = bText2;
-
-            res["ControlBackground"]     = bPanel;
-            res["ControlForeground"]     = bText;
-            res["ButtonBackground"]      = bPanel2;
-            res["ButtonForeground"]      = bText;
-
-            EnsureGlobalStyles();
-        }
-
-        private static void EnsureGlobalStyles()
-        {
-            if (Application.Current is null) return;
-
-            foreach (var s in Application.Current.Styles)
+            s = s.Trim();
+            if (s.StartsWith("#", StringComparison.Ordinal))
             {
-                if (s is Style st && st.Selector?.ToString()?.Contains("Window") == true)
-                    return;
-            }
-
-            var styles = new Styles
-            {
-                new Style(x => x.OfType<Window>())
+                try
                 {
-                    Setters =
-                    {
-                        new Setter(Window.BackgroundProperty,
-                                   new DynamicResourceExtension("Lfc/Background"))
-                    }
-                },
-                new Style(x => x.OfType<UserControl>())
-                {
-                    Setters =
-                    {
-                        new Setter(TemplatedControl.BackgroundProperty,
-                                   new DynamicResourceExtension("Lfc/Panel"))
-                    }
-                },
-                new Style(x => x.OfType<TextBlock>())
-                {
-                    Setters =
-                    {
-                        new Setter(TextBlock.ForegroundProperty,
-                                   new DynamicResourceExtension("Lfc/Text"))
-                    }
-                },
-                new Style(x => x.OfType<Button>())
-                {
-                    Setters =
-                    {
-                        new Setter(TemplatedControl.BackgroundProperty,
-                                   new DynamicResourceExtension("ButtonBackground")),
-                                   new Setter(TemplatedControl.ForegroundProperty,
-                                              new DynamicResourceExtension("ButtonForeground"))
-                    }
+                    color = Color.Parse(s);
+                    return true;
                 }
-            };
-
-            Application.Current.Styles.Add(styles);
+                catch { }
+            }
+            color = default;
+            return false;
         }
-
-        private static Color Parse(string hex) =>
-        Color.TryParse(hex, out var c) ? c : Colors.White;
     }
 }

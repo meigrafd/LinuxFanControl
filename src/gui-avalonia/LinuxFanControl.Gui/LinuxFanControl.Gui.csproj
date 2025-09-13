@@ -1,32 +1,30 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>LinuxFanControl.Gui</AssemblyName>
-    <RootNamespace>LinuxFanControl.Gui</RootNamespace>
 
-    <!-- prevent implicit Compile items to avoid NETSDK1022 -->
-    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>false</UseWPF>
+    <UseWindowsForms>false</UseWindowsForms>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <AvaloniaCompileXaml>true</AvaloniaCompileXaml>
+    <PublishSingleFile>false</PublishSingleFile>
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+    <EnableDefaultItems>true</EnableDefaultItems>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.2.0" />
     <PackageReference Include="Avalonia.Desktop" Version="11.2.0" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.0" />
     <PackageReference Include="Avalonia.ReactiveUI" Version="11.2.0" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="11.2.0" />
-    <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.2.0" />
     <PackageReference Include="LiveChartsCore.SkiaSharpView.Avalonia" Version="2.0.0-rc3" />
-    <PackageReference Include="SkiaSharp" Version="2.88.9" />
-    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="2.88.9" />
   </ItemGroup>
 
-  <!-- Kill ALL wildcard-added .axaml, then include EXACT list once -->
+  <!-- explizit alle XAML-Dateien, keine Wildcards für Code nötig -->
   <ItemGroup>
-    <AvaloniaXaml Remove="**/*.axaml" />
     <AvaloniaXaml Include="App.axaml" />
     <AvaloniaXaml Include="Views/MainWindow.axaml" />
     <AvaloniaXaml Include="Views/DashboardView.axaml" />
@@ -35,21 +33,14 @@
     <AvaloniaXaml Include="Views/Dialogs/DetectProgressDialog.axaml" />
   </ItemGroup>
 
+  <!-- Themes / Locales dynamisch einlesen, aber als Content ins Build ausliefern -->
   <ItemGroup>
-    <Compile Include="Program.cs" />
-    <Compile Include="App.axaml.cs" />
-    <Compile Include="Views/MainWindow.axaml.cs" />
-    <Compile Include="Views/DashboardView.axaml.cs" />
-    <Compile Include="Views/Controls/FanTile.axaml.cs" />
-    <Compile Include="Views/Dialogs/SetupDialog.axaml.cs" />
-    <Compile Include="Views/Dialogs/DetectProgressDialog.axaml.cs" />
-    <Compile Include="ViewModels/DashboardViewModel.cs" />
-    <Compile Include="ViewModels/FanTileViewModel.cs" />
-    <Compile Include="ViewModels/Dialogs/SetupDialogViewModel.cs" />
-    <Compile Include="Services/RpcClient.cs" />
-    <Compile Include="Services/ThemeManager.cs" />
-    <Compile Include="Services/LocalizationService.cs" />
-    <Compile Include="Behaviors/LocalizedToggleContentBehavior.cs" />
+    <Content Include="Themes/*.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Locales/*.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

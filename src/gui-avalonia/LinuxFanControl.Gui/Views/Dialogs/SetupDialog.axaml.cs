@@ -1,39 +1,23 @@
 using Avalonia.Controls;
+using Avalonia.Interactivity;
 using LinuxFanControl.Gui.ViewModels.Dialogs;
 
 namespace LinuxFanControl.Gui.Views.Dialogs
 {
-    // Code-behind wires the DataContext and exposes a convenient ShowDialog helper via IDialogHost.
-    public partial class SetupDialog : Window, IDialogHost
+    public partial class SetupDialog : Window
     {
         public SetupDialog()
         {
             InitializeComponent();
-            // Design-time DataContext is in XAML; runtime is provided by caller via ShowFor.
-        }
+            DataContext = new SetupDialogViewModel();
 
-        // Helper used by MainWindow to show and get a result.
-        public static async Task<(bool Ok, bool RunDetection, string ImportPath)> ShowFor(Window owner)
-        {
-            var dlg = new SetupDialog
+            this.FindControl<Button>("BtnCancel")!.Click += (_, __) => Close(false);
+            this.FindControl<Button>("BtnApply")!.Click += async (_, __) =>
             {
-                DataContext = new SetupDialogViewModel(owner)
+                var vm = (SetupDialogViewModel)DataContext!;
+                var ok = await vm.ApplyAsync();
+                Close(ok ? (bool?)true : (bool?)false);
             };
-
-            // Store result via CloseDialog callback
-            var tcs = new TaskCompletionSource<(bool, bool, string)>();
-            _pendingResult = tcs;
-            await dlg.ShowDialog(owner);
-            return await tcs.Task;
         }
-
-        // IDialogHost impl – invoked by VM commands
-        void IDialogHost.CloseDialog(bool ok, bool runDetection, string importPath)
-        {
-            _pendingResult?.TrySetResult((ok, runDetection, importPath));
-            Close();
-        }
-
-        static TaskCompletionSource<(bool Ok, bool RunDetection, string ImportPath)>? _pendingResult;
     }
 }

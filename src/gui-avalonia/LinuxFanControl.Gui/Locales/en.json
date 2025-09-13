@@ -1,13 +1,7 @@
 {
-  "setup.title": "Setup",
-  "setup.header": "First-time Setup",
-  "setup.subheader": "Choose theme & language, optionally run detection.",
-  "setup.theme": "Theme",
-  "setup.language": "Language",
-  "setup.detect": "Run detection on close",
-  "setup.detect_hint": "Probe sensors & PWM automatically after closing.",
-  "setup.import": "Import FanControl config",
-  "setup.import_browse": "Browse…",
+  "ui.language": "Language",
+  "ui.theme": "Theme",
+  "ui.apply": "Apply",
   "ui.cancel": "Cancel",
-  "ui.apply": "Apply"
+  "ui.setup.run_detection": "Run detection after apply"
 }

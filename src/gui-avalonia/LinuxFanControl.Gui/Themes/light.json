@@ -1,15 +1,8 @@
 {
-  "Foreground": "#101623",
-  "SubtleText": "#3B475C",
-  "TileBg": "#F5FAFF",
-  "TileBorder": "#D6E4F5",
-  "ButtonBg": "#E8F1FF",
-  "ButtonBgHover": "#DDEBFF",
-  "ButtonText": "#0E1626",
-  "ButtonBorder": "#C6D7F0",
-  "AccentBrush": "#2B6CB0",
-  "AccentBorder": "#224E83",
-  "FanLogoBack": "#E3F2FF",
-  "FanLogoBlade": "#2B6CB0",
-  "FanLogoHub": "#FFFFFF"
+  "palette": {
+    "background": "#FAFAFC",
+    "panel": "#FFFFFF",
+    "text": "#1E2430",
+    "accent": "#2D6CDF"
+  }
 }

@@ -1,74 +1,40 @@
-<?xml version="1.0" encoding="utf-8"?>
-<Window
-  xmlns="https://github.com/avaloniaui"
-  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-  xmlns:vm="clr-namespace:LinuxFanControl.Gui.ViewModels.Dialogs"
-  x:Class="LinuxFanControl.Gui.Views.Dialogs.SetupDialog"
-  Width="560" Height="360"
-  CanResize="False"
-  WindowStartupLocation="CenterOwner"
-  Title="{Binding Title}">
-
-  <Design.DataContext>
-    <vm:SetupDialogViewModel />
-  </Design.DataContext>
-
-  <Grid RowDefinitions="Auto,*,Auto" ColumnDefinitions="*">
-    <!-- Header -->
-    <StackPanel Margin="16,12,16,8" Orientation="Vertical" Spacing="6">
-      <TextBlock FontSize="18" FontWeight="SemiBold" Text="{Binding Header}" />
-      <TextBlock Opacity="0.75" Text="{Binding SubHeader}" />
-    </StackPanel>
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="LinuxFanControl.Gui.Views.Dialogs.SetupDialog"
+        Width="640" Height="420"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Title="Setup">
+  <Grid RowDefinitions="Auto,*,Auto"
+        ColumnDefinitions="*">
+    <!-- Header spacer -->
+    <Border Height="16"/>
 
     <!-- Content -->
-    <Grid Grid.Row="1" Margin="16"
-          RowDefinitions="Auto,12,Auto,12,Auto,12,Auto,12,Auto"
-          ColumnDefinitions="140,12,*">
-
-      <!-- Theme -->
-      <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="{Binding ThemeLabel}" />
-      <ComboBox Grid.Row="0" Grid.Column="2"
-                ItemsSource="{Binding AvailableThemes}"
-                SelectedItem="{Binding SelectedTheme, Mode=TwoWay}">
-        <ComboBox.ItemTemplate>
-          <DataTemplate>
-            <TextBlock Text="{Binding}" />
-          </DataTemplate>
-        </ComboBox.ItemTemplate>
-      </ComboBox>
-
-      <!-- Language -->
-      <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="{Binding LanguageLabel}" />
-      <ComboBox Grid.Row="2" Grid.Column="2"
-                ItemsSource="{Binding AvailableLocales}"
-                SelectedItem="{Binding SelectedLocale, Mode=TwoWay}">
-        <ComboBox.ItemTemplate>
-          <DataTemplate>
-            <TextBlock Text="{Binding}" />
-          </DataTemplate>
-        </ComboBox.ItemTemplate>
-      </ComboBox>
-
-      <!-- Run detection checkbox -->
-      <TextBlock Grid.Row="4" Grid.Column="0" VerticalAlignment="Center" Text="{Binding DetectionLabel}" />
-      <CheckBox Grid.Row="4" Grid.Column="2"
-                IsChecked="{Binding RunDetectionOnClose, Mode=TwoWay}"
-                Content="{Binding DetectionHint}" />
-
-      <!-- Import FanControl config -->
-      <TextBlock Grid.Row="6" Grid.Column="0" VerticalAlignment="Center" Text="{Binding ImportLabel}" />
-      <StackPanel Grid.Row="6" Grid.Column="2" Orientation="Horizontal" Spacing="8">
-        <Button Content="{Binding ImportBrowseButton}" Command="{Binding BrowseImportCommand}" />
-        <TextBlock VerticalAlignment="Center"
-                   TextTrimming="CharacterEllipsis"
-                   Text="{Binding ImportPath}" />
+    <StackPanel Grid.Row="1" Spacing="14" HorizontalAlignment="Center">
+      <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+        <TextBlock Text="{Binding L_Language}" Width="160" VerticalAlignment="Center"/>
+        <ComboBox Width="220"
+                  ItemsSource="{Binding Languages}"
+                  SelectedItem="{Binding SelectedLanguage}"/>
         </StackPanel>
-      </Grid>
 
-      <!-- Footer -->
-      <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="16,8,16,16" Spacing="8">
-        <Button MinWidth="96" Content="{Binding CancelText}" Command="{Binding CancelCommand}" />
-        <Button MinWidth="120" Classes="accent" Content="{Binding ApplyText}" Command="{Binding ApplyCommand}" />
-      </StackPanel>
-    </Grid>
-  </Window>
+        <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+          <TextBlock Text="{Binding L_Theme}" Width="160" VerticalAlignment="Center"/>
+          <ComboBox Width="220"
+                    ItemsSource="{Binding Themes}"
+                    SelectedItem="{Binding SelectedTheme}"/>
+          </StackPanel>
+
+          <CheckBox Content="{Binding L_Detect}"
+                    IsChecked="{Binding RunDetection}"/>
+          </StackPanel>
+
+          <!-- Buttons -->
+          <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12"
+                      HorizontalAlignment="Right" Margin="0,18,18,18">
+            <Button Content="{Binding L_Cancel}" Name="BtnCancel" Width="110"/>
+            <Button Content="{Binding L_Apply}"  Name="BtnApply"  Width="110" IsDefault="True"/>
+          </StackPanel>
+        </Grid>
+      </Window>

@@ -1,12 +1,8 @@
 {
-  "name": "midnight",
-  "colors": {
-    "background": "#0E1A2B",
-    "panel":      "#14233A",
-    "panelAlt":   "#0B1626",
-    "accent":     "#3B82F6",
-    "accent2":    "#60A5FA",
-    "text":       "#E6EDF3",
-    "textMuted":  "#93A4B3"
+  "palette": {
+    "background": "#0E2135",
+    "panel": "#112A44",
+    "text": "#DDE6F2",
+    "accent": "#4DA3FF"
   }
 }

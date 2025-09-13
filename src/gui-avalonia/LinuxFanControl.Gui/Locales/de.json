@@ -1,11 +1,7 @@
 {
-  "setup.title": "Einrichtung",
-  "setup.headline": "Erste Einrichtung",
-  "setup.theme": "Theme",
-  "setup.language": "Sprache",
-  "setup.run_detection": "Nach dem Schlie\u00dfen Erkennung & Kalibrierung starten",
-  "setup.import_fc": "FanControl-Konfiguration importieren",
-  "setup.import_hint": "(optional) Kurven/Trigger aus Windows FanControl importieren",
-  "common.cancel": "Abbrechen",
-  "common.apply": "\u00dcbernehmen"
+  "ui.language": "Sprache",
+  "ui.theme": "Theme",
+  "ui.apply": "Übernehmen",
+  "ui.cancel": "Abbrechen",
+  "ui.setup.run_detection": "Erkennung nach Übernehmen starten"
 }
