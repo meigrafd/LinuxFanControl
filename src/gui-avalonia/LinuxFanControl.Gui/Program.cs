@@ -11,7 +11,6 @@ namespace LinuxFanControl.Gui
         public static AppBuilder BuildAvaloniaApp() =>
         AppBuilder.Configure<App>()
         .UsePlatformDetect()
-        .WithInterFont()
-        .LogToTrace();
+        .LogToTrace(); // no WithInterFont - keeps dependencies minimal
     }
 }
