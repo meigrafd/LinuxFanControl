@@ -1,7 +1,6 @@
 // (c) 2025 LinuxFanControl contributors. MIT License.
 // Purpose: Swap ToggleSwitch.Content between On/Off texts when IsChecked changes.
 
-using System;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Xaml.Interactivity;
@@ -28,8 +27,6 @@ namespace LinuxFanControl.Gui.Behaviors
             set => SetValue(OffTextProperty, value);
         }
 
-        private IDisposable? _sub;
-
         protected override void OnAttached()
         {
             base.OnAttached();
@@ -38,16 +35,25 @@ namespace LinuxFanControl.Gui.Behaviors
             // initial apply
             ApplyContent(AssociatedObject.IsChecked == true);
 
-            // subscribe to IsChecked changes
-            _sub = AssociatedObject.GetObservable(ToggleSwitch.IsCheckedProperty)
-            .Subscribe(v => ApplyContent(v == true));
+            // observe changes without System.Reactive
+            AssociatedObject.PropertyChanged += OnAssociatedPropertyChanged;
         }
 
         protected override void OnDetaching()
         {
-            _sub?.Dispose();
-            _sub = null;
+            if (AssociatedObject is not null)
+                AssociatedObject.PropertyChanged -= OnAssociatedPropertyChanged;
+
             base.OnDetaching();
+        }
+
+        private void OnAssociatedPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
+        {
+            if (e.Property == ToggleSwitch.IsCheckedProperty)
+            {
+                var isOn = (bool?)e.NewValue == true;
+                ApplyContent(isOn);
+            }
         }
 
         private void ApplyContent(bool isOn)
