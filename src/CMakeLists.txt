@@ -1,7 +1,0 @@
-# Top-level for sources (daemon + gui)
-if (BUILD_DAEMON)
-  add_subdirectory(daemon)
-endif()
-if (BUILD_GUI)
-  add_subdirectory(gui)
-endif()

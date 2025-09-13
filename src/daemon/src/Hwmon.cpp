@@ -1,266 +1,74 @@
-/*
- * Linux Fan Control (LFC) - hwmon helpers
- * (c) 2025 meigrafd & contributors - MIT License (see LICENSE)
- */
-
-#include "Hwmon.h"
-
-#include <dirent.h>
-#include <sys/stat.h>
-#include <cerrno>
-#include <cstring>
+#include "Hwmon.hpp"
+#include <filesystem>
 #include <fstream>
-#include <string>
-#include <vector>
-#include <algorithm>
+#include <thread>
+#include <map>
 #include <cmath>
-#include <cctype>
-#include <limits>
 
-// -------------------------
-// small string helpers
-// -------------------------
-static bool ends_with(const std::string& s, const char* suff) {
-    const size_t ls = s.size();
-    const size_t lt = std::char_traits<char>::length(suff);
-    return (ls >= lt) && (s.compare(ls - lt, lt, suff) == 0);
-}
+using namespace std;
 
-static bool starts_with(const std::string& s, const char* pref) {
-    const size_t lp = std::char_traits<char>::length(pref);
-    return s.size() >= lp && s.compare(0, lp, pref) == 0;
-}
+static inline double milli_to_c(double v){ return v>200.0? v/1000.0 : v; }
 
-static std::string read_all(const std::string& p) {
-    std::ifstream f(p);
-    if (!f.good()) return {};
-    std::string s; std::getline(f, s);
-    // trim CR/LF
-    s.erase(std::remove_if(s.begin(), s.end(),
-                           [](unsigned char c){ return c=='\r' || c=='\n'; }), s.end());
-    return s;
-}
+string Hwmon::readText(const string& p){ try{ ifstream f(p); if(!f.good()) return {}; string s; getline(f,s,'\0'); return s; }catch(...){ return {}; } }
+bool Hwmon::writeRaw(const string& p, const string& v){ try{ ofstream f(p); if(!f.good()) return false; f<<v; return true; }catch(...){ return false; } }
+optional<double> Hwmon::readTempC(const string& p){ try{ ifstream f(p); if(!f.good()) return {}; string s; getline(f,s); return milli_to_c(stod(s)); }catch(...){ return {}; } }
+optional<int> Hwmon::readRpm(const string& p){ try{ if(p.empty()) return {}; ifstream f(p); if(!f.good()) return {}; string s; getline(f,s); return stoi(s); }catch(...){ return {}; } }
+optional<int> Hwmon::readPwmRaw(const string& p){ try{ ifstream f(p); if(!f.good()) return {}; string s; getline(f,s); return stoi(s); }catch(...){ return {}; } }
+bool Hwmon::writePwmPct(const string& p, int pct, int floor_pct){ int c=max(floor_pct,min(100,pct)); int raw = (int)llround(c*255.0/100.0); return writeRaw(p,to_string(raw)); }
 
-static bool write_all(const std::string& p, const std::string& text, std::string* err) {
-    std::ofstream f(p);
-    if (!f.good()) {
-        if (err) *err = std::string("open failed: ") + std::strerror(errno);
-        return false;
+vector<TempSensor> Hwmon::discoverTemps(const string& base){
+  vector<TempSensor> out; namespace fs = std::filesystem; if(!fs::exists(base)) return out;
+  for(auto& e : fs::directory_iterator(base)){
+    if(!e.is_directory()) continue; auto hw=e.path();
+    string dev = readText((hw/"name").string()); if(dev.empty()) dev=hw.filename().string();
+    map<string,string> label;
+    for(auto& f : fs::directory_iterator(hw)){ auto fn=f.path().filename().string(); if(fn.rfind("temp",0)==0 && fn.find("_label")!=string::npos) label[fn.substr(0,fn.find('_'))]=readText(f.path().string()); }
+    for(auto& f : fs::directory_iterator(hw)){
+      auto fn=f.path().filename().string();
+      if(fn.rfind("temp",0)==0 && fn.find("_input")!=string::npos){
+        string t = fn.substr(0,fn.find('_')); string raw = label.count(t)? label[t] : t;
+        out.push_back({ hw.filename().string()+":"+dev, hw.filename().string()+":"+raw, f.path().string(), "°C", "Unknown"});
+      }
     }
-    f << text;
-    if (!f.good()) {
-        if (err) *err = std::string("write failed: ") + std::strerror(errno);
-        return false;
-    }
-    return true;
+  }
+  return out;
 }
 
-static double clamp01(double v) { return std::max(0.0, std::min(1.0, v)); }
-
-// -------------------------
-// classification heuristic
-// -------------------------
-std::string Hwmon::classifyType(const std::string& hwmonName, const std::string& label) {
-    auto in = [](const std::string& s, const char* needle) {
-        return s.find(needle) != std::string::npos;
-    };
-    std::string n = hwmonName; std::string l = label;
-    std::transform(n.begin(), n.end(), n.begin(), ::tolower);
-    std::transform(l.begin(), l.end(), l.begin(), ::tolower);
-
-    // name-based
-    if (in(n, "k10temp") || in(n, "coretemp") || in(n, "zenpower") || in(n, "pkgtemp")) return "CPU";
-    if (in(n, "amdgpu") || in(n, "nvidia")) return "GPU";
-    if (in(n, "nvme")) return "NVMe";
-    if (in(n, "it8") || in(n, "nct") || in(n, "w83") || in(n, "ec")) return "Motherboard";
-
-    // label-based
-    if (in(l, "cpu") || in(l, "tctl") || in(l, "package") || in(l, "tdie") || in(l, "core")) return "CPU";
-    if (in(l, "gpu") || in(l, "junction") || in(l, "hotspot") || in(l, "edge") || in(l, "vram")) return "GPU";
-    if (in(l, "nvme") || in(l, "ssd") || in(l, "composite")) return "NVMe";
-    if (in(l, "chip") || in(l, "pch") || in(l, "smu") || in(l, "south") || in(l, "north")) return "Chipset";
-    if (in(l, "board") || in(l, "system") || in(l, "systin") || in(l, "case")) return "Motherboard";
-    if (in(l, "vrm") || in(l, "mos") || in(l, "vcore")) return "VRM";
-    if (in(l, "water") || in(l, "coolant") || in(l, "liquid")) return "Water";
-    if (in(l, "ambient") || in(l, "room")) return "Ambient";
-
-    return "Unknown";
+vector<PwmOutput> Hwmon::discoverPwms(const string& base){
+  vector<PwmOutput> out; namespace fs = std::filesystem; if(!fs::exists(base)) return out;
+  for(auto& e : fs::directory_iterator(base)){
+    if(!e.is_directory()) continue; auto hw=e.path();
+    string dev = readText((hw/"name").string()); if(dev.empty()) dev=hw.filename().string();
+    map<string,string> m; for(auto& f: fs::directory_iterator(hw)){ m[f.path().filename().string()]=f.path().string(); }
+    for(const auto& [fn,full]: m){
+      if(fn.rfind("pwm",0)==0 && fn.find('_')==string::npos){
+        string n=fn.substr(3); string en = m.count("pwm"+n+"_enable")? m["pwm"+n+"_enable"] : ""; string tach = m.count("fan"+n+"_input")? m["fan"+n+"_input"] : "";
+        out.push_back({ hw.filename().string()+":"+dev, hw.filename().string()+":"+fn, full, en, tach });
+      }
+    }
+  }
+  return out;
 }
 
-// -------------------------
-// temperatures
-// -------------------------
-std::vector<TempSensorInfo> Hwmon::discoverTemps() const {
-    std::vector<TempSensorInfo> out;
-    DIR* d = ::opendir("/sys/class/hwmon");
-    if (!d) return out;
-
-    while (auto* e = ::readdir(d)) {
-        if (!e || e->d_name[0]=='.') continue;
-        const std::string base = std::string("/sys/class/hwmon/") + e->d_name;
-        const std::string name = read_all(base + "/name");
-
-        // collect labels
-        std::vector<std::pair<std::string,std::string>> labels;
-        if (DIR* d2 = ::opendir(base.c_str())) {
-            while (auto* e2 = ::readdir(d2)) {
-                if (!e2) continue;
-                std::string fn = e2->d_name;
-                if (starts_with(fn, "temp") && ends_with(fn, "_label") && fn.size()>6) {
-                    const std::string key = fn.substr(0, fn.size()-6);
-                    const std::string lab = read_all(base + "/" + fn);
-                    labels.emplace_back(key, lab);
-                }
-            }
-            ::closedir(d2);
-        }
-
-        // collect inputs
-        if (DIR* d2 = ::opendir(base.c_str())) {
-            while (auto* e2 = ::readdir(d2)) {
-                if (!e2) continue;
-                std::string fn = e2->d_name;
-                if (starts_with(fn, "temp") && ends_with(fn, "_input") && fn.size()>6) {
-                    const std::string key = fn.substr(0, fn.size()-6);
-                    std::string lab = key;
-                    auto it = std::find_if(labels.begin(), labels.end(),
-                                           [&](const auto& p){ return p.first==key; });
-                    if (it!=labels.end()) lab = it->second;
-
-                    TempSensorInfo info;
-                    // TempSensorInfo fields: name/label/path/type
-                    info.name  = name;
-                    info.label = lab;
-                    info.path  = base + "/" + fn;
-                    info.type  = classifyType(name, lab);
-                    out.push_back(std::move(info));
-                }
-            }
-            ::closedir(d2);
-        }
-    }
-
-    ::closedir(d);
-    return out;
-}
-
-double Hwmon::readTempC(const std::string& path) {
-    std::ifstream f(path);
-    if (!f.good()) return std::numeric_limits<double>::quiet_NaN();
-
-    std::string s; std::getline(f, s);
-    if (s.empty()) return std::numeric_limits<double>::quiet_NaN();
-
-    char* endp = nullptr;
-    errno = 0;
-    const long long raw = std::strtoll(s.c_str(), &endp, 10);
-    if (errno!=0 || endp==s.c_str()) return std::numeric_limits<double>::quiet_NaN();
-
-    // hwmon often uses millidegree
-    if (raw > 200) return static_cast<double>(raw) / 1000.0;
-    return static_cast<double>(raw);
-}
-
-// -------------------------
-// PWM discovery
-// -------------------------
-std::vector<PwmDevice> Hwmon::discoverPwms() const {
-    std::vector<PwmDevice> out;
-
-    DIR* d = ::opendir("/sys/class/hwmon");
-    if (!d) return out;
-
-    while (auto* e = ::readdir(d)) {
-        if (!e || e->d_name[0]=='.') continue;
-        const std::string hw = e->d_name;
-        const std::string base = std::string("/sys/class/hwmon/") + hw;
-        const std::string devName = read_all(base + "/name");
-
-        // index all entries once
-        std::vector<std::string> entries;
-        if (DIR* d2 = ::opendir(base.c_str())) {
-            while (auto* e2 = ::readdir(d2)) {
-                if (!e2 || e2->d_name[0]=='.') continue;
-                entries.emplace_back(e2->d_name);
-            }
-            ::closedir(d2);
-        }
-
-        // find pwmN files
-        for (const auto& fn : entries) {
-            if (!starts_with(fn, "pwm")) continue;
-            if (ends_with(fn.c_str(), "_enable")) continue;
-
-            // pwm number
-            std::string num;
-            for (size_t i=3;i<fn.size() && std::isdigit(static_cast<unsigned char>(fn[i]));++i)
-                num.push_back(fn[i]);
-            if (num.empty()) continue;
-
-            const std::string pwmPath    = base + "/" + fn;
-            const std::string enablePath = base + "/pwm" + num + "_enable";
-            std::string tachPath;
-
-            // try fanN_input with matching index (most common)
-            const std::string fanCandidate = base + "/fan" + num + "_input";
-            struct stat st{};
-            if (::stat(fanCandidate.c_str(), &st)==0 && S_ISREG(st.st_mode)) {
-                tachPath = fanCandidate;
-            } else {
-                // fallback: first fan*_input if any
-                for (const auto& tf : entries) {
-                    if (starts_with(tf, "fan") && ends_with(tf, "_input")) {
-                        tachPath = base + "/" + tf;
-                        break;
-                    }
-                }
-            }
-
-            PwmDevice pd;
-            // PwmDevice fields: label / pwm_path / enable_path / tach_path / min_pct / max_pct
-            pd.label       = hw + ":" + devName + ":" + fn;
-            pd.pwm_path    = pwmPath;
-            pd.enable_path = enablePath;
-            pd.tach_path   = tachPath;
-            // min_pct/max_pct keep defaults (0..100) until calibration fills them.
-
-            out.push_back(std::move(pd));
-        }
-    }
-
-    ::closedir(d);
-    return out;
-}
-
-// -------------------------
-// PWM write helper
-// -------------------------
-bool Hwmon::setPwmPercent(const PwmDevice& dev, double percent, std::string* err) {
-    // clamp 0..100 and convert to 0..255
-    const int duty255 = static_cast<int>(std::lround(clamp01(percent/100.0) * 255.0));
-
-    // Best-effort: set manual (1) if enable file exists
-    if (!dev.enable_path.empty()) {
-        struct stat st{};
-        if (::stat(dev.enable_path.c_str(), &st)==0 && S_ISREG(st.st_mode)) {
-            std::string eerr;
-            if (!write_all(dev.enable_path, "1", &eerr)) {
-                if (err) *err = std::string("pwm_enable write failed: ") + eerr;
-                // continue anyway; some drivers reject this while still allowing pwm writes
-            }
-        }
-    }
-
-    // Write pwm value
-    std::ofstream f(dev.pwm_path);
-    if (!f.good()) {
-        if (err) *err = std::string("open pwm failed: ") + std::strerror(errno);
-        return false;
-    }
-    f << duty255;
-    if (!f.good()) {
-        if (err) *err = std::string("pwm write failed: ") + std::strerror(errno);
-        return false;
-    }
-    return true;
+CalibResult Hwmon::calibrate(const PwmOutput& p, int start, int end, int step, double settle_s, int floor_pct, int rpm_threshold, bool (*cancelled)()){
+  CalibResult r;
+  if(!p.enable_path.empty()) Hwmon::writeRaw(p.enable_path,"1");
+  auto read_rpm=[&](){ return Hwmon::readRpm(p.tach_path).value_or(0); };
+  int spin=-1, rpm_min=0;
+  for(int duty=max(start,floor_pct); duty<=end; duty+=step){
+    if(cancelled && cancelled()){ r.aborted=true; return r; }
+    Hwmon::writePwmPct(p.pwm_path,duty,floor_pct);
+    std::this_thread::sleep_for(std::chrono::milliseconds((int)(settle_s*1000)));
+    int rpm = read_rpm(); if(rpm>=rpm_threshold){ spin=duty; rpm_min=rpm; break; }
+  }
+  if(spin<0){ r.ok=false; r.error="no spin"; return r; }
+  int min_stable=spin;
+  for(int duty=spin; duty>=max(start,floor_pct); duty-=step){
+    if(cancelled && cancelled()){ r.aborted=true; return r; }
+    Hwmon::writePwmPct(p.pwm_path,duty,floor_pct);
+    std::this_thread::sleep_for(std::chrono::milliseconds((int)(settle_s*1000)));
+    int rpm = read_rpm(); if(rpm>=rpm_threshold) min_stable=duty; else break;
+  }
+  Hwmon::writePwmPct(p.pwm_path,min_stable,floor_pct);
+  r.ok=true; r.min_pct=min_stable; r.spinup_pct=spin; r.rpm_at_min=rpm_min; return r;
 }

@@ -1,200 +1,81 @@
-/*
- * Linux Fan Control (lfcd) - Daemon implementation
- * (c) 2025 meigrafd & contributors - MIT License
- *
- * This file intentionally does NOT contain a test main().
- * The only main() lives in src/daemon/src/main.cpp.
- *
- * Notes:
- *  - Provides minimal JSON-RPC handlers so the GUI does not hang:
- *      - listSensors: enumerate /sys/class/hwmon temps
- *      - listPwms   : enumerate /sys/class/hwmon pwm/fan inputs
- *      - listChannels: returns empty array for now (placeholder)
- *      - detectCalibrate: returns a quick structured result (no heavy logic yet)
- *  - Heavy detection/calibration can be added incrementally.
- */
-
-#include "Daemon.h"
-#include "RpcServer.h"
-
+#include "Daemon.hpp"
 #include <nlohmann/json.hpp>
-#include <filesystem>
-#include <fstream>
-#include <regex>
-#include <string>
-#include <vector>
-#include <iostream>
+using json = nlohmann::json;
 
-namespace fs = std::filesystem;
-
-// ---------- helpers ----------
-static std::string slurp(const fs::path& p) {
-    try {
-        std::ifstream f(p);
-        if (!f) return {};
-        std::string s; std::getline(f, s);
-        // trim
-        while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
-        return s;
-    } catch (...) { return {}; }
+Daemon::Daemon(){
+  rpc_.registerMethod("listSensors",[this](const std::string& p){ return listSensors(p); });
+  rpc_.registerMethod("listPwms",   [this](const std::string& p){ return listPwms(p); });
+  rpc_.registerMethod("enumerate",  [this](const std::string& p){ return enumerate(p); });
+  rpc_.registerMethod("detectCalibrate",[this](const std::string& p){ return detectCalibrate(p); });
+  rpc_.registerMethod("listChannels",[this](const std::string& p){ return listChannels(p); });
+  rpc_.registerMethod("createChannel",[this](const std::string& p){ return createChannel(p); });
+  rpc_.registerMethod("deleteChannel",[this](const std::string& p){ return deleteChannel(p); });
+  rpc_.registerMethod("setChannelMode",[this](const std::string& p){ return setChannelMode(p); });
+  rpc_.registerMethod("setChannelManual",[this](const std::string& p){ return setChannelManual(p); });
+  rpc_.registerMethod("setChannelCurve",[this](const std::string& p){ return setChannelCurve(p); });
+  rpc_.registerMethod("setChannelHystTau",[this](const std::string& p){ return setChannelHystTau(p); });
+  rpc_.registerMethod("engineStart",[this](const std::string& p){ return engineStart(p); });
+  rpc_.registerMethod("engineStop",[this](const std::string& p){ return engineStop(p); });
+  rpc_.registerMethod("deleteCoupling",[this](const std::string& p){ return deleteCoupling(p); });
+  rpc_.registerMethod("noop",[this](const std::string& p){ return noop(p); });
 }
 
-static bool is_number_str(const std::string& s) {
-    if (s.empty()) return false;
-    for (char c : s) if (c < '0' || c > '9') return false;
-    return true;
+void Daemon::run(){
+  engine_.setSensors(Hwmon::discoverTemps());
+  engine_.setOutputs(Hwmon::discoverPwms());
+  rpc_.runStdio();
 }
 
-static double milli_to_c(double v) {
-    return (v > 200.0) ? (v / 1000.0) : v;
+std::string Daemon::listSensors(const std::string&){
+  json a=json::array(); for(const auto& s: engine_.sensors()) a.push_back({{"device",s.device},{"label",s.label},{"path",s.path},{"unit",s.unit},{"type",s.type}});
+  return a.dump();
 }
-
-// hwmon enumeration compatible with our earlier Python logic (simplified)
-static nlohmann::json enumerate_sensors_hwmon() {
-    nlohmann::json arr = nlohmann::json::array();
-    const fs::path base{"/sys/class/hwmon"};
-    if (!fs::exists(base)) return arr;
-
-    for (auto& dir : fs::directory_iterator(base)) {
-        if (!dir.is_directory()) continue;
-        fs::path hw = dir.path();
-        std::string hwid = hw.filename().string();
-        std::string name = slurp(hw / "name");
-        if (name.empty()) name = hwid;
-
-        // collect temp labels
-        std::map<std::string, std::string> labels;
-        for (auto& f : fs::directory_iterator(hw)) {
-            const std::string fn = f.path().filename().string();
-            if (fn.rfind("temp", 0) == 0 && fn.size() > 6 && fn.substr(fn.size()-6) == "_label") {
-                const std::string key = fn.substr(0, fn.size()-6); // tempN
-                labels[key] = slurp(f.path());
-            }
-        }
-        for (auto& f : fs::directory_iterator(hw)) {
-            const std::string fn = f.path().filename().string();
-            if (fn.rfind("temp", 0) == 0 && fn.size() > 6 && fn.substr(fn.size()-6) == "_input") {
-                const std::string tempn = fn.substr(0, fn.size()-6); // tempN
-                const std::string raw_label = labels.count(tempn) ? labels[tempn] : tempn;
-                const std::string nice = raw_label.empty() ? tempn : raw_label;
-                nlohmann::json j;
-                j["device"] = hwid + ":" + name;
-                j["label"]  = j["device"].get<std::string>() + ":" + nice;
-                j["raw_label"] = raw_label;
-                j["type"]   = "Unknown"; // TODO: add classification hints (CPU/GPU/etc.)
-                j["path"]   = f.path().string();
-                j["unit"]   = u8"°C";
-                arr.push_back(std::move(j));
-            }
-        }
-    }
-    return arr;
+std::string Daemon::listPwms(const std::string&){
+  json a=json::array(); for(const auto& p: engine_.outputs()) a.push_back({{"device",p.device},{"label",p.label},{"pwm_path",p.pwm_path},{"enable_path",p.enable_path},{"fan_input_path",p.tach_path}});
+  return a.dump();
 }
-
-static nlohmann::json enumerate_pwms_hwmon() {
-    nlohmann::json arr = nlohmann::json::array();
-    const fs::path base{"/sys/class/hwmon"};
-    if (!fs::exists(base)) return arr;
-
-    for (auto& dir : fs::directory_iterator(base)) {
-        if (!dir.is_directory()) continue;
-        fs::path hw = dir.path();
-        std::string hwid = hw.filename().string();
-        std::string name = slurp(hw / "name");
-        if (name.empty()) name = hwid;
-
-        // locate pwmN, pwmN_enable, fanN_input
-        std::map<std::string, fs::path> map_entries;
-        for (auto& f : fs::directory_iterator(hw)) {
-            const std::string fn = f.path().filename().string();
-            map_entries[fn] = f.path();
-        }
-        for (const auto& kv : map_entries) {
-            const std::string& fn = kv.first;
-            if (fn.rfind("pwm", 0) == 0) {
-                // accept "pwmN" (no suffix, N numeric)
-                const std::string rest = fn.substr(3);
-                if (!rest.empty() && is_number_str(rest)) {
-                    const std::string n = rest;
-                    nlohmann::json j;
-                    j["device"] = hwid + ":" + name;
-                    j["label"]  = j["device"].get<std::string>() + ":pwm" + n;
-                    j["pwm_path"]    = (hw / ("pwm" + n)).string();
-                    const auto enIt  = map_entries.find("pwm" + n + "_enable");
-                    const auto tachIt= map_entries.find("fan" + n + "_input");
-                    j["enable_path"] = (enIt != map_entries.end()) ? enIt->second.string() : "";
-                    j["fan_input_path"] = (tachIt != map_entries.end()) ? tachIt->second.string() : "";
-                    arr.push_back(std::move(j));
-                }
-            }
-        }
-    }
-    return arr;
+std::string Daemon::enumerate(const std::string&){
+  json o; o["sensors"]=json::parse(listSensors("{}")); o["pwms"]=json::parse(listPwms("{}")); return o.dump();
 }
-
-// ---------- Daemon ----------
-Daemon::Daemon(bool debug)
-: debug_(debug) {
-    // Keep construction light; no I/O here.
+std::string Daemon::detectCalibrate(const std::string&){
+  json res;
+  auto sensors = Hwmon::discoverTemps();
+  auto pwms    = Hwmon::discoverPwms();
+  engine_.setSensors(sensors); engine_.setOutputs(pwms);
+  json cal=json::object();
+  for(const auto& p: pwms){
+    auto r = Hwmon::calibrate(p,0,100,5,0.8,20,100,nullptr);
+    cal[p.label] = {{"ok",r.ok},{"min_pct",r.min_pct},{"spinup_pct",r.spinup_pct},{"rpm_at_min",r.rpm_at_min},{"error",r.error}};
+  }
+  // naive mapping by device id
+  std::unordered_map<std::string,std::vector<TempSensor>> bydev;
+  for(const auto& s: sensors){ auto c=s.device.find(':'); std::string hw=c==std::string::npos? s.device: s.device.substr(0,c); bydev[hw].push_back(s); }
+  json map=json::array();
+  for(const auto& p: pwms){ auto c=p.device.find(':'); std::string hw=c==std::string::npos? p.device: p.device.substr(0,c);
+    if(bydev.count(hw) && !bydev[hw].empty()){ map.push_back({{"pwm_label",p.label},{"sensor_label",bydev[hw][0].label},{"sensor_path",bydev[hw][0].path}}); coupling_[p.label]=bydev[hw][0].path; } }
+  res["sensors"]=json::parse(listSensors("{}")); res["pwms"]=json::parse(listPwms("{}")); res["mapping"]=map; res["calibration"]=cal;
+  return res.dump();
 }
-
-Daemon::~Daemon() = default;
-
-bool Daemon::init() {
-    if (debug_) {
-        std::cerr << "[daemon] init()\n";
-    }
-
-    // Register minimal JSON-RPC handlers so GUI doesn't hang.
-    server_.on("listSensors", [this](const nlohmann::json& params) -> nlohmann::json {
-        (void)params;
-        if (debug_) std::cerr << "[rpc] listSensors\n";
-        return enumerate_sensors_hwmon();
-    });
-
-    server_.on("listPwms", [this](const nlohmann::json& params) -> nlohmann::json {
-        (void)params;
-        if (debug_) std::cerr << "[rpc] listPwms\n";
-        return enumerate_pwms_hwmon();
-    });
-
-    server_.on("listChannels", [this](const nlohmann::json& params) -> nlohmann::json {
-        (void)params;
-        if (debug_) std::cerr << "[rpc] listChannels\n";
-        // Placeholder: return empty for now
-        return nlohmann::json::array();
-    });
-
-    server_.on("detectCalibrate", [this](const nlohmann::json& params) -> nlohmann::json {
-        (void)params;
-        if (debug_) std::cerr << "[rpc] detectCalibrate (quick stub)\n";
-
-        // Quick stub: return current snapshot of sensors/pwms and empty results.
-        // (Heavy-weight detection/calibration can be integrated stepwise.)
-        nlohmann::json out;
-        out["sensors"]     = enumerate_sensors_hwmon();
-        out["pwms"]        = enumerate_pwms_hwmon();
-        out["mapping"]     = nlohmann::json::array(); // to be filled by active-coupling later
-        out["calibration"] = nlohmann::json::array(); // to be filled by calibrator later
-        out["skipped"]     = nlohmann::json::array();
-        out["errors"]      = nlohmann::json::array();
-        return out;
-    });
-
-    return true;
+std::string Daemon::listChannels(const std::string&){
+  json a=json::array(); for(const auto& c: engine_.channels()){
+    json pts=json::array(); for(const auto& p : c.curve.points) pts.push_back({{"x",p.x},{"y",p.y}});
+    a.push_back({{"name",c.name},{"sensor_path",c.sensor_path},{"output_label",c.output_label},{"mode",c.mode},{"manual",c.manual},{"hystC",c.ss.hystC},{"tauS",c.ss.tauS},{"points",pts}});
+  } return a.dump();
 }
-
-int Daemon::run() {
-    if (debug_) {
-        std::cerr << "[daemon] run() -> entering RPC loop\n";
-    }
-    // Blocks reading JSON lines from stdin and writing responses to stdout.
-    return server_.run();
+std::string Daemon::createChannel(const std::string& params){
+  auto p = json::parse(params); Channel c; c.name=p.value("name","Channel"); c.sensor_path=p.value("sensor_path",""); c.output_label=p.value("output_label",""); c.mode="Auto"; c.ss.hystC=p.value("hystC",0.5); c.ss.tauS=p.value("tauS",2.0);
+  if(p.contains("points")) for(const auto& it: p["points"]) c.curve.points.push_back({it.value("x",0.0),it.value("y",0.0)});
+  engine_.channels().push_back(std::move(c)); return "{"ok":true}";
 }
-
-void Daemon::requestStop() {
-    if (debug_) {
-        std::cerr << "[daemon] requestStop()\n";
-    }
-    // Add server stop logic here if/when available, e.g. server_.stop();
+std::string Daemon::deleteChannel(const std::string& params){
+  auto p=json::parse(params); auto name=p.value("name","");
+  auto& v=engine_.channels(); v.erase(std::remove_if(v.begin(),v.end(),[&](const Channel& c){return c.name==name;}), v.end()); return "{"ok":true}";
 }
+std::string Daemon::setChannelMode(const std::string& params){ auto p=json::parse(params); auto n=p.value("name",""); auto m=p.value("mode","Auto"); for(auto& c: engine_.channels()) if(c.name==n) c.mode=m; return "{"ok":true}"; }
+std::string Daemon::setChannelManual(const std::string& params){ auto p=json::parse(params); auto n=p.value("name",""); auto v=p.value("value",0.0); for(auto& c: engine_.channels()) if(c.name==n){ c.manual=v; c.mode="Manual"; } return "{"ok":true}"; }
+std::string Daemon::setChannelCurve(const std::string& params){ auto p=json::parse(params); auto n=p.value("name",""); for(auto& c: engine_.channels()) if(c.name==n){ c.curve.points.clear(); for(const auto& it: p["points"]) c.curve.points.push_back({it.value("x",0.0),it.value("y",0.0)});} return "{"ok":true}"; }
+std::string Daemon::setChannelHystTau(const std::string& params){ auto p=json::parse(params); auto n=p.value("name",""); double h=p.value("hystC",0.5), t=p.value("tauS",2.0); for(auto& c: engine_.channels()) if(c.name==n){ c.ss.hystC=h; c.ss.tauS=t; } return "{"ok":true}"; }
+std::string Daemon::engineStart(const std::string&){ engine_.start(); return "{"ok":true}"; }
+std::string Daemon::engineStop(const std::string&){ engine_.stop(); return "{"ok":true}"; }
+std::string Daemon::deleteCoupling(const std::string&){ coupling_.clear(); return "{"ok":true}"; }
+std::string Daemon::noop(const std::string&){ return "{"ok":true}"; }

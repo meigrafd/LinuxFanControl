@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:vm="using:LinuxFanControl.Gui.ViewModels"
+        x:Class="LinuxFanControl.Gui.Views.MainWindow"
+        Width="1180" Height="820"
+        Title="Linux Fan Control">
+  <Design.DataContext>
+    <vm:MainWindowViewModel/>
+  </Design.DataContext>
+
+  <DockPanel>
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="12">
+      <Button Content="{Binding Loc.Setup}" Command="{Binding SetupCmd}"/>
+      <Button Content="{Binding Loc.Refresh}" Command="{Binding RefreshCmd}"/>
+      <ToggleSwitch Content="{Binding ThemeLabel}" IsChecked="{Binding IsDarkTheme}"/>
+      <ComboBox Width="120" Items="{Binding Languages}" SelectedItem="{Binding SelectedLanguage}"/>
+    </StackPanel>
+
+    <ScrollViewer DockPanel.Dock="Top" Height="380" Margin="12">
+      <WrapPanel ItemWidth="260" ItemHeight="120" HorizontalAlignment="Stretch">
+        <ItemsControl Items="{Binding FanTiles}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Border CornerRadius="12" Padding="10" Margin="8" Classes="tile">
+                <StackPanel>
+                  <TextBlock Text="{Binding Title}" FontWeight="Bold"/>
+                  <TextBlock Text="{Binding Subtitle}" />
+                  <ProgressBar Minimum="0" Maximum="100" Value="{Binding Duty}"/>
+                  <TextBlock Text="{Binding TelemetryLine}"/>
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </WrapPanel>
+    </ScrollViewer>
+
+    <ScrollViewer Margin="12">
+      <StackPanel>
+        <TextBlock Text="{Binding Loc.Triggers}" FontSize="16" FontWeight="Bold" Margin="0,8,0,4"/>
+        <ItemsControl Items="{Binding Triggers}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Border CornerRadius="12" Padding="10" Margin="8" Classes="tile">
+                <StackPanel>
+                  <TextBlock Text="{Binding Name}" FontWeight="Bold"/>
+                  <TextBlock Text="{Binding Summary}" />
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+    </ScrollViewer>
+  </DockPanel>
+</Window>

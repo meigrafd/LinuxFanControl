@@ -1,26 +1,32 @@
-Clone vom Windows tool "Fan Control" für Linux, da mir CoolerControl usw zu unübersichtlich sind.
+# LinuxFanControl – Hybrid (C++ Daemon + Avalonia GUI)
 
-## Funktionsumfang
-- Optik angelehnt ans Original, weil mir das sehr gut gefällt und dadurch auch ein Umstieg Win->Linux leichter ist.
-- Hintergrundprozess mit der Logik von GUI getrennt, damit die Lüftersteuerung auch ohne GUI läuft.
-  - Einbindung von libsensors + /sys/class/hwmon um möglichst alle Lüfter und Sensoren zu erkennen.
-  - Hybrid Protokoll: JSON-RPC 2.0 für Config/Control. Telemetry läuft über POSIX Shared Memory (SHM) Ringbuffer - deutlich performanter, kein RPC-Polling.
-- Multilanguage support über i18n json Dateien.
-- Theme support.
-- Automatische Erkennung und Kalibrierung der verfügbaren Sensoren und Lüfter.
-- Nicht relevante Sensoren können abgewählt und ausgeblendet werden.
-- Steuerung über Mix, Trigger oder Graph.
-- FanControl.Release Config importierbar.
- 
+- Daemon (C++17/CMake, optional **libsensors**; fallback `/sys/class/hwmon`)
+- GUI (.NET 9, **Avalonia**) im Stil FanControl.Release: Tiles (Drag&Drop), Setup (Detect/Calibrate), Profile, Curve-Editor (Punkte), Hysterese/Tau, i18n (en/de), Theme Switch.
+- IPC: JSON-RPC 2.0 (Batch) via stdio.
 
-## Install
+## Build
+
+### Daemon
 ```bash
-sudo dnf install gcc-c++ cmake make qt6-qtbase-devel qt6-qttools-devel lm_sensors lm_sensors-devel nlohmann-json-devel
-
-mkdir -p build && cd build
-cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
-cmake --build . -j
-
-./lfcd &         # Daemon starten
-./lfc-gui        # GUI starten
+./build.sh
+./run.sh daemon
 ```
+Falls libsensors nicht automatisch gefunden wird:
+```bash
+cd build
+cmake -DSENSORS_INCLUDE_DIRS=/usr/include -DSENSORS_LIBRARIES=/usr/lib64/libsensors.so ..
+cmake --build . -j
+```
+
+### GUI
+```bash
+cd src/gui-avalonia/LinuxFanControl.Gui
+dotnet restore
+export LFC_DAEMON=../../../build/lfcd
+export LFC_DAEMON_ARGS="--debug"
+dotnet run -c Debug
+```
+
+## Logs
+- /tmp/daemon_lfc.log
+- /tmp/gui_lfc.log
