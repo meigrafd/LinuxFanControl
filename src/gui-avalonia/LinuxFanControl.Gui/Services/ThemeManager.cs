@@ -1,8 +1,11 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;                // TemplatedControl
+using Avalonia.Markup.Xaml.MarkupExtensions;       // DynamicResourceExtension
 using Avalonia.Media;
 using Avalonia.Styling;
 
@@ -10,11 +13,18 @@ namespace LinuxFanControl.Gui.Services
 {
     /// <summary>
     /// Loads a simple JSON theme and applies brushes/colors to Application.Resources.
-    /// No hard-coded theme names in project files; themes are plain JSON next to the executable.
+    /// Themes live as plain JSON files in ./Themes (next to the executable).
+    /// No hard-coded includes in the project file; fully dynamic.
     /// </summary>
     public static class ThemeManager
     {
         public const string DefaultThemeName = "midnight";
+
+        /// <summary>Alias used by other parts of the app expecting "DefaultTheme".</summary>
+        public static string DefaultTheme => DefaultThemeName;
+
+        /// <summary>The last successfully applied theme name.</summary>
+        public static string CurrentTheme { get; private set; } = DefaultThemeName;
 
         public sealed class ThemeColors
         {
@@ -36,6 +46,30 @@ namespace LinuxFanControl.Gui.Services
         public static string ThemesDir =>
         Path.Combine(AppContext.BaseDirectory, "Themes");
 
+        /// <summary>
+        /// Returns theme names available in ThemesDir (file names without .json).
+        /// </summary>
+        public static string[] ListThemes()
+        {
+            try
+            {
+                if (!Directory.Exists(ThemesDir)) return new[] { DefaultThemeName };
+                return Directory.EnumerateFiles(ThemesDir, "*.json")
+                .Select(Path.GetFileNameWithoutExtension)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Distinct()
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            }
+            catch
+            {
+                return new[] { DefaultThemeName };
+            }
+        }
+
+        /// <summary>
+        /// Loads theme JSON and applies resources. Falls back to default palette on error.
+        /// </summary>
         public static bool ApplyTheme(string themeName)
         {
             try
@@ -57,12 +91,14 @@ namespace LinuxFanControl.Gui.Services
                 }
 
                 Apply(spec);
+                CurrentTheme = string.IsNullOrWhiteSpace(spec.name) ? themeName : spec.name;
                 return true;
             }
             catch
             {
                 // Very last resort: fallback palette
                 Apply(new ThemeSpec());
+                CurrentTheme = DefaultThemeName;
                 return false;
             }
         }
@@ -113,15 +149,17 @@ namespace LinuxFanControl.Gui.Services
             res["ButtonForeground"]          = bText;
             res["TextControlForeground"]     = bText;
 
-            // Global style to ensure windows/usercontrols pick up the theme background/panel
             EnsureGlobalStyles();
         }
 
+        /// <summary>
+        /// Adds global styles (once) to use our dynamic resources for Window, UserControl, TextBlock, Button.
+        /// </summary>
         private static void EnsureGlobalStyles()
         {
             if (Application.Current is null) return;
 
-            // Avoid adding duplicates
+            // Avoid adding duplicates by checking an existing style targeting Window
             foreach (var s in Application.Current.Styles)
             {
                 if (s is Style st && st.Selector?.ToString()?.Contains("Window") == true)
