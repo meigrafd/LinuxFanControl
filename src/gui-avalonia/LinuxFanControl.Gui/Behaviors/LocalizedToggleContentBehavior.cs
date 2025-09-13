@@ -1,64 +1,78 @@
 using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Text.Json;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.PropertyStore;
+using LinuxFanControl.Gui.Services;
 
-namespace LinuxFanControl.Gui.Services
+namespace LinuxFanControl.Gui.Behaviors
 {
-    // Minimal localization loader: reads Locales/{code}.json at runtime.
-    public static class LocalizationService
+    /// <summary>
+    /// Attached "behavior" for ToggleButton that localizes its Content
+    /// based on IsChecked: true -> KeyOn, false/null -> KeyOff.
+    /// Usage in XAML:
+    ///   <ToggleButton
+    ///     l:LocalizedToggleContentBehavior.Enable="True"
+    ///     l:LocalizedToggleContentBehavior.KeyOn="ui.on"
+    ///     l:LocalizedToggleContentBehavior.KeyOff="ui.off"/>
+    /// </summary>
+    public static class LocalizedToggleContentBehavior
     {
-        static readonly Dictionary<string, string> _strings = new(StringComparer.OrdinalIgnoreCase);
-        public static string CurrentLocale { get; private set; } = "en";
+        public static readonly AttachedProperty<bool> EnableProperty =
+        AvaloniaProperty.RegisterAttached<LocalizedToggleContentBehavior, ToggleButton, bool>("Enable");
 
-        static string LocalesDir =>
-        Path.Combine(AppContext.BaseDirectory, "Locales");
+        public static readonly AttachedProperty<string?> KeyOnProperty =
+        AvaloniaProperty.RegisterAttached<LocalizedToggleContentBehavior, ToggleButton, string?>("KeyOn");
 
-        public static void Load(string localeCode)
+        public static readonly AttachedProperty<string?> KeyOffProperty =
+        AvaloniaProperty.RegisterAttached<LocalizedToggleContentBehavior, ToggleButton, string?>("KeyOff");
+
+        static LocalizedToggleContentBehavior()
         {
-            try
+            EnableProperty.Changed.AddClassHandler<ToggleButton>((btn, _) => Wire(btn));
+            KeyOnProperty.Changed.AddClassHandler<ToggleButton>((btn, _) => UpdateContent(btn));
+            KeyOffProperty.Changed.AddClassHandler<ToggleButton>((btn, _) => UpdateContent(btn));
+            ToggleButton.IsCheckedProperty.Changed.AddClassHandler<ToggleButton>((btn, _) => UpdateContent(btn));
+        }
+
+        public static void SetEnable(AvaloniaObject obj, bool value) => obj.SetValue(EnableProperty, value);
+        public static bool GetEnable(AvaloniaObject obj) => obj.GetValue(EnableProperty);
+
+        public static void SetKeyOn(AvaloniaObject obj, string? value) => obj.SetValue(KeyOnProperty, value);
+        public static string? GetKeyOn(AvaloniaObject obj) => obj.GetValue(KeyOnProperty);
+
+        public static void SetKeyOff(AvaloniaObject obj, string? value) => obj.SetValue(KeyOffProperty, value);
+        public static string? GetKeyOff(AvaloniaObject obj) => obj.GetValue(KeyOffProperty);
+
+        private static readonly AttachedProperty<bool> _hookedProperty =
+        AvaloniaProperty.RegisterAttached<LocalizedToggleContentBehavior, ToggleButton, bool>("__hooked");
+
+        private static void Wire(ToggleButton btn)
+        {
+            var enabled = GetEnable(btn);
+            if (!enabled)
             {
-                var path = Path.Combine(LocalesDir, $"{localeCode}.json");
-                if (!File.Exists(path))
-                    throw new FileNotFoundException($"Locale file not found: {path}");
-
-                var json = File.ReadAllText(path);
-                var doc = JsonDocument.Parse(json);
-                _strings.Clear();
-                foreach (var kv in doc.RootElement.EnumerateObject())
-                    _strings[kv.Name] = kv.Value.GetString() ?? "";
-
-                CurrentLocale = localeCode;
+                // optional: could detach logic, but harmless to leave wired
+                return;
             }
-            catch
+            if (!btn.GetValue(_hookedProperty))
             {
-                // Keep previous strings; ensure at least English fallback exists
-                if (_strings.Count == 0 && !string.Equals(localeCode, "en", StringComparison.OrdinalIgnoreCase))
-                {
-                    // try fallback en
-                    var fallback = Path.Combine(LocalesDir, "en.json");
-                    if (File.Exists(fallback))
-                    {
-                        var json = File.ReadAllText(fallback);
-                        var doc = JsonDocument.Parse(json);
-                        foreach (var kv in doc.RootElement.EnumerateObject())
-                            _strings[kv.Name] = kv.Value.GetString() ?? "";
-                        CurrentLocale = "en";
-                    }
-                }
+                btn.SetValue(_hookedProperty, true);
+                UpdateContent(btn);
             }
         }
 
-        public static IEnumerable<string> ListLocales()
+        private static void UpdateContent(ToggleButton btn)
         {
-            if (!Directory.Exists(LocalesDir))
-                yield break;
+            if (!GetEnable(btn)) return;
 
-            foreach (var f in Directory.EnumerateFiles(LocalesDir, "*.json"))
-                yield return Path.GetFileNameWithoutExtension(f);
+            var key = btn.IsChecked == true ? GetKeyOn(btn) : GetKeyOff(btn);
+            if (string.IsNullOrWhiteSpace(key))
+                return;
+
+            // Use central localization service; falls back to key if missing
+            var text = LocalizationService.Get(key!);
+            btn.Content = text;
         }
-
-        public static string Get(string key)
-        => _strings.TryGetValue(key, out var v) && !string.IsNullOrEmpty(v) ? v : key;
     }
 }
