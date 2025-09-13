@@ -1,74 +1,64 @@
 using System;
-using System.Reflection;
-using Avalonia.Controls;
-using Avalonia.Controls.Primitives; // ToggleButton
-using LinuxFanControl.Gui.Services; // only for typeof(LocalizationService)
+using System.Collections.Generic;
+using System.IO;
+using System.Text.Json;
 
-namespace LinuxFanControl.Gui.Behaviors;
-
-/// <summary>
-/// Localizes a ToggleButton's Content (on/off) without binding to a specific LocalizationService API.
-/// It reflects common method names on LocalizationService: GetString, Get, Translate, GetText, T.
-/// Example:
-///     LocalizedToggleContentBehavior.Attach(ThemeToggle, "ui.theme.dark", "ui.theme.light");
-/// </summary>
-public static class LocalizedToggleContentBehavior
+namespace LinuxFanControl.Gui.Services
 {
-    /// <summary>Attach simple on/off localization to a ToggleButton.</summary>
-    public static void Attach(ToggleButton toggle, string? onKey, string? offKey)
+    // Minimal localization loader: reads Locales/{code}.json at runtime.
+    public static class LocalizationService
     {
-        if (toggle is null) return;
+        static readonly Dictionary<string, string> _strings = new(StringComparer.OrdinalIgnoreCase);
+        public static string CurrentLocale { get; private set; } = "en";
 
-        void Update()
+        static string LocalesDir =>
+        Path.Combine(AppContext.BaseDirectory, "Locales");
+
+        public static void Load(string localeCode)
         {
-            var key = toggle.IsChecked == true ? onKey : offKey;
-            toggle.Content = ResolveLocalizedString(key);
-        }
-
-        // Initial apply
-        Update();
-
-        // Avalonia 11+: prefer IsCheckedChanged over Checked/Unchecked/Indeterminate
-        toggle.IsCheckedChanged += (_, __) => Update();
-    }
-
-    /// <summary>
-    /// Attempts to call LocalizationService.{GetString|Get|Translate|GetText|T}(string).
-    /// Falls back to the key itself if nothing is found.
-    /// </summary>
-    private static string ResolveLocalizedString(string? key)
-    {
-        if (string.IsNullOrWhiteSpace(key))
-            return string.Empty;
-
-        var t = typeof(LocalizationService);
-        const BindingFlags flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance;
-        var candidates = new[] { "GetString", "Get", "Translate", "GetText", "T" };
-
-        foreach (var name in candidates)
-        {
-            var mi = t.GetMethod(name, flags, new[] { typeof(string) });
-            if (mi == null) continue;
-
-            object? target = mi.IsStatic ? null : CreateInstanceSafe(t);
             try
             {
-                var res = mi.Invoke(target, new object[] { key });
-                if (res is string s) return s;
+                var path = Path.Combine(LocalesDir, $"{localeCode}.json");
+                if (!File.Exists(path))
+                    throw new FileNotFoundException($"Locale file not found: {path}");
+
+                var json = File.ReadAllText(path);
+                var doc = JsonDocument.Parse(json);
+                _strings.Clear();
+                foreach (var kv in doc.RootElement.EnumerateObject())
+                    _strings[kv.Name] = kv.Value.GetString() ?? "";
+
+                CurrentLocale = localeCode;
             }
             catch
             {
-                // ignore and try next candidate
+                // Keep previous strings; ensure at least English fallback exists
+                if (_strings.Count == 0 && !string.Equals(localeCode, "en", StringComparison.OrdinalIgnoreCase))
+                {
+                    // try fallback en
+                    var fallback = Path.Combine(LocalesDir, "en.json");
+                    if (File.Exists(fallback))
+                    {
+                        var json = File.ReadAllText(fallback);
+                        var doc = JsonDocument.Parse(json);
+                        foreach (var kv in doc.RootElement.EnumerateObject())
+                            _strings[kv.Name] = kv.Value.GetString() ?? "";
+                        CurrentLocale = "en";
+                    }
+                }
             }
         }
 
-        // nothing worked -> show key
-        return key;
-    }
+        public static IEnumerable<string> ListLocales()
+        {
+            if (!Directory.Exists(LocalesDir))
+                yield break;
 
-    private static object? CreateInstanceSafe(Type t)
-    {
-        try { return Activator.CreateInstance(t); }
-        catch { return null; }
+            foreach (var f in Directory.EnumerateFiles(LocalesDir, "*.json"))
+                yield return Path.GetFileNameWithoutExtension(f);
+        }
+
+        public static string Get(string key)
+        => _strings.TryGetValue(key, out var v) && !string.IsNullOrEmpty(v) ? v : key;
     }
 }
