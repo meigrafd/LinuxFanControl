@@ -4,7 +4,6 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <!-- Keep compiled bindings off until all x:DataType are wired -->
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
 
@@ -17,12 +16,12 @@
     <PackageReference Include="LiveChartsCore" Version="2.0.0-rc3" />
     <PackageReference Include="LiveChartsCore.SkiaSharpView" Version="2.0.0-rc3" />
     <PackageReference Include="LiveChartsCore.SkiaSharpView.Avalonia" Version="2.0.0-rc3" />
-    <!-- Raise SkiaSharp to satisfy LiveCharts dependency -->
+    <!-- SkiaSharp anheben/vereinheitlichen, um Downgrade zu vermeiden -->
     <PackageReference Include="SkiaSharp" Version="2.88.8" />
   </ItemGroup>
 
+  <!-- WICHTIG: Nur eine Wildcard-Regel; kein separater Eintrag für App.axaml mehr -->
   <ItemGroup>
-    <AvaloniaXaml Include="App.axaml" />
-    <AvaloniaXaml Include="Views/**/*.axaml" />
+    <AvaloniaXaml Include="**/*.axaml" Exclude="bin/**;obj/**" />
   </ItemGroup>
 </Project>
