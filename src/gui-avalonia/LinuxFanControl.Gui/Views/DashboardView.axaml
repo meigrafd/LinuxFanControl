@@ -1,19 +1,18 @@
 <UserControl
+    x:Class="LinuxFanControl.Gui.Views.DashboardView"
     xmlns="https://github.com/avaloniaui"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:c="clr-namespace:LinuxFanControl.Gui.Views.Controls"
-    x:Class="LinuxFanControl.Gui.Views.DashboardView">
-
+    xmlns:views="clr-namespace:LinuxFanControl.Gui.Views.Controls">
   <ScrollViewer>
-    <ItemsControl Items="{Binding Tiles}">
+    <ItemsControl ItemsSource="{Binding Fans}">
       <ItemsControl.ItemsPanel>
         <ItemsPanelTemplate>
-          <WrapPanel Orientation="Horizontal" Margin="10" />
+          <WrapPanel ItemWidth="360" ItemHeight="180"/>
         </ItemsPanelTemplate>
       </ItemsControl.ItemsPanel>
       <ItemsControl.ItemTemplate>
         <DataTemplate>
-          <c:FanTile Margin="10"/>
+          <views:FanTile/>
         </DataTemplate>
       </ItemsControl.ItemTemplate>
     </ItemsControl>

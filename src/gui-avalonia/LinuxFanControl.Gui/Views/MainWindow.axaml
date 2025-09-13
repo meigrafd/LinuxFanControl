@@ -1,40 +1,37 @@
 <Window
-    xmlns="https://github.com/avaloniaui"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:s="clr-namespace:LinuxFanControl.Gui.Services"
-    xmlns:v="clr-namespace:LinuxFanControl.Gui.Views"
-    x:Class="LinuxFanControl.Gui.Views.MainWindow"
-    Title="{Binding Source={x:Static s:LocalizationProvider.Instance}, Path=[ui.title]}"
-    Width="1280" Height="800" MinWidth="1000" MinHeight="680"
-    Background="{DynamicResource LFC.BackgroundBrush}">
-  <Window.Styles>
-    <Style>
-      <Style.Resources>
-        <SolidColorBrush x:Key="LFC.BackgroundBrush">#0F172A</SolidColorBrush>
-        <SolidColorBrush x:Key="LFC.PanelBrush">#111827</SolidColorBrush>
-        <SolidColorBrush x:Key="LFC.CardBrush">#0B1220</SolidColorBrush>
-        <SolidColorBrush x:Key="LFC.TextBrush">#E5E7EB</SolidColorBrush>
-        <SolidColorBrush x:Key="LFC.SubtleTextBrush">#94A3B8</SolidColorBrush>
-        <SolidColorBrush x:Key="LFC.AccentBrush">#2563EB</SolidColorBrush>
-        <SolidColorBrush x:Key="LFC.BorderBrush">#1F2937</SolidColorBrush>
-      </Style.Resources>
-    </Style>
-  </Window.Styles>
+  x:Class="LinuxFanControl.Gui.Views.MainWindow"
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:views="clr-namespace:LinuxFanControl.Gui.Views"
+  Width="1280" Height="800"
+  Title="Linux Fan Control">
+  <DockPanel>
+    <!-- Top bar -->
+    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto,Auto" Padding="8" Background="#0B1220">
+      <TextBlock Text="Linux Fan Control" VerticalAlignment="Center" FontSize="16" FontWeight="SemiBold"/>
+      <ComboBox Grid.Column="1" Width="180" Margin="8,0,0,0"
+        Items="{Binding AvailableLanguages}" SelectedItem="{Binding CurrentLanguage}">
+        <ComboBox.ItemTemplate>
+          <DataTemplate>
+            <TextBlock Text="{Binding}"/>
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+      <ComboBox Grid.Column="2" Width="180" Margin="8,0,0,0"
+        Items="{Binding AvailableThemes}" SelectedItem="{Binding CurrentTheme}">
+        <ComboBox.ItemTemplate>
+          <DataTemplate>
+            <TextBlock Text="{Binding}"/>
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+      <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8">
+        <Button Content="Setup" Command="{Binding OpenSetupAsyncCommand}" CommandParameter="{Binding $parent[Window]}"/>
+        <Button Content="Import" Command="{Binding OpenImportAsyncCommand}" CommandParameter="{Binding $parent[Window]}"/>
+      </StackPanel>
+    </Grid>
 
-  <Grid RowDefinitions="Auto,*">
-    <Border Background="{DynamicResource LFC.PanelBrush}" Padding="10" BorderBrush="{DynamicResource LFC.BorderBrush}" BorderThickness="0,0,0,1">
-      <DockPanel LastChildFill="True" >
-        <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource LFC.TextBrush}"
-                   Text="{Binding Source={x:Static s:LocalizationProvider.Instance}, Path=[ui.title]}"/>
-
-        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-          <ComboBox Width="160" Items="{Binding Languages}" SelectedItem="{Binding SelectedLanguage}" DisplayMemberPath="Name"/>
-          <ComboBox Width="160" Items="{Binding Themes}" SelectedItem="{Binding SelectedTheme}" DisplayMemberPath="Name"/>
-          <Button Padding="10,6" Content="Export" Command="{Binding ExportCommand}"/>
-        </StackPanel>
-      </DockPanel>
-    </Border>
-
-    <v:DashboardView Grid.Row="1"/>
-  </Grid>
+    <!-- Dashboard -->
+    <views:DashboardView/>
+  </DockPanel>
 </Window>

@@ -1,7 +1,7 @@
 <Window
+    x:Class="LinuxFanControl.Gui.Views.Dialogs.SetupDialog"
     xmlns="https://github.com/avaloniaui"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    x:Class="LinuxFanControl.Gui.Views.Dialogs.SetupDialog"
     Width="780" Height="520"
     Title="Auto-Setup (Detect &amp; Calibrate)">
   <Grid RowDefinitions="Auto,*,Auto" Margin="12">
@@ -13,11 +13,12 @@
       </ScrollViewer>
     </Border>
     <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
-      <Button Content="Start" IsEnabled="{Binding IsRunning, Converter={x:Static BooleanInvertConverter.Instance}}"
+      <!-- InverseBoolConverter kommt aus App.Resources -->
+      <Button Content="Start" IsEnabled="{Binding IsRunning, Converter={StaticResource InverseBoolConverter}}"
               Command="{Binding StartAsyncCommand}"/>
       <Button Content="Cancel" IsEnabled="{Binding IsRunning}"
               Command="{Binding CancelAsyncCommand}"/>
-      <Button Content="Close" IsEnabled="{Binding IsRunning, Converter={x:Static BooleanInvertConverter.Instance}}"
+      <Button Content="Close" IsEnabled="{Binding IsRunning, Converter={StaticResource InverseBoolConverter}}"
               Command="{Binding CloseWindowCommand}"/>
     </StackPanel>
   </Grid>
