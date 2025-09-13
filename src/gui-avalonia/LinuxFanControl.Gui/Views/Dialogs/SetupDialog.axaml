@@ -21,7 +21,8 @@
       <Separator/>
 
       <StackPanel Orientation="Horizontal" Spacing="8">
-        <CheckBox Content="Run detection & calibration after closing" IsChecked="{Binding RunDetection}"/>
+        <!-- Escape '&' in XAML -->
+        <CheckBox Content="Run detection &amp; calibration after closing" IsChecked="{Binding RunDetection}"/>
       </StackPanel>
     </StackPanel>
 
