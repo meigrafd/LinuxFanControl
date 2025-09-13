@@ -14,9 +14,11 @@
       <NumericUpDown Width="80" Value="{Binding ResponseTau}" Minimum="0" Maximum="60"/>
     </StackPanel>
 
-    <!-- Table of points -->
-    <dg:DataGrid Grid.Row="2" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
-                 Items="{Binding Points}">
+    <!-- Korrekt: ItemsSource + IsReadOnly statt Items/CanUserAddRows/DeleteRows -->
+    <dg:DataGrid Grid.Row="2"
+                 AutoGenerateColumns="False"
+                 IsReadOnly="False"
+                 ItemsSource="{Binding Points}">
       <dg:DataGrid.Columns>
         <dg:DataGridTextColumn Header="X (°C)" Binding="{Binding X}" Width="*" />
         <dg:DataGridTextColumn Header="Y (%)"  Binding="{Binding Y}" Width="*" />

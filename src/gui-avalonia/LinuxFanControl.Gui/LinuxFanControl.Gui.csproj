@@ -23,14 +23,12 @@
     <PackageReference Include="SkiaSharp" Version="2.88.8" />
   </ItemGroup>
 
-  <!-- WICHTIG: erst ALLE *.axaml aus allen (auch impliziten) Item-Gruppen entfernen -->
   <ItemGroup>
     <AvaloniaXaml Remove="**/*.axaml" />
     <EmbeddedResource Remove="**/*.axaml" />
     <Page Remove="**/*.axaml" />
   </ItemGroup>
 
-  <!-- Dann nur die gewünschten XAMLs explizit hinzufügen (keine Wildcards!) -->
   <ItemGroup>
     <AvaloniaXaml Include="App.axaml" />
     <AvaloniaXaml Include="Views/Controls/FanTile.axaml" />
