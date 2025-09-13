@@ -1,13 +1,12 @@
-<!-- (c) 2025 LinuxFanControl contributors. MIT License. -->
 <Window
-  xmlns="https://github.com/avaloniaui"
-  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-  xmlns:s="clr-namespace:LinuxFanControl.Gui.Services"
-  xmlns:v="clr-namespace:LinuxFanControl.Gui.Views"
-  x:Class="LinuxFanControl.Gui.Views.MainWindow"
-  Title="{Binding Source={x:Static s:LocalizationProvider.Instance}, Path=[ui.title]}"
-  Width="1280" Height="800" MinWidth="1000" MinHeight="680"
-  Background="{DynamicResource LFC.BackgroundBrush}">
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:s="clr-namespace:LinuxFanControl.Gui.Services"
+    xmlns:v="clr-namespace:LinuxFanControl.Gui.Views"
+    x:Class="LinuxFanControl.Gui.Views.MainWindow"
+    Title="{Binding Source={x:Static s:LocalizationProvider.Instance}, Path=[ui.title]}"
+    Width="1280" Height="800" MinWidth="1000" MinHeight="680"
+    Background="{DynamicResource LFC.BackgroundBrush}">
   <Window.Styles>
     <Style>
       <Style.Resources>
@@ -23,39 +22,19 @@
   </Window.Styles>
 
   <Grid RowDefinitions="Auto,*">
-    <!-- Top Bar -->
     <Border Background="{DynamicResource LFC.PanelBrush}" Padding="10" BorderBrush="{DynamicResource LFC.BorderBrush}" BorderThickness="0,0,0,1">
       <DockPanel LastChildFill="True" >
-        <TextBlock DockPanel.Dock="Left"
-                   VerticalAlignment="Center"
-                   FontSize="18" FontWeight="SemiBold"
-                   Foreground="{DynamicResource LFC.TextBrush}"
+        <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource LFC.TextBrush}"
                    Text="{Binding Source={x:Static s:LocalizationProvider.Instance}, Path=[ui.title]}"/>
 
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-
-          <!-- Profiles -->
-          <ComboBox Width="200" Items="{Binding Profiles}" SelectedItem="{Binding CurrentProfile}" DisplayMemberPath="Name"/>
-          <Button Content="New" Command="{Binding NewProfileCommand}"/>
-          <Button Content="Duplicate" Command="{Binding DuplicateProfileCommand}"/>
-          <Button Content="Delete" Command="{Binding DeleteProfileCommand}"/>
-
-          <!-- Language -->
           <ComboBox Width="160" Items="{Binding Languages}" SelectedItem="{Binding SelectedLanguage}" DisplayMemberPath="Name"/>
-
-          <!-- Theme -->
           <ComboBox Width="160" Items="{Binding Themes}" SelectedItem="{Binding SelectedTheme}" DisplayMemberPath="Name"/>
-
-          <!-- Import / Export / Setup -->
-          <Button Padding="10,6" Content="Import" Command="{Binding ImportCommand}"/>
           <Button Padding="10,6" Content="Export" Command="{Binding ExportCommand}"/>
-          <Button Padding="10,6" Foreground="White" Background="{DynamicResource LFC.AccentBrush}" Content="{Binding Source={x:Static s:LocalizationProvider.Instance}, Path=[ui.menu.setup]}" Command="{Binding SetupCommand}"/>
-
         </StackPanel>
       </DockPanel>
     </Border>
 
-    <!-- Dashboard -->
     <v:DashboardView Grid.Row="1"/>
   </Grid>
 </Window>

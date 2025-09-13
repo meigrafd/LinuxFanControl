@@ -1,6 +1,4 @@
 // (c) 2025 LinuxFanControl contributors. MIT License.
-// Simple runtime localization from Locales/*.json. No hardcodes.
-
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -11,8 +9,8 @@ namespace LinuxFanControl.Gui.Services
 {
     public sealed class LocaleInfo
     {
-        public string Id { get; init; } = "";   // e.g. "en", "de"
-        public string Name { get; init; } = ""; // UI name from file, or TitleCase of Id
+        public string Id { get; init; } = "";
+        public string Name { get; init; } = "";
         public string Path { get; init; } = "";
         public override string ToString() => Name;
     }
@@ -29,7 +27,7 @@ namespace LinuxFanControl.Gui.Services
 
         public IReadOnlyList<LocaleInfo> EnumerateLocales()
         {
-            var root = GetLocalesRoot();
+            var root = Path.Combine(AppContext.BaseDirectory, "Locales");
             if (!Directory.Exists(root)) return Array.Empty<LocaleInfo>();
             var list = new List<LocaleInfo>();
             foreach (var file in Directory.EnumerateFiles(root, "*.json", SearchOption.TopDirectoryOnly))
@@ -38,10 +36,10 @@ namespace LinuxFanControl.Gui.Services
                 {
                     var json = File.ReadAllText(file);
                     using var doc = JsonDocument.Parse(json);
-                    var id = System.IO.Path.GetFileNameWithoutExtension(file);
+                    var id = Path.GetFileNameWithoutExtension(file);
                     var name = doc.RootElement.TryGetProperty("_name", out var n) && n.ValueKind == JsonValueKind.String
-                    ? n.GetString() ?? id.ToUpperInvariant()
-                    : id.ToUpperInvariant();
+                        ? n.GetString() ?? id.ToUpperInvariant()
+                        : id.ToUpperInvariant();
                     list.Add(new LocaleInfo { Id = id, Name = name, Path = file });
                 }
                 catch { }
@@ -53,24 +51,12 @@ namespace LinuxFanControl.Gui.Services
         {
             try
             {
-                var json = File.ReadAllText(locale.Path);
-                var dict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json)
-                ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                // Remove meta keys (like _name)
+                var dict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(locale.Path))
+                           ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 dict.Remove("_name");
                 _strings = new Dictionary<string, string>(dict, StringComparer.OrdinalIgnoreCase);
             }
-            catch
-            {
-                _strings.Clear();
-            }
-        }
-
-        public static string GetLocalesRoot()
-        {
-            // Relative to executable: ./Locales/*.json
-            var baseDir = AppContext.BaseDirectory;
-            return System.IO.Path.Combine(baseDir, "Locales");
+            catch { _strings.Clear(); }
         }
     }
 }

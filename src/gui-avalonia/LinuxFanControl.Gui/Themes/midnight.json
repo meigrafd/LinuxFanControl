@@ -1,16 +1,9 @@
 {
-  "name": "Midnight Blue",
-  "dark": true,
-  "palette": {
-    "Background": "#0F172A",
-    "Panel": "#111827",
-    "Card": "#0B1220",
-    "Accent": "#2563EB",
-    "AccentForeground": "#FFFFFF",
-    "Text": "#E5E7EB",
-    "SubtleText": "#94A3B8",
-    "Border": "#1F2937",
-    "GraphLine": "#60A5FA",
-    "GraphFill": "#1E3A8A"
-  }
+  "LFC.BackgroundBrush": "#0F172A",
+  "LFC.PanelBrush": "#111827",
+  "LFC.CardBrush": "#0B1220",
+  "LFC.TextBrush": "#E5E7EB",
+  "LFC.SubtleTextBrush": "#94A3B8",
+  "LFC.AccentBrush": "#2563EB",
+  "LFC.BorderBrush": "#1F2937"
 }
