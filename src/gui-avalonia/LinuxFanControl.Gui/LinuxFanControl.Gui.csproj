@@ -7,7 +7,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>LinuxFanControl.Gui</AssemblyName>
     <RootNamespace>LinuxFanControl.Gui</RootNamespace>
-    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+
+    <!-- prevent implicit Compile items to avoid NETSDK1022 -->
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
 
@@ -23,7 +24,9 @@
     <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="2.88.9" />
   </ItemGroup>
 
+  <!-- Kill ALL wildcard-added .axaml, then include EXACT list once -->
   <ItemGroup>
+    <AvaloniaXaml Remove="**/*.axaml" />
     <AvaloniaXaml Include="App.axaml" />
     <AvaloniaXaml Include="Views/MainWindow.axaml" />
     <AvaloniaXaml Include="Views/DashboardView.axaml" />

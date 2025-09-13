@@ -1,14 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
 <Application
     xmlns="https://github.com/avaloniaui"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:fluent="clr-namespace:Avalonia.Themes.Fluent;assembly=Avalonia.Themes.Fluent"
-    xmlns:conv="clr-namespace:LinuxFanControl.Gui.Converters"
     x:Class="LinuxFanControl.Gui.App">
+
   <Application.Styles>
     <fluent:FluentTheme />
   </Application.Styles>
 
-  <Application.Resources>
-    <conv:InverseBoolConverter x:Key="InverseBoolConverter"/>
-  </Application.Resources>
 </Application>
