@@ -1,87 +1,44 @@
-using System;
 using Avalonia;
-using Avalonia.Controls.Primitives;
-using LinuxFanControl.Gui.Services;
+using Avalonia.Controls;
 
-namespace LinuxFanControl.Gui.Behaviors
+namespace LinuxFanControl.Gui.Behaviors;
+
+/// <summary>
+/// Minimal helper to localize a ToggleButton's Content without relying on Avalonia.Xaml.Interactivity.
+/// Wire it up from code-behind (e.g., in SetupDialog) by calling:
+/// LocalizedToggleContentBehavior.Attach(toggle, onKey: "ui.theme.dark", offKey: "ui.theme.light");
+/// </summary>
+public static class LocalizedToggleContentBehavior
 {
-    /// <summary>
-    /// Attached behavior to localize a ToggleButton's Content for Off/On states.
-    /// No dependency on Avalonia.Xaml.Interactivity.
-    ///
-    /// Usage in XAML:
-    ///   xmlns:behaviors="clr-namespace:LinuxFanControl.Gui.Behaviors"
-    ///   <ToggleButton
-    ///       behaviors:LocalizedToggleContentBehavior.OffKey="ui.theme.light"
-    ///       behaviors:LocalizedToggleContentBehavior.OnKey="ui.theme.dark"/>
-    /// </summary>
-    public static class LocalizedToggleContentBehavior
+    // We intentionally do not implement attached properties or behaviors here,
+    // to avoid referencing deprecated namespaces and packages.
+    // This helper is invoked from code-behind where we have the ToggleButton instance.
+
+    /// <summary>Attach simple on/off localization to a ToggleButton.</summary>
+    public static void Attach(ToggleButton toggle, string? onKey, string? offKey)
     {
-        public static readonly AttachedProperty<string?> OffKeyProperty =
-        AvaloniaProperty.RegisterAttached<LocalizedToggleContentBehavior, ToggleButton, string?>(
-            "OffKey", defaultValue: null, notifying: OnKeyChanged);
+        if (toggle is null) return;
 
-        public static readonly AttachedProperty<string?> OnKeyProperty =
-        AvaloniaProperty.RegisterAttached<LocalizedToggleContentBehavior, ToggleButton, string?>(
-            "OnKey", defaultValue: null, notifying: OnKeyChanged);
-
-        // Internal storage for our subscriptions so we can dispose on change/detach.
-        private static readonly AttachedProperty<IDisposable?> SubscriptionsProperty =
-        AvaloniaProperty.RegisterAttached<LocalizedToggleContentBehavior, ToggleButton, IDisposable?>(
-            "Subscriptions");
-
-        public static void SetOffKey(ToggleButton element, string? value) => element.SetValue(OffKeyProperty, value);
-        public static string? GetOffKey(ToggleButton element) => element.GetValue(OffKeyProperty);
-
-        public static void SetOnKey(ToggleButton element, string? value) => element.SetValue(OnKeyProperty, value);
-        public static string? GetOnKey(ToggleButton element) => element.GetValue(OnKeyProperty);
-
-        private static void OnKeyChanged(IAvaloniaObject obj, bool _)
+        void Update()
         {
-            if (obj is ToggleButton tb)
-                EnsureSubscribed(tb);
+            var key = toggle.IsChecked == true ? onKey : offKey;
+            var text = LocalizationService.Get(key ?? string.Empty);
+            toggle.Content = text;
         }
 
-        private static void EnsureSubscribed(ToggleButton tb)
+        // Initial apply
+        Update();
+
+        // React to user changes
+        toggle.Checked += (_, __) => Update();
+        toggle.Unchecked += (_, __) => Update();
+        toggle.Indeterminate += (_, __) => Update();
+
+        // React if someone flips IsChecked from code
+        toggle.PropertyChanged += (_, e) =>
         {
-            // dispose previous subscriptions if any
-            tb.GetValue(SubscriptionsProperty)?.Dispose();
-
-            // subscribe to IsChecked and to language changes
-            var subChecked = tb.GetObservable(ToggleButton.IsCheckedProperty)
-            .Subscribe(_ => UpdateContent(tb));
-
-            var subLang = LocalizationService.LanguageChanged
-            .Subscribe(_ => UpdateContent(tb));
-
-            tb.SetValue(SubscriptionsProperty, new PairDisposable(subChecked, subLang));
-
-            // initial update
-            UpdateContent(tb);
-        }
-
-        private static void UpdateContent(ToggleButton tb)
-        {
-            var offKey = tb.GetValue(OffKeyProperty);
-            var onKey  = tb.GetValue(OnKeyProperty);
-            var key    = (tb.IsChecked == true) ? onKey : offKey;
-
-            // Fallback: show the key itself when missing
-            var text = LocalizationService.T(key ?? string.Empty, key ?? string.Empty);
-            tb.Content = text;
-        }
-
-        private sealed class PairDisposable : IDisposable
-        {
-            private IDisposable? _a;
-            private IDisposable? _b;
-            public PairDisposable(IDisposable a, IDisposable b) { _a = a; _b = b; }
-            public void Dispose()
-            {
-                try { _a?.Dispose(); } catch { /* ignore */ }
-                try { _b?.Dispose(); } catch { /* ignore */ }
-                _a = null; _b = null;
-            }
-        }
+            if (e.Property == ToggleButton.IsCheckedProperty)
+                Update();
+        };
     }
 }
