@@ -20,7 +20,7 @@ public static class LocalizedToggleContentBehavior
         void Update()
         {
             var key = toggle.IsChecked == true ? onKey : offKey;
-            var text = LocalizationService.Get(key ?? string.Empty);
+            var text = LocalizationService.GetString(key ?? string.Empty);
             toggle.Content = text;
         }
 
