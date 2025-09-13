@@ -1,43 +1,21 @@
-<Window
-    x:Class="LinuxFanControl.Gui.Views.MainWindow"
-    xmlns="https://github.com/avaloniaui"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:views="clr-namespace:LinuxFanControl.Gui.Views"
-    xmlns:c="clr-namespace:LinuxFanControl.Gui.Views.Controls"
-    Title="Linux Fan Control"
-    Width="1200" Height="800"
-    Background="#0E1A2A">
-  <Window.Styles>
-    <!-- High-contrast buttons for dark header -->
-    <Style Selector="Button.topbar">
-      <Setter Property="Background" Value="#1F2A3A"/>
-      <Setter Property="Foreground" Value="#E6F0FF"/>
-      <Setter Property="BorderBrush" Value="#2C3E55"/>
-      <Setter Property="BorderThickness" Value="1"/>
-      <Setter Property="Padding" Value="8,6"/>
-      <Setter Property="CornerRadius" Value="6"/>
-    </Style>
-  </Window.Styles>
+<!-- (c) 2025 LinuxFanControl contributors. MIT License. -->
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:v="clr-namespace:LinuxFanControl.Gui.Views"
+        x:Class="LinuxFanControl.Gui.Views.MainWindow"
+        Width="1200" Height="780"
+        Title="Linux Fan Control">
 
-  <Grid RowDefinitions="Auto,*">
+  <DockPanel>
     <!-- Top bar -->
-    <Border Background="#0B1522" Padding="10,8">
-      <Grid ColumnDefinitions="Auto,*,Auto,Auto" VerticalAlignment="Center">
-        <!-- Animated Logo -->
-        <c:FanLogo Width="24" Height="24" Margin="0,0,8,0"/>
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="8">
+      <Button Content="Setup" Click="OnSetupClick"/>
+      <TextBlock Text="|" VerticalAlignment="Center" Opacity="0.5"/>
+      <Button Content="Quit" Click="OnQuitClick"/>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"/>
+    </StackPanel>
 
-        <TextBlock Grid.Column="1" Text="Linux Fan Control" Foreground="#E6F0FF"
-                   FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
-
-        <!-- Setup + Import (readable) -->
-        <Button Grid.Column="2" Classes="topbar" Content="Setup" Margin="12,0,0,0"
-                Click="OnSetupClicked"/>
-        <Button Grid.Column="3" Classes="topbar" Content="Import" Margin="8,0,0,0"
-                Click="OnImportClicked"/>
-      </Grid>
-    </Border>
-
-    <!-- Main content -->
-    <views:DashboardView Grid.Row="1" DataContext="{Binding Dashboard}" />
-  </Grid>
+    <!-- Content -->
+    <v:DashboardView/>
+  </DockPanel>
 </Window>

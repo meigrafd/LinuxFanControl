@@ -1,32 +1,31 @@
-<UserControl
-    x:Class="LinuxFanControl.Gui.Views.DashboardView"
-    xmlns="https://github.com/avaloniaui"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:controls="clr-namespace:LinuxFanControl.Gui.Views.Controls">
-  <Grid RowDefinitions="Auto,*,Auto" Margin="12">
-    <TextBlock Grid.Row="0" Text="Dashboard" Foreground="#E6F0FF"
-               FontSize="14" FontWeight="SemiBold" Margin="0,4,0,8"/>
+<!-- (c) 2025 LinuxFanControl contributors. MIT License. -->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:LinuxFanControl.Gui.ViewModels"
+             xmlns:c="clr-namespace:LinuxFanControl.Gui.Views.Controls"
+             x:Class="LinuxFanControl.Gui.Views.DashboardView">
+  <UserControl.DataContext>
+    <vm:DashboardViewModel/>
+  </UserControl.DataContext>
 
-    <Grid Grid.Row="1">
-      <ItemsControl ItemsSource="{Binding FanTiles}" IsVisible="{Binding HasTiles}">
+  <Grid RowDefinitions="Auto,*" Margin="12">
+    <TextBlock Text="{Binding Title}" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8"/>
+
+    <ScrollViewer Grid.Row="1">
+      <ItemsControl x:Name="TileBoard" Items="{Binding FanTiles}">
         <ItemsControl.ItemsPanel>
           <ItemsPanelTemplate>
-            <WrapPanel Orientation="Horizontal" ItemWidth="320" ItemHeight="180" />
+            <WrapPanel />
           </ItemsPanelTemplate>
         </ItemsControl.ItemsPanel>
         <ItemsControl.ItemTemplate>
           <DataTemplate>
-            <controls:FanTile DataContext="{Binding}" Margin="8"/>
+            <Border Margin="6">
+              <c:FanTile/>
+            </Border>
           </DataTemplate>
         </ItemsControl.ItemTemplate>
       </ItemsControl>
-
-      <TextBlock Text="No channels configured — click Setup"
-                 Foreground="#94A3B8" FontSize="14"
-                 HorizontalAlignment="Center" VerticalAlignment="Center"
-                 IsVisible="{Binding HasTiles, Converter={StaticResource InverseBoolConverter}}" />
-    </Grid>
-
-    <TextBlock Grid.Row="2" Text="{Binding StatusMessage}" Foreground="#94A3B8" Margin="2,8,2,0"/>
+    </ScrollViewer>
   </Grid>
 </UserControl>

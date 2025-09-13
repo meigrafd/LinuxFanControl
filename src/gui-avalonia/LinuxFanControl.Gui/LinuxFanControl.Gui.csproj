@@ -1,41 +1,78 @@
 <Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+    <AssemblyName>LinuxFanControl.Gui</AssemblyName>
+    <RootNamespace>LinuxFanControl.Gui</RootNamespace>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.2.0" />
     <PackageReference Include="Avalonia.Desktop" Version="11.2.0" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.0" />
-    <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.2.0" />
-    <PackageReference Include="Avalonia.Xaml.Interactivity" Version="11.2.0" />
-    <PackageReference Include="Avalonia.Xaml.Interactions" Version="11.2.0" />
-    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
-    <PackageReference Include="LiveChartsCore" Version="2.0.0-rc3" />
-    <PackageReference Include="LiveChartsCore.SkiaSharpView" Version="2.0.0-rc3" />
-    <PackageReference Include="LiveChartsCore.SkiaSharpView.Avalonia" Version="2.0.0-rc3" />
-    <PackageReference Include="SkiaSharp" Version="2.88.8" />
+    <PackageReference Include="Avalonia.ReactiveUI" Version="11.2.0" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="11.2.0" />
+    <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.2.0" />
+    <PackageReference Include="ReactiveUI" Version="19.5.61" />
+    <PackageReference Include="LiveChartsCore.SkiaSharpView.Avalonia" Version="2.0.0-rc3" />
+    <PackageReference Include="SkiaSharp" Version="2.88.9" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="2.88.9" />
   </ItemGroup>
 
-  <ItemGroup>
-    <AvaloniaXaml Remove="**/*.axaml" />
-    <EmbeddedResource Remove="**/*.axaml" />
-    <Page Remove="**/*.axaml" />
-  </ItemGroup>
-
+  <!-- XAML: explizit, keine Wildcards -->
   <ItemGroup>
     <AvaloniaXaml Include="App.axaml" />
     <AvaloniaXaml Include="Views/MainWindow.axaml" />
     <AvaloniaXaml Include="Views/DashboardView.axaml" />
     <AvaloniaXaml Include="Views/Controls/FanTile.axaml" />
-    <AvaloniaXaml Include="Views/Controls/FanLogo.axaml" />
-    <AvaloniaXaml Include="Views/Editors/CurveEditorView.axaml" />
     <AvaloniaXaml Include="Views/Dialogs/SetupDialog.axaml" />
-    <AvaloniaXaml Include="Views/Dialogs/ImportDialog.axaml" />
+    <AvaloniaXaml Include="Views/Dialogs/DetectProgressDialog.axaml" />
   </ItemGroup>
+
+  <!-- Code: explizit gelistet (keine Wildcards) -->
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="App.axaml.cs" />
+    <Compile Include="Views/MainWindow.axaml.cs" />
+    <Compile Include="Views/DashboardView.axaml.cs" />
+    <Compile Include="Views/Controls/FanTile.axaml.cs" />
+    <Compile Include="Views/Dialogs/SetupDialog.axaml.cs" />
+    <Compile Include="Views/Dialogs/DetectProgressDialog.axaml.cs" />
+
+    <Compile Include="ViewModels/DashboardViewModel.cs" />
+    <Compile Include="ViewModels/FanTileViewModel.cs" />
+    <Compile Include="ViewModels/Dialogs/SetupDialogViewModel.cs" />
+
+    <Compile Include="Services/RpcClient.cs" />
+    <Compile Include="Services/ThemeManager.cs" />
+    <Compile Include="Services/LocalizationService.cs" />
+
+    <Compile Include="Behaviors/LocalizedToggleContentBehavior.cs" />
+  </ItemGroup>
+
+  <!-- Statisches UI-Asset-Loading: Locales & Themes ins Output kopieren -->
+  <ItemGroup>
+    <None Update="Locales/en.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Locales/de.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+
+    <None Update="Themes/midnight.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Themes/light.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+
+    <None Update="Assets/**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

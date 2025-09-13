@@ -1,27 +1,53 @@
 // (c) 2025 LinuxFanControl contributors. MIT License.
+
 using System.Collections.ObjectModel;
-using System.Collections.Specialized;
-using CommunityToolkit.Mvvm.ComponentModel;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using ReactiveUI;
+using LinuxFanControl.Gui.Services;
 
 namespace LinuxFanControl.Gui.ViewModels
 {
-    public partial class DashboardViewModel : ObservableObject
+    public sealed class DashboardViewModel : ReactiveObject
     {
-        public ObservableCollection<FanTileViewModel> FanTiles { get; } = new();
+        private string _title = "Dashboard";
+        public string Title { get => _title; set => this.RaiseAndSetIfChanged(ref _title, value); }
 
-        [ObservableProperty] private string statusMessage = string.Empty;
-        [ObservableProperty] private bool hasTiles;
+        public ObservableCollection<FanTileViewModel> FanTiles { get; } = new();
 
         public DashboardViewModel()
         {
-            HasTiles = FanTiles.Count > 0;
-            FanTiles.CollectionChanged += OnTilesChanged;
-
-            // Für schnellen Sichttest: eine Demo-Kachel aktivieren (später vom Daemon befüllt)
-            // FanTiles.Add(new FanTileViewModel("CPU Fan", 950, 35, "44.1 °C"));
+            _ = LoadTilesAsync();
         }
 
-        private void OnTilesChanged(object? sender, NotifyCollectionChangedEventArgs e)
-        => HasTiles = FanTiles.Count > 0;
+        private async Task LoadTilesAsync()
+        {
+            // Populate from daemon (listChannels) if available; otherwise show empty dashboard.
+            try
+            {
+                using var cts = new CancellationTokenSource(1500);
+                var res = await RpcClient.Instance.ListChannelsAsync(cts.Token);
+                if (res is JsonElement el && el.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var ch in el.EnumerateArray())
+                    {
+                        var id   = ch.TryGetProperty("id", out var pId) ? (pId.GetString() ?? "") : "";
+                        var name = ch.TryGetProperty("name", out var pN) ? (pN.GetString() ?? id) : id;
+                        var sensor = ch.TryGetProperty("sensor", out var pS) ? (pS.GetString() ?? "n/a") : "n/a";
+                        FanTiles.Add(new FanTileViewModel
+                        {
+                            Id = string.IsNullOrEmpty(id) ? name : id,
+                                     Name = name,
+                                     SensorLabel = sensor
+                        });
+                    }
+                }
+            }
+            catch
+            {
+                // ignore (daemon not running yet)
+            }
+        }
     }
 }

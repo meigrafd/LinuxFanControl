@@ -1,35 +1,22 @@
 // (c) 2025 LinuxFanControl contributors. MIT License.
-using CommunityToolkit.Mvvm.ComponentModel;
-using CommunityToolkit.Mvvm.Input;
-using LiveChartsCore;
-using LiveChartsCore.SkiaSharpView;
+
+using ReactiveUI;
 
 namespace LinuxFanControl.Gui.ViewModels
 {
-    public partial class FanTileViewModel : ObservableObject
+    public sealed class FanTileViewModel : ReactiveObject
     {
-        [ObservableProperty] private string title;
-        [ObservableProperty] private int rpm;
-        [ObservableProperty] private int pwmDuty;
-        [ObservableProperty] private string temperature;
+        public string Id { get; set; } = System.Guid.NewGuid().ToString("N");
+        private string _name = "Fan";
+        public string Name { get => _name; set => this.RaiseAndSetIfChanged(ref _name, value); }
 
-        public ISeries[] Series { get; }
+        private string _sensorLabel = "--";
+        public string SensorLabel { get => _sensorLabel; set => this.RaiseAndSetIfChanged(ref _sensorLabel, value); }
 
-        public FanTileViewModel(string title, int rpm, int pwmDuty, string temperature)
-        {
-            this.title = title;
-            this.rpm = rpm;
-            this.pwmDuty = pwmDuty;
-            this.temperature = temperature;
+        private int _duty = 0;
+        public int Duty { get => _duty; set => this.RaiseAndSetIfChanged(ref _duty, value); }
 
-            // Simple sparkline series (dummy values)
-            Series = new ISeries[]
-            {
-                new LineSeries<double> { Values = new double[] { 30, 32, 31, 33, 34, 35 } }
-            };
-        }
-
-        [RelayCommand] private void Edit() { /* open editor dialog */ }
-        [RelayCommand] private void Remove() { /* remove from dashboard */ }
+        private int _rpm = 0;
+        public int Rpm { get => _rpm; set => this.RaiseAndSetIfChanged(ref _rpm, value); }
     }
 }
