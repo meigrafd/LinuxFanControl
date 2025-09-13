@@ -1,13 +1,14 @@
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.Primitives; // <-- needed for ToggleButton
+using Avalonia.Controls.Primitives; // ToggleButton
+using LinuxFanControl.Gui.Services; // LocalizationService
 
 namespace LinuxFanControl.Gui.Behaviors;
 
 /// <summary>
-/// Minimal helper to localize a ToggleButton's Content without relying on Avalonia.Xaml.Interactivity.
-/// Wire it up from code-behind (e.g., in SetupDialog) by calling:
-/// LocalizedToggleContentBehavior.Attach(themeToggle, onKey: "ui.theme.dark", offKey: "ui.theme.light");
+/// Minimal helper to localize a ToggleButton's Content without Avalonia.Xaml.Interactivity.
+/// Call once from code-behind, e.g.:
+/// LocalizedToggleContentBehavior.Attach(ThemeToggle, "ui.theme.dark", "ui.theme.light");
 /// </summary>
 public static class LocalizedToggleContentBehavior
 {
@@ -26,16 +27,8 @@ public static class LocalizedToggleContentBehavior
         // Initial apply
         Update();
 
-        // React to user changes
-        toggle.Checked += (_, __) => Update();
-        toggle.Unchecked += (_, __) => Update();
-        toggle.Indeterminate += (_, __) => Update();
-
-        // React if someone flips IsChecked from code
-        toggle.PropertyChanged += (_, e) =>
-        {
-            if (e.Property == ToggleButton.IsCheckedProperty)
-                Update();
-        };
+        // React on changes without deprecated events
+        toggle.GetObservable(ToggleButton.IsCheckedProperty)
+        .Subscribe(_ => Update());
     }
 }
