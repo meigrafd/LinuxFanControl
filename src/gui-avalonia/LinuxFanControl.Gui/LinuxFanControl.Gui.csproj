@@ -8,6 +8,7 @@
     <AssemblyName>LinuxFanControl.Gui</AssemblyName>
     <RootNamespace>LinuxFanControl.Gui</RootNamespace>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
 
   <ItemGroup>
@@ -39,15 +40,12 @@
     <Compile Include="Views/Controls/FanTile.axaml.cs" />
     <Compile Include="Views/Dialogs/SetupDialog.axaml.cs" />
     <Compile Include="Views/Dialogs/DetectProgressDialog.axaml.cs" />
-
     <Compile Include="ViewModels/DashboardViewModel.cs" />
     <Compile Include="ViewModels/FanTileViewModel.cs" />
     <Compile Include="ViewModels/Dialogs/SetupDialogViewModel.cs" />
-
     <Compile Include="Services/RpcClient.cs" />
     <Compile Include="Services/ThemeManager.cs" />
     <Compile Include="Services/LocalizationService.cs" />
-
     <Compile Include="Behaviors/LocalizedToggleContentBehavior.cs" />
   </ItemGroup>
 
