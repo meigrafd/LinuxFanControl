@@ -1,20 +1,26 @@
 // (c) 2025 LinuxFanControl contributors. MIT License.
+// Purpose: ViewModel for Auto-Setup dialog (detect + calibrate). Single definition to avoid MVVMTK duplicates.
+
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Controls;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using LinuxFanControl.Gui.Services;
 
 namespace LinuxFanControl.Gui.ViewModels.Dialogs
 {
-    public partial class SetupDialogViewModel : ObservableObject
+    public sealed partial class SetupDialogViewModel : ObservableObject
     {
+        private readonly Window _window;
         private readonly JsonRpcClient _rpc = new();
         private CancellationTokenSource? _cts;
 
         [ObservableProperty] private string logText = "";
         [ObservableProperty] private bool isRunning;
+
+        public SetupDialogViewModel(Window window) => _window = window;
 
         [RelayCommand]
         private async Task StartAsync()
@@ -27,6 +33,7 @@ namespace LinuxFanControl.Gui.ViewModels.Dialogs
             {
                 var progress = new Progress<string>(ln => LogText += ln + Environment.NewLine);
                 await _rpc.RunSetupAsync(progress, _cts.Token);
+                LogText += "[done]" + Environment.NewLine;
             }
             catch (Exception ex)
             {
@@ -44,5 +51,8 @@ namespace LinuxFanControl.Gui.ViewModels.Dialogs
             try { await _rpc.CancelSetupAsync(); } catch { }
             try { _cts?.Cancel(); } catch { }
         }
+
+        [RelayCommand]
+        private void CloseWindow() => _window.Close();
     }
 }
