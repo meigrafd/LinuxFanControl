@@ -4,7 +4,6 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <!-- Leave compiled bindings off until all x:DataType are wired -->
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
 
@@ -13,19 +12,16 @@
     <PackageReference Include="Avalonia.Desktop" Version="11.2.0" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.0" />
     <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.2.0" />
-    <!-- Behaviors / Interactivity for Avalonia -->
     <PackageReference Include="Avalonia.Xaml.Interactivity" Version="11.2.0" />
     <PackageReference Include="Avalonia.Xaml.Interactions" Version="11.2.0" />
-
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
     <PackageReference Include="LiveChartsCore" Version="2.0.0-rc3" />
     <PackageReference Include="LiveChartsCore.SkiaSharpView" Version="2.0.0-rc3" />
     <PackageReference Include="LiveChartsCore.SkiaSharpView.Avalonia" Version="2.0.0-rc3" />
-    <!-- Keep SkiaSharp aligned to avoid NU1605 with LiveCharts -->
     <PackageReference Include="SkiaSharp" Version="2.88.8" />
   </ItemGroup>
 
-  <!-- XAML includes: explicit list to avoid duplicate App.axaml -->
+  <!-- EXPLIZIT: keine Wildcards & KEIN Remove mehr -->
   <ItemGroup>
     <AvaloniaXaml Include="App.axaml" />
     <AvaloniaXaml Include="Views/Controls/FanTile.axaml" />
@@ -34,12 +30,5 @@
     <AvaloniaXaml Include="Views/Dialogs/SetupDialog.axaml" />
     <AvaloniaXaml Include="Views/Editors/CurveEditorView.axaml" />
     <AvaloniaXaml Include="Views/MainWindow.axaml" />
-  </ItemGroup>
-
-  <!-- Ensure no other wildcard brings duplicates -->
-  <ItemGroup>
-    <AvaloniaXaml Remove="bin/**" />
-    <AvaloniaXaml Remove="obj/**" />
-    <AvaloniaXaml Remove="**/*.axaml" Condition="'@(AvaloniaXaml)' != ''" />
   </ItemGroup>
 </Project>

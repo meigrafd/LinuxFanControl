@@ -1,16 +1,17 @@
+// (c) 2025 LinuxFanControl contributors. MIT License.
 using Avalonia;
-using System;
 
-namespace LinuxFanControl.Gui;
-
-internal static class Program
+namespace LinuxFanControl.Gui
 {
-    [STAThread]
-    public static void Main(string[] args) =>
+    public static class Program
+    {
+        public static void Main(string[] args) =>
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
 
-    public static AppBuilder BuildAvaloniaApp()
-        => AppBuilder.Configure<App>()
-            .UsePlatformDetect()
-            .LogToTrace();
+        public static AppBuilder BuildAvaloniaApp() =>
+        AppBuilder.Configure<App>()
+        .UsePlatformDetect()
+        .WithInterFont()
+        .LogToTrace();
+    }
 }
