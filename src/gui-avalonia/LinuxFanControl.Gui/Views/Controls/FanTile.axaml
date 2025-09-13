@@ -1,62 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
 <UserControl
     x:Class="LinuxFanControl.Gui.Views.Controls.FanTile"
     xmlns="https://github.com/avaloniaui"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.Avalonia;assembly=LiveChartsCore.SkiaSharpView.Avalonia">
+
+  <!-- Pure selector-based styles (Avalonia 11): no DataTrigger/SelectorTrigger -->
   <UserControl.Styles>
-    <Style Selector="Border.tile">
-      <Setter Property="Background" Value="{DynamicResource TileBg}"/>
-      <Setter Property="BorderBrush" Value="{DynamicResource TileBorder}"/>
-      <Setter Property="BorderThickness" Value="1"/>
-      <Setter Property="CornerRadius" Value="10"/>
-      <Setter Property="Padding" Value="10"/>
+    <!-- Subtle hover effect on the whole tile -->
+    <Style Selector="Border#Tile:pointerover">
+      <Setter Property="Opacity" Value="0.96"/>
     </Style>
-    <Style Selector="TextBlock.title">
-      <Setter Property="Foreground" Value="{DynamicResource Foreground}"/>
-      <Setter Property="FontWeight" Value="SemiBold"/>
-      <Setter Property="FontSize" Value="14"/>
-    </Style>
-    <Style Selector="TextBlock.meta">
-      <Setter Property="Foreground" Value="{DynamicResource SubtleText}"/>
-      <Setter Property="FontSize" Value="12"/>
-    </Style>
-    <Style Selector="Button.flat">
-      <Setter Property="Background" Value="{DynamicResource ButtonBg}"/>
-      <Setter Property="Foreground" Value="{DynamicResource ButtonText}"/>
-      <Setter Property="BorderBrush" Value="{DynamicResource ButtonBorder}"/>
-      <Setter Property="BorderThickness" Value="1"/>
-      <Setter Property="Padding" Value="6,4"/>
-      <Setter Property="CornerRadius" Value="6"/>
-      <Style.Triggers>
-        <SelectorTrigger Selector=":pointerover">
-          <Setter Property="Background" Value="{DynamicResource ButtonBgHover}"/>
-          <Setter Property="Foreground" Value="{DynamicResource Foreground}"/>
-        </SelectorTrigger>
-      </Style.Triggers>
+
+    <!-- Hover effect on the Edit button -->
+    <Style Selector="Button#EditBtn:pointerover">
+      <Setter Property="Opacity" Value="0.90"/>
     </Style>
   </UserControl.Styles>
 
-  <Border Classes="tile" Width="320" Height="180">
-    <Grid RowDefinitions="Auto,*,Auto">
-      <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,6">
-        <TextBlock Classes="title" Text="{Binding Title}" VerticalAlignment="Center"/>
-        <Button Classes="flat" Grid.Column="1" Content="Edit" Command="{Binding EditCommand}" Margin="6,0,0,0"/>
-        <Button Classes="flat" Grid.Column="2" Content="Remove" Command="{Binding RemoveCommand}" Margin="6,0,0,0"/>
-      </Grid>
+  <Border x:Name="Tile" CornerRadius="10" Margin="6" Padding="10">
+    <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto">
+      <!-- Title / Subtitle -->
+      <TextBlock Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
+                 Text="{Binding Title}" FontWeight="Bold" FontSize="14"/>
+      <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding Subtitle}" Opacity="0.75"/>
 
-      <lvc:CartesianChart Grid.Row="1"
+      <!-- Edit button -->
+      <Button x:Name="EditBtn" Grid.Row="1" Grid.Column="1" MinWidth="72"
+              Content="Edit" Command="{Binding EditCommand}"/>
+
+      <!-- Mini chart (LiveCharts) -->
+      <lvc:CartesianChart Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Height="110"
                           Series="{Binding Series}"
-                          Background="Transparent"
-                          LegendPosition="Hidden"
-                          ZoomMode="None"
-                          AnimationsSpeed="0:0:0.25"
-                          IsHitTestVisible="False" />
-
-      <Grid Grid.Row="2" ColumnDefinitions="*,*,*" Margin="0,6,0,0">
-        <TextBlock Classes="meta" Text="{Binding Rpm, StringFormat='{}{0} RPM'}"/>
-        <TextBlock Classes="meta" Grid.Column="1" Text="{Binding PwmDuty, StringFormat='{}{0}%'}" HorizontalAlignment="Center"/>
-        <TextBlock Classes="meta" Grid.Column="2" Text="{Binding Temperature}" HorizontalAlignment="Right"/>
-      </Grid>
+                          XAxes="{Binding XAxes}"
+                          YAxes="{Binding YAxes}" />
     </Grid>
   </Border>
 </UserControl>
