@@ -1,0 +1,8 @@
+/mnt/Github/LinuxFanControl/src/gui-avalonia/LinuxFanControl.Gui/obj/Debug/net9.0/linux-x64/LinuxFanControl.Gui.csproj.AssemblyReference.cache
+/mnt/Github/LinuxFanControl/src/gui-avalonia/LinuxFanControl.Gui/obj/Debug/net9.0/linux-x64/Avalonia/Resources.Inputs.cache
+/mnt/Github/LinuxFanControl/src/gui-avalonia/LinuxFanControl.Gui/obj/Debug/net9.0/linux-x64/Avalonia/resources
+/mnt/Github/LinuxFanControl/src/gui-avalonia/LinuxFanControl.Gui/obj/Debug/net9.0/linux-x64/LinuxFanControl.Gui.GeneratedMSBuildEditorConfig.editorconfig
+/mnt/Github/LinuxFanControl/src/gui-avalonia/LinuxFanControl.Gui/obj/Debug/net9.0/linux-x64/LinuxFanControl.Gui.AssemblyInfoInputs.cache
+/mnt/Github/LinuxFanControl/src/gui-avalonia/LinuxFanControl.Gui/obj/Debug/net9.0/linux-x64/LinuxFanControl.Gui.AssemblyInfo.cs
+/mnt/Github/LinuxFanControl/src/gui-avalonia/LinuxFanControl.Gui/obj/Debug/net9.0/linux-x64/LinuxFanControl.Gui.csproj.CoreCompileInputs.cache
+/mnt/Github/LinuxFanControl/src/gui-avalonia/LinuxFanControl.Gui/obj/Debug/net9.0/linux-x64/LinuxFanControl.Gui.sourcelink.json

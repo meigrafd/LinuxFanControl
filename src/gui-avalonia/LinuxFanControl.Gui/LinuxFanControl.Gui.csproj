@@ -5,28 +5,23 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
 
-    <!-- Linux Desktop default; kann über --rid in build.sh überschrieben werden -->
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">linux-x64</RuntimeIdentifier>
 
     <OutputType>WinExe</OutputType>
     <AssemblyName>LinuxFanControl.Gui</AssemblyName>
     <RootNamespace>LinuxFanControl.Gui</RootNamespace>
 
-    <!-- Nur nuget.org als Quelle, um Timeout/Spiegel zu vermeiden -->
     <RestoreSources>https://api.nuget.org/v3/index.json</RestoreSources>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Avalonia 11 Stable -->
     <PackageReference Include="Avalonia" Version="11.2.3" />
     <PackageReference Include="Avalonia.Desktop" Version="11.2.3" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.3" />
     <PackageReference Include="Avalonia.Diagnostics" Version="11.2.3" Condition="'$(Configuration)' == 'Debug'" />
 
-    <!-- LiveCharts + Skia für Avalonia -->
     <PackageReference Include="LiveChartsCore.SkiaSharpView.Avalonia" Version="2.0.0-rc3" />
 
-    <!-- WICHTIG: Linux native Skia-Assets (kein WebAssembly!) -->
     <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="2.88.9" />
   </ItemGroup>
 

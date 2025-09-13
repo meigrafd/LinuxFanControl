@@ -1,21 +1,24 @@
 {
   "version": 2,
-  "dgSpecHash": "EkrlcLdObTM=",
+  "dgSpecHash": "eEo2q9dFxrY=",
   "success": true,
   "projectFilePath": "/mnt/Github/LinuxFanControl/src/gui-avalonia/LinuxFanControl.Gui/LinuxFanControl.Gui.csproj",
   "expectedPackageFiles": [
-    "/home/meigrafd/.nuget/packages/avalonia/11.2.4/avalonia.11.2.4.nupkg.sha512",
+    "/home/meigrafd/.nuget/packages/avalonia/11.2.3/avalonia.11.2.3.nupkg.sha512",
     "/home/meigrafd/.nuget/packages/avalonia.angle.windows.natives/2.1.22045.20230930/avalonia.angle.windows.natives.2.1.22045.20230930.nupkg.sha512",
-    "/home/meigrafd/.nuget/packages/avalonia.buildservices/0.0.31/avalonia.buildservices.0.0.31.nupkg.sha512",
-    "/home/meigrafd/.nuget/packages/avalonia.desktop/11.2.4/avalonia.desktop.11.2.4.nupkg.sha512",
-    "/home/meigrafd/.nuget/packages/avalonia.freedesktop/11.2.4/avalonia.freedesktop.11.2.4.nupkg.sha512",
-    "/home/meigrafd/.nuget/packages/avalonia.native/11.2.4/avalonia.native.11.2.4.nupkg.sha512",
-    "/home/meigrafd/.nuget/packages/avalonia.remote.protocol/11.2.4/avalonia.remote.protocol.11.2.4.nupkg.sha512",
-    "/home/meigrafd/.nuget/packages/avalonia.skia/11.2.4/avalonia.skia.11.2.4.nupkg.sha512",
-    "/home/meigrafd/.nuget/packages/avalonia.themes.fluent/11.2.4/avalonia.themes.fluent.11.2.4.nupkg.sha512",
-    "/home/meigrafd/.nuget/packages/avalonia.win32/11.2.4/avalonia.win32.11.2.4.nupkg.sha512",
-    "/home/meigrafd/.nuget/packages/avalonia.x11/11.2.4/avalonia.x11.11.2.4.nupkg.sha512",
-    "/home/meigrafd/.nuget/packages/communitytoolkit.mvvm/8.3.2/communitytoolkit.mvvm.8.3.2.nupkg.sha512",
+    "/home/meigrafd/.nuget/packages/avalonia.buildservices/0.0.29/avalonia.buildservices.0.0.29.nupkg.sha512",
+    "/home/meigrafd/.nuget/packages/avalonia.controls.colorpicker/11.2.3/avalonia.controls.colorpicker.11.2.3.nupkg.sha512",
+    "/home/meigrafd/.nuget/packages/avalonia.controls.datagrid/11.2.3/avalonia.controls.datagrid.11.2.3.nupkg.sha512",
+    "/home/meigrafd/.nuget/packages/avalonia.desktop/11.2.3/avalonia.desktop.11.2.3.nupkg.sha512",
+    "/home/meigrafd/.nuget/packages/avalonia.diagnostics/11.2.3/avalonia.diagnostics.11.2.3.nupkg.sha512",
+    "/home/meigrafd/.nuget/packages/avalonia.freedesktop/11.2.3/avalonia.freedesktop.11.2.3.nupkg.sha512",
+    "/home/meigrafd/.nuget/packages/avalonia.native/11.2.3/avalonia.native.11.2.3.nupkg.sha512",
+    "/home/meigrafd/.nuget/packages/avalonia.remote.protocol/11.2.3/avalonia.remote.protocol.11.2.3.nupkg.sha512",
+    "/home/meigrafd/.nuget/packages/avalonia.skia/11.2.3/avalonia.skia.11.2.3.nupkg.sha512",
+    "/home/meigrafd/.nuget/packages/avalonia.themes.fluent/11.2.3/avalonia.themes.fluent.11.2.3.nupkg.sha512",
+    "/home/meigrafd/.nuget/packages/avalonia.themes.simple/11.2.3/avalonia.themes.simple.11.2.3.nupkg.sha512",
+    "/home/meigrafd/.nuget/packages/avalonia.win32/11.2.3/avalonia.win32.11.2.3.nupkg.sha512",
+    "/home/meigrafd/.nuget/packages/avalonia.x11/11.2.3/avalonia.x11.11.2.3.nupkg.sha512",
     "/home/meigrafd/.nuget/packages/harfbuzzsharp/7.3.0.3/harfbuzzsharp.7.3.0.3.nupkg.sha512",
     "/home/meigrafd/.nuget/packages/harfbuzzsharp.nativeassets.linux/7.3.0.3/harfbuzzsharp.nativeassets.linux.7.3.0.3.nupkg.sha512",
     "/home/meigrafd/.nuget/packages/harfbuzzsharp.nativeassets.macos/7.3.0.3/harfbuzzsharp.nativeassets.macos.7.3.0.3.nupkg.sha512",
@@ -28,23 +31,13 @@
     "/home/meigrafd/.nuget/packages/skiasharp/2.88.9/skiasharp.2.88.9.nupkg.sha512",
     "/home/meigrafd/.nuget/packages/skiasharp.harfbuzz/2.88.8/skiasharp.harfbuzz.2.88.8.nupkg.sha512",
     "/home/meigrafd/.nuget/packages/skiasharp.nativeassets.linux/2.88.9/skiasharp.nativeassets.linux.2.88.9.nupkg.sha512",
+    "/home/meigrafd/.nuget/packages/skiasharp.nativeassets.linux.nodependencies/2.88.9/skiasharp.nativeassets.linux.nodependencies.2.88.9.nupkg.sha512",
     "/home/meigrafd/.nuget/packages/skiasharp.nativeassets.macos/2.88.9/skiasharp.nativeassets.macos.2.88.9.nupkg.sha512",
     "/home/meigrafd/.nuget/packages/skiasharp.nativeassets.webassembly/2.88.9/skiasharp.nativeassets.webassembly.2.88.9.nupkg.sha512",
     "/home/meigrafd/.nuget/packages/skiasharp.nativeassets.win32/2.88.9/skiasharp.nativeassets.win32.2.88.9.nupkg.sha512",
     "/home/meigrafd/.nuget/packages/system.io.pipelines/8.0.0/system.io.pipelines.8.0.0.nupkg.sha512",
-    "/home/meigrafd/.nuget/packages/system.text.json/8.0.5/system.text.json.8.0.5.nupkg.sha512",
-    "/home/meigrafd/.nuget/packages/tmds.dbus.protocol/0.20.0/tmds.dbus.protocol.0.20.0.nupkg.sha512"
+    "/home/meigrafd/.nuget/packages/tmds.dbus.protocol/0.20.0/tmds.dbus.protocol.0.20.0.nupkg.sha512",
+    "/home/meigrafd/.nuget/packages/microsoft.netcore.app.host.linux-x64/9.0.8/microsoft.netcore.app.host.linux-x64.9.0.8.nupkg.sha512"
   ],
-  "logs": [
-    {
-      "code": "NU1603",
-      "level": "Warning",
-      "warningLevel": 1,
-      "message": "LinuxFanControl.Gui depends on LiveChartsCore.SkiaSharpView.Avalonia (>= 2.0.0-rc2.2) but LiveChartsCore.SkiaSharpView.Avalonia 2.0.0-rc2.2 was not found. LiveChartsCore.SkiaSharpView.Avalonia 2.0.0-rc3 was resolved instead.",
-      "libraryId": "LiveChartsCore.SkiaSharpView.Avalonia",
-      "targetGraphs": [
-        "net9.0"
-      ]
-    }
-  ]
+  "logs": []
 }
