@@ -1,12 +1,11 @@
 <Application
     xmlns="https://github.com/avaloniaui"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:fluent="clr-namespace:Avalonia.Themes.Fluent;assembly=Avalonia.Themes.Fluent"
     xmlns:conv="clr-namespace:LinuxFanControl.Gui.Converters"
     x:Class="LinuxFanControl.Gui.App">
   <Application.Styles>
-    <!-- Default theme; App code kann später zur Laufzeit umschalten -->
-    <fluent:FluentTheme />
+    <!-- FluentTheme is resolved via package reference; no extra xmlns needed -->
+    <FluentTheme />
   </Application.Styles>
 
   <Application.Resources>

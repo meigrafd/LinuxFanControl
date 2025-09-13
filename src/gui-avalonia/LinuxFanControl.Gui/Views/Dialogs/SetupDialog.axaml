@@ -13,7 +13,6 @@
       </ScrollViewer>
     </Border>
     <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
-      <!-- InverseBoolConverter kommt aus App.Resources -->
       <Button Content="Start" IsEnabled="{Binding IsRunning, Converter={StaticResource InverseBoolConverter}}"
               Command="{Binding StartAsyncCommand}"/>
       <Button Content="Cancel" IsEnabled="{Binding IsRunning}"

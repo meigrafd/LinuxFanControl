@@ -2,7 +2,7 @@
     x:Class="LinuxFanControl.Gui.Views.Editors.CurveEditorView"
     xmlns="https://github.com/avaloniaui"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:dgrid="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.DataGrid">
+    xmlns:dg="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.DataGrid">
   <Grid RowDefinitions="Auto,Auto,*,Auto" ColumnDefinitions="*,Auto" Margin="8">
     <TextBlock Grid.Row="0" Grid.ColumnSpan="2" Text="{Binding Title}" FontSize="16" FontWeight="SemiBold"/>
     <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Margin="0,6,0,6">
@@ -15,13 +15,13 @@
     </StackPanel>
 
     <!-- Table of points -->
-    <dgrid:DataGrid Grid.Row="2" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
-                    Items="{Binding Points}">
-      <dgrid:DataGrid.Columns>
-        <dgrid:DataGridTextColumn Header="X (°C)" Binding="{Binding X}" Width="*"/>
-        <dgrid:DataGridTextColumn Header="Y (%)"  Binding="{Binding Y}" Width="*"/>
-      </dgrid:DataGrid.Columns>
-    </dgrid:DataGrid>
+    <dg:DataGrid Grid.Row="2" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
+                 Items="{Binding Points}">
+      <dg:DataGrid.Columns>
+        <dg:DataGridTextColumn Header="X (°C)" Binding="{Binding X}" Width="*" />
+        <dg:DataGridTextColumn Header="Y (%)"  Binding="{Binding Y}" Width="*" />
+      </dg:DataGrid.Columns>
+    </dg:DataGrid>
 
     <StackPanel Grid.Row="3" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
       <Button Content="Apply" Command="{Binding ApplyCommand}"/>
