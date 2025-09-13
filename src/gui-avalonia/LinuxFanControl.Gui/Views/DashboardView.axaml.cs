@@ -1,5 +1,3 @@
-using System;
-using System.Collections.ObjectModel;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
@@ -11,6 +9,9 @@ namespace LinuxFanControl.Gui.Views
 {
     /// <summary>
     /// Dashboard with a tile board that supports drag & drop reordering.
+    /// Notes:
+    /// - Use attached property DragDrop.AllowDrop instead of ItemsControl.AllowDrop.
+    /// - Avoid explicit IVisual references to keep compilation happy on all targets.
     /// </summary>
     public partial class DashboardView : UserControl
     {
@@ -21,17 +22,16 @@ namespace LinuxFanControl.Gui.Views
             InitializeComponent();
 
             _board = this.FindControl<ItemsControl>("TileBoard");
-
             if (_board != null)
             {
-                // Enable dropping on the board and on its children
-                _board.AllowDrop = true;
+                // Enable drop via attached property
+                DragDrop.SetAllowDrop(_board, true);
 
-                // Centralized DnD handlers
+                // Centralized DnD handlers on the board
                 _board.AddHandler(DragDrop.DragOverEvent, OnDragOver, RoutingStrategies.Tunnel | RoutingStrategies.Bubble);
                 _board.AddHandler(DragDrop.DropEvent, OnDrop, RoutingStrategies.Tunnel | RoutingStrategies.Bubble);
 
-                // Start drag from any pointer press inside a tile
+                // Start dragging when pointer is pressed on a tile
                 _board.AddHandler(InputElement.PointerPressedEvent, OnPointerPressed, RoutingStrategies.Tunnel | RoutingStrategies.Bubble);
             }
         }
@@ -41,8 +41,8 @@ namespace LinuxFanControl.Gui.Views
         {
             if (_board == null) return;
 
-            // Find the tile (control) under pointer which has a DataContext (tile view model)
-            var src = (e.Source as IVisual)?.GetSelfAndVisualAncestors()
+            // Find the nearest Control with a DataContext under the pointer
+            var src = (e.Source as Control)?.GetSelfAndVisualAncestors()
             .OfType<Control>()
             .FirstOrDefault(c => c.DataContext != null);
             var vm = src?.DataContext;
@@ -54,8 +54,7 @@ namespace LinuxFanControl.Gui.Views
             var data = new DataObject();
             data.Set("application/x-lfc-tile-vm", vm);
 
-            // Give a visual cue
-            DragDropEffects effect = await DragDrop.DoDragDrop(e, data, DragDropEffects.Move);
+            await DragDrop.DoDragDrop(e, data, DragDropEffects.Move);
         }
 
         // Allow move effect while dragging over the board
@@ -80,20 +79,16 @@ namespace LinuxFanControl.Gui.Views
             var draggedVm = e.Data.Get("application/x-lfc-tile-vm");
             if (draggedVm == null) return;
 
-            // Resolve the underlying ObservableCollection from DataContext
-            // Expected: DataContext has property FanTiles : ObservableCollection<...>
+            // Resolve the list bound to ItemsSource: expects DataContext.FanTiles : IList/ObservableCollection
             var tilesProp = DataContext?.GetType().GetProperty("FanTiles");
-            if (tilesProp == null) return;
+            if (tilesProp?.GetValue(DataContext) is not System.Collections.IList list) return;
 
-            if (tilesProp.GetValue(DataContext) is not System.Collections.IList list) return;
-
-            // Determine drop target VM by inspecting the visual under the pointer
-            var targetControl = (e.Source as IVisual)?.GetSelfAndVisualAncestors()
+            // Determine target VM by inspecting the visual under the pointer
+            var targetControl = (e.Source as Control)?.GetSelfAndVisualAncestors()
             .OfType<Control>()
             .FirstOrDefault(c => c.DataContext != null);
             var targetVm = targetControl?.DataContext;
 
-            // Compute indices
             int from = IndexOf(list, draggedVm);
             if (from < 0) return;
 
@@ -102,7 +97,6 @@ namespace LinuxFanControl.Gui.Views
 
             if (from == to) return;
 
-            // Move item within the list
             Move(list, from, to);
             e.Handled = true;
         }
@@ -119,7 +113,6 @@ namespace LinuxFanControl.Gui.Views
 
         private static void Move(System.Collections.IList list, int from, int to)
         {
-            // Generic IList move (works for ObservableCollection as well)
             object item = list[from]!;
             list.RemoveAt(from);
             if (to >= list.Count) list.Add(item);
