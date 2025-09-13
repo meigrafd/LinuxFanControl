@@ -1,0 +1,40 @@
+<!-- (c) 2025 LinuxFanControl contributors. MIT License. -->
+<Window
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="clr-namespace:LinuxFanControl.Gui.ViewModels.Dialogs"
+    x:Class="LinuxFanControl.Gui.Views.Dialogs.SetupDialog"
+    Width="820" Height="520"
+    CanResize="True"
+    WindowStartupLocation="CenterOwner"
+    Title="Auto-Setup"
+    Background="{DynamicResource LFC.BackgroundBrush}">
+  <Design.DataContext>
+    <vm:SetupDialogViewModel/>
+  </Design.DataContext>
+
+  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="12" RowSpacing="8">
+    <TextBlock Text="Detect + Calibrate" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource LFC.TextBrush}"/>
+
+    <ProgressBar Grid.Row="1" Minimum="0" Maximum="{Binding ProgressMax}" Value="{Binding ProgressValue}" />
+
+    <Border Grid.Row="2" BorderBrush="{DynamicResource LFC.BorderBrush}" BorderThickness="1" Background="{DynamicResource LFC.PanelBrush}">
+      <ScrollViewer>
+        <ItemsControl Items="{Binding Lines}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <TextBlock Margin="6,2" Foreground="{DynamicResource LFC.SubtleTextBrush}" Text="{Binding}"/>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+    </Border>
+
+    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+      <Button Content="Start" Command="{Binding StartAsyncCommand}" IsEnabled="{Binding IsRunning, Converter={x:Static BoolNegationConverter.Instance}}"/>
+      <Button Content="Cancel" Command="{Binding CancelCommand}" IsEnabled="{Binding IsRunning}"/>
+      <Button Content="Close" IsEnabled="{Binding IsRunning, Converter={x:Static BoolNegationConverter.Instance}}"
+              Click="OnCloseClicked"/>
+    </StackPanel>
+  </Grid>
+</Window>

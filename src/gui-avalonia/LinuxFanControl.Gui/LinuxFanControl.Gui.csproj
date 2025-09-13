@@ -15,10 +15,14 @@
     <PackageReference Include="Avalonia.Desktop" Version="11.2.3" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.3" />
     <PackageReference Include="Avalonia.Diagnostics" Version="11.2.3" Condition="'$(Configuration)' == 'Debug'" />
-
     <PackageReference Include="LiveChartsCore.SkiaSharpView.Avalonia" Version="2.0.0-rc3" />
     <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="2.88.9" />
-
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
+  </ItemGroup>
+
+  <!-- Flache Dateien: Locales/en.json, Locales/de.json, Themes/midnight.json, Themes/light.json -->
+  <ItemGroup>
+    <None Include="Locales/*.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Themes/*.json"  CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

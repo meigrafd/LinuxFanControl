@@ -1,0 +1,16 @@
+{
+  "name": "Light",
+  "dark": false,
+  "palette": {
+    "Background": "#F9FAFB",
+    "Panel": "#FFFFFF",
+    "Card": "#FFFFFF",
+    "Accent": "#2563EB",
+    "AccentForeground": "#FFFFFF",
+    "Text": "#111827",
+    "SubtleText": "#6B7280",
+    "Border": "#E5E7EB",
+    "GraphLine": "#2563EB",
+    "GraphFill": "#93C5FD"
+  }
+}

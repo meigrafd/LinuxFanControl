@@ -1,0 +1,52 @@
+<!-- (c) 2025 LinuxFanControl contributors. MIT License. -->
+<UserControl
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:lvc="using:LiveChartsCore.SkiaSharpView.Avalonia"
+    x:Class="LinuxFanControl.Gui.Views.Editors.CurveEditorView"
+    MinHeight="260">
+
+  <Grid RowDefinitions="Auto,*,Auto,*" RowSpacing="8">
+
+    <!-- Toolbar -->
+    <StackPanel Orientation="Horizontal" Spacing="8" Grid.Row="0">
+      <TextBlock Text="{Binding Title}" FontWeight="SemiBold" Foreground="{DynamicResource LFC.TextBrush}" />
+      <TextBlock Text="*" Foreground="{DynamicResource LFC.AccentBrush}" IsVisible="{Binding IsDirty}" Margin="6,0,0,0"/>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <Button Content="Save" Command="{Binding SaveCommand}" />
+        <Button Content="Close" Command="{Binding CloseCommand}" Margin="6,0,0,0"/>
+      </StackPanel>
+    </StackPanel>
+
+    <!-- Live chart (supports drag) -->
+    <Border Grid.Row="1" Padding="4" Background="{DynamicResource LFC.PanelBrush}" BorderBrush="{DynamicResource LFC.BorderBrush}" BorderThickness="1" CornerRadius="8">
+      <lvc:CartesianChart x:Name="ChartRef"
+          Series="{Binding Series}"
+          XAxes="{Binding XAxes}"
+          YAxes="{Binding YAxes}"
+          PointerPressed="OnChartPointerPressed"
+          PointerReleased="OnChartPointerReleased"
+          PointerMoved="OnChartPointerMoved"
+          />
+    </Border>
+
+    <!-- Divider -->
+    <Border Grid.Row="2" Height="1" Background="{DynamicResource LFC.BorderBrush}"/>
+
+    <!-- Points table (editable) -->
+    <DataGrid Grid.Row="3"
+              Items="{Binding Points}"
+              AutoGenerateColumns="False"
+              CanUserAddRows="True"
+              CanUserDeleteRows="True"
+              HeadersVisibility="Column"
+              Background="{DynamicResource LFC.PanelBrush}"
+              BorderBrush="{DynamicResource LFC.BorderBrush}">
+      <DataGrid.Columns>
+        <DataGridTextColumn Header="X (°C)" Binding="{Binding X}" Width="*" />
+        <DataGridTextColumn Header="Y (%)"  Binding="{Binding Y}" Width="*" />
+      </DataGrid.Columns>
+    </DataGrid>
+
+  </Grid>
+</UserControl>

@@ -1,0 +1,10 @@
+{
+  "meta": { "name": "English" },
+
+  "ui.title": "Linux Fan Control",
+  "ui.menu.setup": "Setup",
+  "ui.menu.profile": "Profile",
+  "ui.menu.add_channel": "Add Channel",
+  "ui.menu.theme": "Theme",
+  "ui.menu.language": "Language"
+}

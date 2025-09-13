@@ -1,0 +1,64 @@
+<!-- (c) 2025 LinuxFanControl contributors. MIT License. -->
+<UserControl
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:lvc="using:LiveChartsCore.SkiaSharpView.Avalonia"
+    x:Class="LinuxFanControl.Gui.Views.Controls.FanTile"
+    MinWidth="260" MinHeight="140">
+  <Border
+      Padding="12"
+      CornerRadius="10"
+      Background="{DynamicResource LFC.CardBrush}"
+      BorderBrush="{DynamicResource LFC.BorderBrush}"
+      BorderThickness="1">
+    <Grid RowDefinitions="Auto,*,Auto,Auto" RowSpacing="6">
+
+      <!-- Header -->
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource LFC.TextBrush}"/>
+        <TextBlock Text="•" Foreground="{DynamicResource LFC.SubtleTextBrush}" Margin="4,0"/>
+        <TextBlock Text="{Binding Sensor}" Foreground="{DynamicResource LFC.SubtleTextBrush}" />
+        <TextBlock Text="•" Foreground="{DynamicResource LFC.SubtleTextBrush}" Margin="4,0"/>
+        <TextBlock Text="{Binding Mode}" Foreground="{DynamicResource LFC.SubtleTextBrush}" />
+      </StackPanel>
+
+      <!-- Center values -->
+      <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="18" VerticalAlignment="Center">
+        <StackPanel>
+          <TextBlock Text="{Binding DutyPercent}" FontSize="26" FontWeight="Bold" Foreground="{DynamicResource LFC.TextBrush}"/>
+          <TextBlock Text="% Duty" Foreground="{DynamicResource LFC.SubtleTextBrush}"/>
+        </StackPanel>
+        <StackPanel>
+          <TextBlock Text="{Binding Rpm}" FontSize="26" FontWeight="Bold" Foreground="{DynamicResource LFC.TextBrush}"/>
+          <TextBlock Text="RPM" Foreground="{DynamicResource LFC.SubtleTextBrush}"/>
+        </StackPanel>
+        <StackPanel>
+          <TextBlock Text="{Binding TempC}" FontSize="26" FontWeight="Bold" Foreground="{DynamicResource LFC.TextBrush}"/>
+          <TextBlock Text="°C" Foreground="{DynamicResource LFC.SubtleTextBrush}"/>
+        </StackPanel>
+      </StackPanel>
+
+      <!-- Sparkline -->
+      <Border Grid.Row="2" Height="36" CornerRadius="6" Background="{DynamicResource LFC.PanelBrush}" BorderBrush="{DynamicResource LFC.BorderBrush}" BorderThickness="1">
+        <lvc:CartesianChart
+            Margin="4"
+            Series="{Binding SparkSeries}"
+            LegendPosition="Hidden"
+            DrawMarginFrame="{x:Null}">
+          <lvc:CartesianChart.XAxes>
+            <lvc:Axis IsVisible="False"/>
+          </lvc:CartesianChart.XAxes>
+          <lvc:CartesianChart.YAxes>
+            <lvc:Axis IsVisible="False"/>
+          </lvc:CartesianChart.YAxes>
+        </lvc:CartesianChart>
+      </Border>
+
+      <!-- Footer -->
+      <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+        <Button Content="Edit" Command="{Binding DataContext.EditFanCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" />
+      </StackPanel>
+
+    </Grid>
+  </Border>
+</UserControl>

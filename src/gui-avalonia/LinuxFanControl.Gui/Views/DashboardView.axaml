@@ -1,0 +1,23 @@
+<!-- (c) 2025 LinuxFanControl contributors. MIT License. -->
+<UserControl
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:c="clr-namespace:LinuxFanControl.Gui.Views.Controls"
+    x:Class="LinuxFanControl.Gui.Views.DashboardView">
+
+  <ScrollViewer>
+    <ItemsControl Items="{Binding Tiles}">
+      <ItemsControl.ItemsPanel>
+        <ItemsPanelTemplate>
+          <WrapPanel Orientation="Horizontal" Margin="10" />
+        </ItemsPanelTemplate>
+      </ItemsControl.ItemsPanel>
+      <ItemsControl.ItemTemplate>
+        <DataTemplate>
+          <c:FanTile Margin="10"/>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+  </ScrollViewer>
+
+</UserControl>

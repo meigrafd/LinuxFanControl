@@ -1,16 +1,18 @@
-using System;
+// (c) 2025 LinuxFanControl contributors. MIT License.
+// Purpose: JSON convenience extensions. Placed in System.Text.Json namespace so extension methods
+// are discovered without extra using-directives anywhere in the codebase.
+
 using System.Collections.Generic;
 using System.Globalization;
-using System.Text.Json;
 
-namespace LinuxFanControl.Gui.Utils
+namespace System.Text.Json
 {
-    /// <summary>
-    /// Convenience extensions to make System.Text.Json easier to use
-    /// without changing existing call sites.
-    /// </summary>
-    public static class JsonExtensions
+    public static class JsonElementExtensions
     {
+        /// <summary>
+        /// Enumerates elements if the value is an array; otherwise yields nothing.
+        /// Keeps existing call sites that expect an AsArray()-like API.
+        /// </summary>
         public static IEnumerable<JsonElement> AsArray(this JsonElement element)
         {
             if (element.ValueKind == JsonValueKind.Array)
@@ -18,12 +20,11 @@ namespace LinuxFanControl.Gui.Utils
                 foreach (var item in element.EnumerateArray())
                     yield return item;
             }
-            else
-            {
-                yield break;
-            }
         }
 
+        /// <summary>
+        /// Tries to get a property from an object JsonElement.
+        /// </summary>
         public static bool TryGet(this JsonElement obj, string propertyName, out JsonElement value)
         {
             if (obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(propertyName, out value))
@@ -55,7 +56,8 @@ namespace LinuxFanControl.Gui.Utils
             if (el.ValueKind == JsonValueKind.Number && el.TryGetInt32(out var v))
                 return v;
 
-            if (el.ValueKind == JsonValueKind.String && int.TryParse(el.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var i))
+            if (el.ValueKind == JsonValueKind.String &&
+                int.TryParse(el.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var i))
                 return i;
 
             return null;
@@ -65,8 +67,11 @@ namespace LinuxFanControl.Gui.Utils
         {
             if (el.ValueKind == JsonValueKind.True)  return true;
             if (el.ValueKind == JsonValueKind.False) return false;
-            if (el.ValueKind == JsonValueKind.String && bool.TryParse(el.GetString(), out var b))
+
+            if (el.ValueKind == JsonValueKind.String &&
+                bool.TryParse(el.GetString(), out var b))
                 return b;
+
             return null;
         }
     }

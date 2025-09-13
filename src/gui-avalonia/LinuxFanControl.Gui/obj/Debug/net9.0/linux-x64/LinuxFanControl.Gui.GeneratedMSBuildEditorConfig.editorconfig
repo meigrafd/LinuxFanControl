@@ -6,6 +6,7 @@ build_property.AvaloniaNameGeneratorFilterByPath = *
 build_property.AvaloniaNameGeneratorFilterByNamespace = *
 build_property.AvaloniaNameGeneratorViewFileNamingStrategy = NamespaceAndClassName
 build_property.AvaloniaNameGeneratorAttachDevTools = true
+build_property.MvvmToolkitEnableINotifyPropertyChangingSupport = true
 build_property.TargetFramework = net9.0
 build_property.TargetPlatformMinVersion = 
 build_property.UsingMicrosoftNETSdkWeb = 
@@ -22,6 +23,21 @@ build_property.EffectiveAnalysisLevelStyle = 9.0
 build_property.EnableCodeStyleSeverity = 
 
 [/mnt/Github/LinuxFanControl/src/gui-avalonia/LinuxFanControl.Gui/App.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[/mnt/Github/LinuxFanControl/src/gui-avalonia/LinuxFanControl.Gui/ViewModels/Dialogs/ImportDialog.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[/mnt/Github/LinuxFanControl/src/gui-avalonia/LinuxFanControl.Gui/ViewModels/Dialogs/SetupDialog.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[/mnt/Github/LinuxFanControl/src/gui-avalonia/LinuxFanControl.Gui/Views/Controls/FanTile.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[/mnt/Github/LinuxFanControl/src/gui-avalonia/LinuxFanControl.Gui/Views/DashboardView.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[/mnt/Github/LinuxFanControl/src/gui-avalonia/LinuxFanControl.Gui/Views/Editors/CurveEditorView.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
 [/mnt/Github/LinuxFanControl/src/gui-avalonia/LinuxFanControl.Gui/Views/MainWindow.axaml]
