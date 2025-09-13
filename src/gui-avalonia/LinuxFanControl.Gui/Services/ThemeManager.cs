@@ -1,105 +1,119 @@
-// (c) 2025 LinuxFanControl contributors. MIT License.
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.IO;
-using System.Linq;
 using System.Text.Json;
 using Avalonia;
-using Avalonia.Media;
+using Avalonia.Themes.Fluent;
 
 namespace LinuxFanControl.Gui.Services
 {
+    // Runtime theme manager:
+    // - Discovers Themes/*.json (e.g. "midnight.json", "light.json")
+    // - Each JSON may define { "name": "...", "variant": "dark"|"light" }
+    // - No compile-time references; new theme files are picked up automatically.
     public sealed class ThemeManager
     {
-        public sealed record ThemeInfo(string Id, string Name, bool IsDark, IReadOnlyDictionary<string, string> Palette);
-
         private static readonly Lazy<ThemeManager> _lazy = new(() => new ThemeManager());
         public static ThemeManager Instance => _lazy.Value;
 
-        private readonly List<ThemeInfo> _themes = new();
-        private ThemeInfo? _current;
+        private readonly List<(string Id, string DisplayName, string Path)> _available = new();
+        private string _currentId = "midnight";
 
-        public IReadOnlyList<ThemeInfo> Themes => _themes;
-        public ThemeInfo? Current => _current;
-
-        public static string ThemesRoot => Path.Combine(AppContext.BaseDirectory, "Themes");
-
-        // Resource keys you can bind in XAML: {DynamicResource LFC.BackgroundBrush}, etc.
-        private static readonly string[] KnownKeys = new[]
-        {
-            "Background","Panel","Card","Accent","AccentForeground","Text","SubtleText","Border","GraphLine","GraphFill"
-        };
+        public ReadOnlyCollection<(string Id, string DisplayName, string Path)> AvailableThemes => _available.AsReadOnly();
+        public string CurrentId => _currentId;
 
         private ThemeManager()
         {
-            Discover();
-            var (_, savedTheme) = LocalizationService.LoadGuiConfigOrDefault();
-            var pick = _themes.FirstOrDefault(t => t.Id == savedTheme) ?? _themes.FirstOrDefault();
-            if (pick is not null) Apply(pick);
+            ReloadAvailableThemes();
+            // default choose "midnight" when present, else first
+            if (!TryApply("midnight") && _available.Count > 0)
+                TryApply(_available[0].Id);
         }
 
-        public void Discover()
+        public void ReloadAvailableThemes()
         {
-            _themes.Clear();
-            if (!Directory.Exists(ThemesRoot)) return;
+            _available.Clear();
+            foreach (var (id, name, path) in DiscoverThemes())
+                _available.Add((id, name, path));
+        }
 
-            foreach (var file in Directory.EnumerateFiles(ThemesRoot, "*.json", SearchOption.TopDirectoryOnly))
+        public bool TryApply(string id)
+        {
+            var entry = _available.Find(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
+            if (entry.Path is null) return false;
+
+            try
             {
-                try
+                using var fs = File.OpenRead(entry.Path);
+                using var doc = JsonDocument.Parse(fs);
+                var name = doc.RootElement.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String
+                ? n.GetString() ?? id
+                : id;
+
+                var variant = doc.RootElement.TryGetProperty("variant", out var v) && v.ValueKind == JsonValueKind.String
+                ? v.GetString()?.Trim().ToLowerInvariant()
+                : "dark";
+
+                var app = Application.Current;
+                if (app is null) return false;
+
+                // Replace the base Fluent theme according to variant; colors from JSON can be extended later.
+                var fluent = new FluentTheme();
+                fluent.Mode = variant == "light" ? FluentThemeMode.Light : FluentThemeMode.Dark;
+
+                app.Styles.Clear();
+                app.Styles.Add(fluent);
+
+                _currentId = id;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static IEnumerable<(string Id, string Name, string Path)> DiscoverThemes()
+        {
+            foreach (var root in ProbeRoots("Themes"))
+            {
+                if (!Directory.Exists(root)) continue;
+                foreach (var file in Directory.EnumerateFiles(root, "*.json", SearchOption.TopDirectoryOnly))
                 {
-                    using var fs = File.OpenRead(file);
-                    using var doc = JsonDocument.Parse(fs);
-                    var root = doc.RootElement;
-
-                    var id = Path.GetFileNameWithoutExtension(file) ?? "theme";
-                    var name = root.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String
-                    ? n.GetString() ?? id : id;
-                    var isDark = root.TryGetProperty("dark", out var d) && (d.ValueKind is JsonValueKind.True or JsonValueKind.False)
-                    ? d.GetBoolean() : false;
-
-                    var palette = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                    if (root.TryGetProperty("palette", out var pal) && pal.ValueKind == JsonValueKind.Object)
+                    var id = Path.GetFileNameWithoutExtension(file); // e.g. "midnight"
+                    var display = id;
+                    try
                     {
-                        foreach (var kv in pal.EnumerateObject())
-                            if (kv.Value.ValueKind == JsonValueKind.String)
-                                palette[kv.Name] = kv.Value.GetString() ?? "";
+                        using var fs = File.OpenRead(file);
+                        using var doc = JsonDocument.Parse(fs);
+                        if (doc.RootElement.TryGetProperty("name", out var nameProp) && nameProp.ValueKind == JsonValueKind.String)
+                            display = nameProp.GetString() ?? id;
                     }
-
-                    _themes.Add(new ThemeInfo(id, name, isDark, palette));
+                    catch { /* ignore */ }
+                    yield return (id, display, file);
                 }
-                catch { /* ignore malformed theme */ }
             }
-
-            _themes.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
         }
 
-        public void Apply(ThemeInfo theme)
+        private static IEnumerable<string> ProbeRoots(string leafDir)
         {
-            var app = Application.Current ?? throw new InvalidOperationException("No Avalonia Application");
-            var res = app.Resources;
+            // 1) alongside executable (publish/run)
+            var baseDir = AppContext.BaseDirectory;
+            yield return Path.Combine(baseDir, leafDir);
 
-            // Set basic variant (optional)
-            app.RequestedThemeVariant = theme.IsDark ? Avalonia.Styling.ThemeVariant.Dark : Avalonia.Styling.ThemeVariant.Light;
-
-            // Apply palette as dynamic brushes/colors
-            foreach (var key in KnownKeys)
+            // 2) developer layout
+            var d = new DirectoryInfo(baseDir);
+            for (int i = 0; i < 6 && d != null; i++, d = d.Parent)
             {
-                var hex = theme.Palette.TryGetValue(key, out var v) ? v : null;
-                if (!string.IsNullOrWhiteSpace(hex) && Color.TryParse(hex, out var color))
-                {
-                    res[$"LFC.{key}Color"] = color;
-                    res[$"LFC.{key}Brush"] = new SolidColorBrush(color);
-                }
-                else
-                {
-                    // Remove if missing to fallback on defaults in XAML
-                    res.Remove($"LFC.{key}Color");
-                    res.Remove($"LFC.{key}Brush");
-                }
+                var cand = Path.Combine(d.FullName, "src", "gui-avalonia", "LinuxFanControl.Gui", leafDir);
+                if (Directory.Exists(cand)) { yield return cand; break; }
             }
 
-            _current = theme;
-            LocalizationService.SaveGuiConfig(language: null, themeId: theme.Id);
+            // 3) optional override via env
+            var overrideRoot = Environment.GetEnvironmentVariable("LFC_GUI_ASSETS_ROOT");
+            if (!string.IsNullOrWhiteSpace(overrideRoot))
+                yield return Path.Combine(overrideRoot, leafDir);
         }
     }
 }
