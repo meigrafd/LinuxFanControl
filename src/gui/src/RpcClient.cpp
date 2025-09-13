@@ -1,7 +1,11 @@
 /*
  * GUI side JSON-RPC client (spawns daemon) for lfc-gui.
  * (c) 2025 meigrafd & contributors - MIT
+ *
+ * Fix: Avoid GUI freeze by replacing QWaitCondition blocking with
+ *       an event-loop driven wait that pumps Qt events until responses arrive.
  */
+
 #include "RpcClient.h"
 
 #include <QJsonDocument>
@@ -10,6 +14,9 @@
 #include <QElapsedTimer>
 #include <QDir>
 #include <QDateTime>
+#include <QEventLoop>
+#include <QTimer>
+#include <QThread>
 
 static inline QString nowIso() {
     return QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
@@ -173,7 +180,6 @@ QPair<QJsonValue, QString> RpcClient::call(const QString& method,
                                                            if (env.contains("result") || env.contains("error")) {
                                                                pending_[id]    = env.value("result").isNull() ? env.value("error") : env.value("result");
                                                                pendingEnv_[id] = env;
-                                                               cond_.wakeAll();
                                                            }
                                                        } else {
                                                            const QJsonArray arr = jd.array();
@@ -185,7 +191,6 @@ QPair<QJsonValue, QString> RpcClient::call(const QString& method,
                                                                pending_[id]    = env.value("result").isNull() ? env.value("error") : env.value("result");
                                                                pendingEnv_[id] = env;
                                                            }
-                                                           cond_.wakeAll();
                                                        }
                                                    } else {
                                                        emit daemonLogLine(s);
@@ -202,44 +207,64 @@ QPair<QJsonValue, QString> RpcClient::call(const QString& method,
                                            }
 
                                            bool RpcClient::waitForId(const QString& id, QJsonValue* out, QString* err, int timeoutMs) {
-                                               QElapsedTimer t; t.start();
-                                               QMutexLocker lk(&mtx_);
-                                               while (!pending_.contains(id)) {
-                                                   const qint64 left = (timeoutMs < 0) ? 1000 : std::max<qint64>(1, timeoutMs - t.elapsed());
-                                                   if (!cond_.wait(&mtx_, left)) {
-                                                       if (timeoutMs >= 0 && t.elapsed() >= timeoutMs) {
-                                                           if (err) { *err = "timeout"; }
-                                                           return false;
+                                               QElapsedTimer timer; timer.start();
+                                               while (true) {
+                                                   {
+                                                       QMutexLocker lk(&mtx_);
+                                                       auto it = pending_.find(id);
+                                                       if (it != pending_.end()) {
+                                                           *out = it.value();
+                                                           pending_.erase(it);
+                                                           pendingEnv_.remove(id);
+                                                           return true;
                                                        }
                                                    }
+                                                   if (timeoutMs >= 0 && timer.elapsed() >= timeoutMs) {
+                                                       if (err) { *err = "timeout"; }
+                                                       return false;
+                                                   }
+                                                   if (proc_ && proc_->state() == QProcess::NotRunning) {
+                                                       if (err) { *err = "daemon exited"; }
+                                                       return false;
+                                                   }
+                                                   // Pump events for ~10ms so readyRead can fire on this thread.
+                                                   QEventLoop loop;
+                                                   QTimer::singleShot(10, &loop, &QEventLoop::quit);
+                                                   loop.exec(QEventLoop::AllEvents);
                                                }
-                                               *out = pending_.take(id);
-                                               pendingEnv_.remove(id);
-                                               return true;
                                            }
 
                                            bool RpcClient::waitForBatchIds(const QSet<QString>& ids, QJsonArray* out, QString* err, int timeoutMs) {
-                                               QElapsedTimer t; t.start();
-                                               QMutexLocker lk(&mtx_);
+                                               QElapsedTimer timer; timer.start();
                                                while (true) {
                                                    bool all = true;
-                                                   for (const QString& id : ids) if (!pendingEnv_.contains(id)) { all = false; break; }
-                                                   if (all) break;
-                                                   const qint64 left = (timeoutMs < 0) ? 1000 : std::max<qint64>(1, timeoutMs - t.elapsed());
-                                                   if (!cond_.wait(&mtx_, left)) {
-                                                       if (timeoutMs >= 0 && t.elapsed() >= timeoutMs) {
-                                                           if (err) { *err = "timeout"; }
-                                                           return false;
+                                                   {
+                                                       QMutexLocker lk(&mtx_);
+                                                       for (const QString& id : ids) {
+                                                           if (!pendingEnv_.contains(id)) { all = false; break; }
+                                                       }
+                                                       if (all) {
+                                                           QJsonArray arr;
+                                                           for (const QString& id : ids) {
+                                                               arr.push_back(pendingEnv_.take(id));
+                                                               pending_.remove(id);
+                                                           }
+                                                           *out = arr;
+                                                           return true;
                                                        }
                                                    }
+                                                   if (timeoutMs >= 0 && timer.elapsed() >= timeoutMs) {
+                                                       if (err) { *err = "timeout"; }
+                                                       return false;
+                                                   }
+                                                   if (proc_ && proc_->state() == QProcess::NotRunning) {
+                                                       if (err) { *err = "daemon exited"; }
+                                                       return false;
+                                                   }
+                                                   QEventLoop loop;
+                                                   QTimer::singleShot(10, &loop, &QEventLoop::quit);
+                                                   loop.exec(QEventLoop::AllEvents);
                                                }
-                                               QJsonArray arr;
-                                               for (const QString& id : ids) {
-                                                   arr.push_back(pendingEnv_.take(id));
-                                                   pending_.remove(id);
-                                               }
-                                               *out = arr;
-                                               return true;
                                            }
 
                                            // ---- convenience wrappers ----
