@@ -1,0 +1,20 @@
+<Window
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:Class="LinuxFanControl.Gui.Views.Dialogs.ImportDialog"
+    Width="640" Height="240"
+    Title="Import FanControl.Release config">
+  <Grid RowDefinitions="Auto,*,Auto" Margin="12">
+    <TextBlock Text="Import FanControl.Release configuration (JSON)" FontSize="16" FontWeight="SemiBold"/>
+    <StackPanel Grid.Row="1" Spacing="10" Margin="0,10,0,0">
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <TextBox Width="460" Text="{Binding SelectedPath}" IsReadOnly="True" />
+        <Button Content="Browse…" Click="OnBrowseClicked"/>
+      </StackPanel>
+      <TextBlock Text="{Binding Status}" />
+    </StackPanel>
+    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+      <Button Content="Close" Click="OnCloseClicked"/>
+    </StackPanel>
+  </Grid>
+</Window>

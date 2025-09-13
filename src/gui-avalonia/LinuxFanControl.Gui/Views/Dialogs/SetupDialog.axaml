@@ -1,0 +1,24 @@
+<Window
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:Class="LinuxFanControl.Gui.Views.Dialogs.SetupDialog"
+    Width="780" Height="520"
+    Title="Auto-Setup (Detect &amp; Calibrate)">
+  <Grid RowDefinitions="Auto,*,Auto" Margin="12">
+    <TextBlock Text="Auto-Setup (Detect &amp; Calibrate)" FontSize="18" FontWeight="SemiBold" />
+    <Border Grid.Row="1" Margin="0,10" BorderThickness="1" CornerRadius="6"
+            BorderBrush="#334" Background="#111827">
+      <ScrollViewer Margin="8">
+        <TextBlock Text="{Binding LogText}" FontFamily="Consolas, monospace" TextWrapping="Wrap"/>
+      </ScrollViewer>
+    </Border>
+    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+      <Button Content="Start" IsEnabled="{Binding IsRunning, Converter={x:Static BooleanInvertConverter.Instance}}"
+              Command="{Binding StartAsyncCommand}"/>
+      <Button Content="Cancel" IsEnabled="{Binding IsRunning}"
+              Command="{Binding CancelAsyncCommand}"/>
+      <Button Content="Close" IsEnabled="{Binding IsRunning, Converter={x:Static BooleanInvertConverter.Instance}}"
+              Command="{Binding CloseWindowCommand}"/>
+    </StackPanel>
+  </Grid>
+</Window>
