@@ -1,5 +1,11 @@
 {
-  "_name": "Deutsch",
-  "ui.title": "Linux Lüftersteuerung",
-  "ui.menu.setup": "Einrichtung"
+  "setup.title": "Einrichtung",
+  "setup.headline": "Erste Einrichtung",
+  "setup.theme": "Theme",
+  "setup.language": "Sprache",
+  "setup.run_detection": "Nach dem Schlie\u00dfen Erkennung & Kalibrierung starten",
+  "setup.import_fc": "FanControl-Konfiguration importieren",
+  "setup.import_hint": "(optional) Kurven/Trigger aus Windows FanControl importieren",
+  "common.cancel": "Abbrechen",
+  "common.apply": "\u00dcbernehmen"
 }

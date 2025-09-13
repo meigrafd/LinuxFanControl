@@ -1,24 +1,18 @@
 <UserControl
     x:Class="LinuxFanControl.Gui.Views.Controls.FanLogo"
     xmlns="https://github.com/avaloniaui"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-
-  <Viewbox Stretch="Uniform">
-    <!-- Rotating canvas (rotation driven in code-behind) -->
-    <Canvas x:Name="Rotor"
-            Width="24" Height="24"
-            RenderTransformOrigin="0.5,0.5">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Width="28" Height="28">
+  <Grid>
+    <Ellipse Width="28" Height="28" Fill="{DynamicResource FanLogo.Back}" />
+    <Canvas x:Name="Rotor" Width="24" Height="24" RenderTransformOrigin="0.5,0.5" HorizontalAlignment="Center" VerticalAlignment="Center">
       <Canvas.RenderTransform>
         <RotateTransform Angle="0"/>
       </Canvas.RenderTransform>
-
-      <!-- three blades -->
-      <Path Fill="#8EC8FF" Data="M12,2 L13,9 L11,9 Z" Opacity="0.85"/>
-      <Path Fill="#8EC8FF" Data="M22,12 L15,13 L15,11 Z" Opacity="0.85"/>
-      <Path Fill="#8EC8FF" Data="M12,22 L13,15 L11,15 Z" Opacity="0.85"/>
-
-      <!-- hub -->
-      <Ellipse Fill="#E6F0FF" Width="4" Height="4" Canvas.Left="10" Canvas.Top="10"/>
+      <Path Fill="{DynamicResource FanLogo.Blade}" Data="M12,0 L14,9 L10,9 Z" Opacity="0.95"/>
+      <Path Fill="{DynamicResource FanLogo.Blade}" Data="M24,12 L15,14 L15,10 Z" Opacity="0.95"/>
+      <Path Fill="{DynamicResource FanLogo.Blade}" Data="M12,24 L14,15 L10,15 Z" Opacity="0.95"/>
+      <Ellipse Width="6" Height="6" Canvas.Left="9" Canvas.Top="9" Fill="{DynamicResource FanLogo.Hub}" StrokeThickness="0"/>
     </Canvas>
-  </Viewbox>
+  </Grid>
 </UserControl>

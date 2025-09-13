@@ -1,56 +1,51 @@
 // (c) 2025 LinuxFanControl contributors. MIT License.
 using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text.Json;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media;
 
 namespace LinuxFanControl.Gui.Services
 {
-    public sealed class ThemeInfo
+    /// <summary>Loads theme JSON from Themes/{key}.json at runtime.</summary>
+    public sealed class ThemeService
     {
-        public string Id { get; init; } = "";
-        public string Name { get; init; } = "";
-        public string Path { get; init; } = "";
-        public override string ToString() => Name;
-    }
+        public static ThemeService Instance { get; } = new();
+        public string CurrentThemeKey { get; private set; } = "midnight";
+        private ThemeService() {}
 
-    public static class ThemeService
-    {
-        private static readonly string[] Keys =
+        public async Task ApplyAsync(string key)
         {
-            "LFC.BackgroundBrush","LFC.PanelBrush","LFC.CardBrush","LFC.TextBrush",
-            "LFC.SubtleTextBrush","LFC.AccentBrush","LFC.BorderBrush"
-        };
+            var baseDir = AppContext.BaseDirectory;
+            var path = Path.Combine(baseDir, "Themes", $"{key}.json");
+            if (!File.Exists(path)) throw new FileNotFoundException($"Theme not found: {path}");
 
-        public static IReadOnlyList<ThemeInfo> Enumerate()
-        {
-            var root = Path.Combine(AppContext.BaseDirectory, "Themes");
-            if (!Directory.Exists(root)) return Array.Empty<ThemeInfo>();
-            return Directory.EnumerateFiles(root, "*.json", SearchOption.TopDirectoryOnly)
-                .Select(p => new ThemeInfo
-                {
-                    Id = Path.GetFileNameWithoutExtension(p),
-                    Name = System.Globalization.CultureInfo.InvariantCulture.TextInfo.ToTitleCase(Path.GetFileNameWithoutExtension(p).Replace('_',' ').Replace('-',' ')),
-                    Path = p
-                })
-                .OrderBy(x => x.Name)
-                .ToArray();
-        }
+            using var s = File.OpenRead(path);
+            var json = await JsonDocument.ParseAsync(s);
+            var root = json.RootElement;
 
-        public static void Apply(ThemeInfo theme)
-        {
-            if (Application.Current is null) return;
-            if (!File.Exists(theme.Path)) return;
-            using var doc = JsonDocument.Parse(File.ReadAllText(theme.Path));
-            if (doc.RootElement.ValueKind != JsonValueKind.Object) return;
-            foreach (var k in Keys)
-            {
-                if (doc.RootElement.TryGetProperty(k, out var el) && el.ValueKind == JsonValueKind.String)
-                    Application.Current.Resources[k] = new SolidColorBrush(Color.Parse(el.GetString() ?? "#0F172A"));
-            }
+            void Set(string name, string hex) => Application.Current!.Resources[name] = SolidColorBrush.Parse(hex);
+
+            CurrentThemeKey = key;
+
+            Set("Foreground", root.GetProperty("Foreground").GetString()!);
+            Set("SubtleText", root.GetProperty("SubtleText").GetString()!);
+
+            Set("TileBg", root.GetProperty("TileBg").GetString()!);
+            Set("TileBorder", root.GetProperty("TileBorder").GetString()!);
+
+            Set("ButtonBg", root.GetProperty("ButtonBg").GetString()!);
+            Set("ButtonBgHover", root.GetProperty("ButtonBgHover").GetString()!);
+            Set("ButtonText", root.GetProperty("ButtonText").GetString()!);
+            Set("ButtonBorder", root.GetProperty("ButtonBorder").GetString()!);
+
+            Set("AccentBrush", root.GetProperty("AccentBrush").GetString()!);
+            Set("AccentBorder", root.GetProperty("AccentBorder").GetString()!);
+
+            Set("FanLogo.Back", root.GetProperty("FanLogoBack").GetString()!);
+            Set("FanLogo.Blade", root.GetProperty("FanLogoBlade").GetString()!);
+            Set("FanLogo.Hub", root.GetProperty("FanLogoHub").GetString()!);
         }
     }
 }

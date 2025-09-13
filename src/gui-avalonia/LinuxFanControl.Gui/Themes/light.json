@@ -1,9 +1,15 @@
 {
-  "LFC.BackgroundBrush": "#F5F7FB",
-  "LFC.PanelBrush": "#FFFFFF",
-  "LFC.CardBrush": "#FFFFFF",
-  "LFC.TextBrush": "#111827",
-  "LFC.SubtleTextBrush": "#6B7280",
-  "LFC.AccentBrush": "#2563EB",
-  "LFC.BorderBrush": "#E5E7EB"
+  "Foreground": "#101623",
+  "SubtleText": "#3B475C",
+  "TileBg": "#F5FAFF",
+  "TileBorder": "#D6E4F5",
+  "ButtonBg": "#E8F1FF",
+  "ButtonBgHover": "#DDEBFF",
+  "ButtonText": "#0E1626",
+  "ButtonBorder": "#C6D7F0",
+  "AccentBrush": "#2B6CB0",
+  "AccentBorder": "#224E83",
+  "FanLogoBack": "#E3F2FF",
+  "FanLogoBlade": "#2B6CB0",
+  "FanLogoHub": "#FFFFFF"
 }

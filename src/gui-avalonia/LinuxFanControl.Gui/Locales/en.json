@@ -1,5 +1,11 @@
 {
-  "_name": "English",
-  "ui.title": "Linux Fan Control",
-  "ui.menu.setup": "Setup"
+  "setup.title": "Setup",
+  "setup.headline": "Initial setup",
+  "setup.theme": "Theme",
+  "setup.language": "Language",
+  "setup.run_detection": "Run detection & calibration after closing",
+  "setup.import_fc": "Import FanControl config",
+  "setup.import_hint": "(optional) import curves/triggers from Windows FanControl",
+  "common.cancel": "Cancel",
+  "common.apply": "Apply"
 }
