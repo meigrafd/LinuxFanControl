@@ -1,35 +1,28 @@
 // (c) 2025 LinuxFanControl contributors. MIT License.
-
 using System.Threading.Tasks;
-using CommunityToolkit.Mvvm.ComponentModel;
+using Avalonia.Controls;
 using CommunityToolkit.Mvvm.Input;
 using LinuxFanControl.Gui.Views.Dialogs;
-using Avalonia;
 
 namespace LinuxFanControl.Gui.ViewModels
 {
-    public partial class MainWindowViewModel : ObservableObject
+    public partial class MainWindowViewModel
     {
         [RelayCommand]
-        private async Task Setup()
+        private async Task OpenSetupAsync(object? topLevel)
         {
-            // open non-blocking setup dialog
-            if (Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime life
-                && life.MainWindow is not null)
-            {
-                var dlg = new SetupDialog();
-                await dlg.RunAsync();
-            }
+            // topLevel should be a Window (MainWindow)
+            if (topLevel is not Window owner) return;
+            var dlg = new SetupDialog();
+            await dlg.ShowAsync(owner);
         }
 
         [RelayCommand]
-        private async Task Import()
+        private async Task OpenImportAsync(object? topLevel)
         {
-            if (Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime life
-                && life.MainWindow is not null)
-            {
-                await ImportDialog.ShowAsync(life.MainWindow);
-            }
+            if (topLevel is not Window owner) return;
+            var dlg = new ImportDialog();
+            await dlg.ShowAsync(owner);
         }
     }
 }

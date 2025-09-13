@@ -17,6 +17,7 @@ namespace LinuxFanControl.Gui.ViewModels.Dialogs
 
         public ImportDialogViewModel(Window window) => _window = window;
 
+        // Generates IAsyncRelayCommand OnFilePickedCommand
         [RelayCommand]
         public async Task OnFilePicked(string? path)
         {
@@ -31,7 +32,6 @@ namespace LinuxFanControl.Gui.ViewModels.Dialogs
             var result = await importer.TryImportAsync(path);
 
             Status = result.Success ? "Imported." : $"Failed: {result.Error}";
-            // Optional: merge into current config & save via ConfigService
         }
     }
 }
