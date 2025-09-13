@@ -4,29 +4,15 @@ using System.Linq;
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.Primitives;                // TemplatedControl
-using Avalonia.Markup.Xaml.MarkupExtensions;       // DynamicResourceExtension
+using Avalonia.Controls.Primitives;
+using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using Avalonia.Styling;
 
 namespace LinuxFanControl.Gui.Services
 {
     /// <summary>
-    /// Loads a simple JSON theme and applies brushes/colors to Application.Resources.
-    /// Themes live as plain JSON files in ./Themes (next to the executable) or repo-local during dev.
-    /// Example JSON:
-    /// {
-    ///   "name": "midnight",
-    ///   "colors": {
-    ///     "background": "#0E1A2B",
-    ///     "panel": "#14233A",
-    ///     "panelAlt": "#0B1626",
-    ///     "accent": "#3B82F6",
-    ///     "accent2": "#60A5FA",
-    ///     "text": "#E6EDF3",
-    ///     "textMuted": "#93A4B3"
-    ///   }
-    /// }
+    /// Load & apply simple JSON themes from ./Themes. No hardcoded csproj includes required.
     /// </summary>
     public static class ThemeManager
     {
@@ -56,7 +42,6 @@ namespace LinuxFanControl.Gui.Services
             string[] candidates = new[]
             {
                 Path.Combine(baseDir, name),
-                // dev-time (…/bin/Debug/net9.0/ → repo root)
                 Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", name)),
                 Path.GetFullPath(Path.Combine(baseDir, "..", "..", name)),
             };
@@ -65,16 +50,16 @@ namespace LinuxFanControl.Gui.Services
 
         public static string ThemesDir => ResolveDir("Themes");
 
-        /// <summary>Return available theme names (file names without .json), dynamic, no csproj hardcoding.</summary>
         public static string[] ListThemes()
         {
             try
             {
                 if (!Directory.Exists(ThemesDir)) return new[] { DefaultThemeName };
                 return Directory.EnumerateFiles(ThemesDir, "*.json")
-                .Select(Path.GetFileNameWithoutExtension)
+                .Select(p => Path.GetFileNameWithoutExtension(p))
                 .Where(n => !string.IsNullOrWhiteSpace(n))
-                .Distinct()
+                .Select(n => n!) // ensure non-null for nullable flow analysis
+                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
             }
@@ -100,7 +85,7 @@ namespace LinuxFanControl.Gui.Services
                 }
                 else
                 {
-                    spec = new ThemeSpec(); // fallback palette
+                    spec = new ThemeSpec();
                 }
                 Apply(spec);
                 CurrentTheme = string.IsNullOrWhiteSpace(spec.name) ? themeName : spec.name;
@@ -117,10 +102,8 @@ namespace LinuxFanControl.Gui.Services
         private static void Apply(ThemeSpec spec)
         {
             if (Application.Current is null) return;
-
             var res = Application.Current.Resources;
 
-            // Parse → Brushes
             var bBg      = new SolidColorBrush(Parse(spec.colors.background));
             var bPanel   = new SolidColorBrush(Parse(spec.colors.panel));
             var bPanel2  = new SolidColorBrush(Parse(spec.colors.panelAlt));
@@ -129,13 +112,11 @@ namespace LinuxFanControl.Gui.Services
             var bText    = new SolidColorBrush(Parse(spec.colors.text));
             var bText2   = new SolidColorBrush(Parse(spec.colors.textMuted));
 
-            // Common keys
             res["ThemeBackgroundBrush"]  = bBg;
             res["SystemAccentColor"]     = bAccent.Color;
             res["SystemAccentBrush"]     = bAccent;
             res["SystemAccentBrush2"]    = bAccent2;
 
-            // App keys (used by XAML)
             res["Lfc/Background"]        = bBg;
             res["Lfc/Panel"]             = bPanel;
             res["Lfc/PanelAlt"]          = bPanel2;
@@ -144,7 +125,6 @@ namespace LinuxFanControl.Gui.Services
             res["Lfc/Text"]              = bText;
             res["Lfc/TextMuted"]         = bText2;
 
-            // Reasonable defaults
             res["ControlBackground"]     = bPanel;
             res["ControlForeground"]     = bText;
             res["ButtonBackground"]      = bPanel2;

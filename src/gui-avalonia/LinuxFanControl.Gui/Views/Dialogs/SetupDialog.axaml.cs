@@ -1,5 +1,4 @@
 using Avalonia.Controls;
-using Avalonia.Interactivity;
 using LinuxFanControl.Gui.ViewModels.Dialogs;
 
 namespace LinuxFanControl.Gui.Views.Dialogs
@@ -12,19 +11,30 @@ namespace LinuxFanControl.Gui.Views.Dialogs
         public SetupDialog()
         {
             InitializeComponent();
+
             var vm = new SetupDialogViewModel();
             DataContext = vm;
 
-            this.FindControl<Button>("BtnApply").Click += (_, __) =>
+            var btnApply  = this.FindControl<Button>("BtnApply");
+            var btnCancel = this.FindControl<Button>("BtnCancel");
+
+            if (btnApply is not null)
             {
-                if (DataContext is SetupDialogViewModel m)
+                btnApply.Click += (_, __) =>
                 {
-                    ShouldRunDetection = m.RunDetection;
-                    ShouldRunCalibration = m.RunCalibration;
-                }
-                Close(true);
-            };
-            this.FindControl<Button>("BtnCancel").Click += (_, __) => Close(false);
+                    if (DataContext is SetupDialogViewModel m)
+                    {
+                        ShouldRunDetection  = m.RunDetection;
+                        ShouldRunCalibration = m.RunCalibration;
+                    }
+                    Close(true);
+                };
+            }
+
+            if (btnCancel is not null)
+            {
+                btnCancel.Click += (_, __) => Close(false);
+            }
         }
     }
 }
