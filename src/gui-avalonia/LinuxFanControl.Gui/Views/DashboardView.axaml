@@ -1,13 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <UserControl
-    x:Class="LinuxFanControl.Gui.Views.DashboardView"
-    xmlns="https://github.com/avaloniaui"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:views="clr-namespace:LinuxFanControl.Gui.Views.Controls">
+  x:Class="LinuxFanControl.Gui.Views.DashboardView"
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:views="clr-namespace:LinuxFanControl.Gui.Views.Controls">
 
-  <!-- Top area: fan tiles in a responsive WrapPanel -->
+  <!-- The ItemsControl is named "TileBoard" so code-behind can hook DnD handlers -->
   <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-    <ItemsControl ItemsSource="{Binding FanTiles}">
+    <ItemsControl x:Name="TileBoard"
+                  ItemsSource="{Binding FanTiles}"
+                  AllowDrop="True">
       <ItemsControl.ItemsPanel>
         <ItemsPanelTemplate>
           <WrapPanel />
@@ -15,6 +17,7 @@
       </ItemsControl.ItemsPanel>
       <ItemsControl.ItemTemplate>
         <DataTemplate>
+          <!-- Each tile is a control; DnD is handled centrally in code-behind -->
           <views:FanTile/>
         </DataTemplate>
       </ItemsControl.ItemTemplate>
