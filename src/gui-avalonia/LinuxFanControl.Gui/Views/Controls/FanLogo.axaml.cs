@@ -1,5 +1,6 @@
 // (c) 2025 LinuxFanControl contributors. MIT License.
 using System;
+using Avalonia;               // <-- needed for VisualTreeAttachmentEventArgs
 using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Threading;
@@ -29,7 +30,7 @@ namespace LinuxFanControl.Gui.Views.Controls
 
         private void TickRotate()
         {
-            // 360° per 1.2s -> 300°/s -> 5° per 16ms tick approx.
+            // 360° per 1.2s -> 300°/s -> ~5° per 16ms tick.
             _angleDeg += 360.0 * (_timer.Interval.TotalSeconds / 1.2);
             if (_angleDeg >= 360.0) _angleDeg -= 360.0;
 
