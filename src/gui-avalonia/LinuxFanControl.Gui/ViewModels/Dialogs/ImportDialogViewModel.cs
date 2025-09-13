@@ -1,7 +1,5 @@
 // (c) 2025 LinuxFanControl contributors. MIT License.
-// Drives the FanControl.Release import dialog.
-
-using System.Collections.ObjectModel;
+using System.IO;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -11,33 +9,22 @@ namespace LinuxFanControl.Gui.ViewModels.Dialogs
 {
     public partial class ImportDialogViewModel : ObservableObject
     {
-        [ObservableProperty] private string? filePath;
-        [ObservableProperty] private bool canImport;
-        public ObservableCollection<string> Warnings { get; } = new();
-
-        [ObservableProperty] private bool importDone;
-        [ObservableProperty] private string resultText = "";
+        [ObservableProperty] private string? selectedPath;
+        [ObservableProperty] private string status = "";
 
         [RelayCommand]
-        private void OnFilePicked(string? path)
+        private async Task OnFilePickedAsync(string? path)
         {
-            FilePath = path;
-            CanImport = !string.IsNullOrWhiteSpace(FilePath);
-            ImportDone = false;
-            Warnings.Clear();
-            ResultText = "";
-        }
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            {
+                Status = "No file selected.";
+                return;
+            }
 
-        [RelayCommand]
-        public async Task DoImportAsync()
-        {
-            if (string.IsNullOrWhiteSpace(FilePath)) return;
-            var result = await FanControlImporter.ImportAsync(FilePath);
-            foreach (var w in result.Warnings) Warnings.Add(w);
-
-            await ConfigService.SaveAsync(result.Config);
-            ImportDone = true;
-            ResultText = $"Imported profile(s): {result.Config.Profiles.Length}. Saved to: {ConfigService.GetConfigPath()}";
+            SelectedPath = path;
+            var importer = new FanControlImporter();
+            var result = await importer.TryImportAsync(path);
+            Status = result.Success ? "Imported." : "Failed to import.";
         }
     }
 }

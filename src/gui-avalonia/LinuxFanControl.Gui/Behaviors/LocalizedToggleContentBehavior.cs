@@ -1,92 +1,57 @@
 // (c) 2025 LinuxFanControl contributors. MIT License.
+using System;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Interactivity;
+using Avalonia.VisualTree;
+using Avalonia.Xaml.Interactivity;
 using LinuxFanControl.Gui.Services;
-using System;
 
 namespace LinuxFanControl.Gui.Behaviors
 {
     /// <summary>
-    /// Binds a ContentControl's Content to a localized key that depends on a boolean state
-    /// without hardcoding strings in code. Usage in XAML:
-    ///
-    ///   <Button
-    ///     behaviors:LocalizedToggleContentBehavior.State="{Binding IsDarkTheme}"
-    ///     behaviors:LocalizedToggleContentBehavior.KeyWhenTrue="ui.theme.light"
-    ///     behaviors:LocalizedToggleContentBehavior.KeyWhenFalse="ui.theme.dark" />
-    ///
-    /// Here, when State==true (dark active), the button shows the action "Light" (switch to light).
-    /// Keys live only in XAML, not code.
+    /// Sets ToggleSwitch content based on localization keys. Avoids deprecated TopLevel.TopLevelInstances API.
     /// </summary>
-    public static class LocalizedToggleContentBehavior
+    public sealed class LocalizedToggleContentBehavior : Behavior<ToggleSwitch>
     {
-        public static readonly AttachedProperty<bool> StateProperty =
-        AvaloniaProperty.RegisterAttached<ContentControl, bool>(
-            "State", typeof(LocalizedToggleContentBehavior));
+        public static readonly StyledProperty<string?> OnKeyProperty =
+        AvaloniaProperty.Register<LocalizedToggleContentBehavior, string?>(nameof(OnKey));
 
-        public static readonly AttachedProperty<string?> KeyWhenTrueProperty =
-        AvaloniaProperty.RegisterAttached<ContentControl, string?>(
-            "KeyWhenTrue", typeof(LocalizedToggleContentBehavior));
+        public static readonly StyledProperty<string?> OffKeyProperty =
+        AvaloniaProperty.Register<LocalizedToggleContentBehavior, string?>(nameof(OffKey));
 
-        public static readonly AttachedProperty<string?> KeyWhenFalseProperty =
-        AvaloniaProperty.RegisterAttached<ContentControl, string?>(
-            "KeyWhenFalse", typeof(LocalizedToggleContentBehavior));
+        public string? OnKey { get => GetValue(OnKeyProperty); set => SetValue(OnKeyProperty, value); }
+        public string? OffKey { get => GetValue(OffKeyProperty); set => SetValue(OffKeyProperty, value); }
 
-        static LocalizedToggleContentBehavior()
+        protected override void OnAttached()
         {
-            StateProperty.Changed.AddClassHandler<ContentControl>((ctrl, e) => Update(ctrl));
-            KeyWhenTrueProperty.Changed.AddClassHandler<ContentControl>((ctrl, e) => Update(ctrl));
-            KeyWhenFalseProperty.Changed.AddClassHandler<ContentControl>((ctrl, e) => Update(ctrl));
+            base.OnAttached();
+            if (AssociatedObject is null) return;
 
-            // update on language change
-            LocalizationService.Instance.LanguageChanged += (_, __) =>
-            {
-                // Brute-force: update all open windows' content controls that use attached props
-                foreach (var w in TopLevel.TopLevelInstances)
-                {
-                    if (w is not null)
-                        Walk(w);
-                }
-            };
+            AssociatedObject.AttachedToVisualTree += OnLoaded;
+            AssociatedObject.IsCheckedChanged += OnCheckedChanged;
         }
 
-        private static void Walk(Visual? v)
+        protected override void OnDetaching()
         {
-            if (v is null) return;
-            if (v is ContentControl cc &&
-                (cc.IsSet(StateProperty) || cc.IsSet(KeyWhenTrueProperty) || cc.IsSet(KeyWhenFalseProperty)))
+            if (AssociatedObject is not null)
             {
-                Update(cc);
+                AssociatedObject.AttachedToVisualTree -= OnLoaded;
+                AssociatedObject.IsCheckedChanged -= OnCheckedChanged;
             }
-
-            if (v is Panel pnl)
-            {
-                foreach (var c in pnl.Children) Walk(c);
-            }
-            else if (v is ContentControl c2 && c2.Content is Visual cv)
-            {
-                Walk(cv);
-            }
+            base.OnDetaching();
         }
 
-        public static bool GetState(ContentControl d) => d.GetValue(StateProperty);
-        public static void SetState(ContentControl d, bool value) => d.SetValue(StateProperty, value);
+        private void OnLoaded(object? s, VisualTreeAttachmentEventArgs e) => UpdateLabel();
+        private void OnCheckedChanged(object? s, RoutedEventArgs e) => UpdateLabel();
 
-        public static string? GetKeyWhenTrue(ContentControl d) => d.GetValue(KeyWhenTrueProperty);
-        public static void SetKeyWhenTrue(ContentControl d, string? value) => d.SetValue(KeyWhenTrueProperty, value);
-
-        public static string? GetKeyWhenFalse(ContentControl d) => d.GetValue(KeyWhenFalseProperty);
-        public static void SetKeyWhenFalse(ContentControl d, string? value) => d.SetValue(KeyWhenFalseProperty, value);
-
-        private static void Update(ContentControl ctrl)
+        private void UpdateLabel()
         {
-            try
-            {
-                var state = GetState(ctrl);
-                var key = state ? GetKeyWhenTrue(ctrl) : GetKeyWhenFalse(ctrl);
-                ctrl.Content = key is null ? null : LocalizationProvider.Instance[key];
-            }
-            catch { /* ignore */ }
+            if (AssociatedObject is null) return;
+            var loc = LocalizationProvider.Instance;
+
+            var key = AssociatedObject.IsChecked == true ? OnKey : OffKey;
+            AssociatedObject.Content = key is null ? string.Empty : loc[key];
         }
     }
 }
