@@ -1,107 +1,95 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Globalization;
 using System.IO;
 using System.Text.Json;
 
 namespace LinuxFanControl.Gui.Services
 {
-    // Simple runtime localization service:
-    // - Discovers all *.json files under Locales/
-    // - Each file is a flat key->string map: { "menu.setup": "Setup", ... }
-    // - No hardcoded languages; new files appear automatically without rebuild.
-    public sealed class LocalizationService
+    /// <summary>
+    /// Loads UI strings from external JSON files (Locales/{lang}.json). No hardcoding.
+    /// Also persists GUI preferences (language, theme) in ~/.config/LinuxFanControl/gui.json.
+    /// </summary>
+    public static class LocalizationService
     {
-        private static readonly Lazy<LocalizationService> _lazy = new(() => new LocalizationService());
-        public static LocalizationService Instance => _lazy.Value;
+        private static readonly Dictionary<string, string> _strings = new(StringComparer.OrdinalIgnoreCase);
 
-        private readonly Dictionary<string, string> _strings = new(StringComparer.OrdinalIgnoreCase);
-        private readonly List<(string Id, string DisplayName, string Path)> _available = new();
-        private string _currentId = "en";
+        public static string DefaultLanguage => "en";
 
-        public ReadOnlyCollection<(string Id, string DisplayName, string Path)> AvailableLocales => _available.AsReadOnly();
-        public string CurrentId => _currentId;
+        private static string LocalesRoot
+        => Environment.GetEnvironmentVariable("LFC_LOCALES_DIR")
+        ?? Path.Combine(AppContext.BaseDirectory, "Locales");
 
-        private LocalizationService()
+        private static string ConfigPath
+        => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                        ".config", "LinuxFanControl", "gui.json");
+
+        public static IReadOnlyList<string> ListLanguages()
         {
-            ReloadAvailableLocales();
-            // Pick default by system culture if available, else "en"
-            var sys = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
-            if (!TrySetLocale(sys)) TrySetLocale("en");
+            var list = new List<string>();
+            if (Directory.Exists(LocalesRoot))
+            {
+                foreach (var f in Directory.EnumerateFiles(LocalesRoot, "*.json"))
+                    list.Add(Path.GetFileNameWithoutExtension(f));
+            }
+            if (list.Count == 0) list.Add(DefaultLanguage);
+            return new ReadOnlyCollection<string>(list);
         }
 
-        public void ReloadAvailableLocales()
+        public static void SetLanguage(string language)
         {
-            _available.Clear();
-            foreach (var (id, name, path) in DiscoverLocales())
-                _available.Add((id, name, path));
+            var file = Path.Combine(LocalesRoot, $"{language}.json");
+            _strings.Clear();
+            if (File.Exists(file))
+            {
+                var json = File.ReadAllText(file);
+                var doc = JsonDocument.Parse(json);
+                foreach (var kv in doc.RootElement.EnumerateObject())
+                    _strings[kv.Name] = kv.Value.GetString() ?? string.Empty;
+            }
+            else
+            {
+                // minimal fallback
+                _strings["ui.ok"] = "OK";
+                _strings["ui.cancel"] = "Cancel";
+            }
         }
 
-        public bool TrySetLocale(string id)
+        public static string GetString(string key)
+        => _strings.TryGetValue(key, out var value) ? value : key;
+
+        public static (string language, string theme) LoadGuiConfigOrDefault()
         {
-            var entry = _available.Find(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
-            if (entry.Path is null) return false;
             try
             {
-                var txt = File.ReadAllText(entry.Path);
-                var doc = JsonSerializer.Deserialize<Dictionary<string, string>>(txt) ?? new();
-                _strings.Clear();
-                foreach (var kv in doc)
-                    _strings[kv.Key] = kv.Value ?? string.Empty;
-                _currentId = entry.Id;
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        public string T(string key, string? fallback = null)
-        => _strings.TryGetValue(key, out var v) ? v : (fallback ?? key);
-
-        private static IEnumerable<(string Id, string Name, string Path)> DiscoverLocales()
-        {
-            foreach (var root in ProbeRoots("Locales"))
-            {
-                if (!Directory.Exists(root)) continue;
-                foreach (var file in Directory.EnumerateFiles(root, "*.json", SearchOption.TopDirectoryOnly))
+                if (File.Exists(ConfigPath))
                 {
-                    var id = Path.GetFileNameWithoutExtension(file); // e.g. "en", "de"
-                    var display = id;
-                    try
-                    {
-                        using var fs = File.OpenRead(file);
-                        using var doc = JsonDocument.Parse(fs);
-                        if (doc.RootElement.TryGetProperty("__name", out var nameProp) && nameProp.ValueKind == JsonValueKind.String)
-                            display = nameProp.GetString() ?? id;
-                    }
-                    catch { /* ignore */ }
-                    yield return (id, display, file);
+                    var json = File.ReadAllText(ConfigPath);
+                    var doc = JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+                    var lang = root.TryGetProperty("language", out var l) ? l.GetString() ?? DefaultLanguage : DefaultLanguage;
+                    var theme = root.TryGetProperty("theme", out var t) ? t.GetString() ?? ThemeManager.DefaultTheme : ThemeManager.DefaultTheme;
+                    SetLanguage(lang);
+                    return (lang, theme);
                 }
             }
+            catch { /* ignore */ }
+
+            SetLanguage(DefaultLanguage);
+            return (DefaultLanguage, ThemeManager.DefaultTheme);
         }
 
-        private static IEnumerable<string> ProbeRoots(string leafDir)
+        public static void SaveGuiConfig(string language, string theme)
         {
-            // 1) alongside executable (publish/run)
-            var baseDir = AppContext.BaseDirectory;
-            yield return Path.Combine(baseDir, leafDir);
-
-            // 2) developer layout: project root (when running from bin/Debug|Release)
-            // Walk up a few levels looking for the project dir that contains this leaf
-            var d = new DirectoryInfo(baseDir);
-            for (int i = 0; i < 6 && d != null; i++, d = d.Parent)
+            try
             {
-                var cand = Path.Combine(d.FullName, "src", "gui-avalonia", "LinuxFanControl.Gui", leafDir);
-                if (Directory.Exists(cand)) { yield return cand; break; }
+                var dir = Path.GetDirectoryName(ConfigPath)!;
+                Directory.CreateDirectory(dir);
+                var payload = new { language, theme };
+                var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(ConfigPath, json);
             }
-
-            // 3) optional override via env
-            var overrideRoot = Environment.GetEnvironmentVariable("LFC_GUI_ASSETS_ROOT");
-            if (!string.IsNullOrWhiteSpace(overrideRoot))
-                yield return Path.Combine(overrideRoot, leafDir);
+            catch { /* ignore */ }
         }
     }
 }

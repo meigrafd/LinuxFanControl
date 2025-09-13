@@ -1,23 +1,21 @@
-using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 using LinuxFanControl.Gui.Services;
 
 namespace LinuxFanControl.Gui.ViewModels.Dialogs
 {
     /// <summary>
-    /// ViewModel for the initial setup dialog (theme, language, detection calibration option).
-    /// No ReactiveUI required; plain INotifyPropertyChanged for robust bindings.
+    /// ViewModel for the initial Setup dialog: language, theme, and optional detection toggle.
+    /// Plain INotifyPropertyChanged to avoid extra package dependencies.
     /// </summary>
     public class SetupDialogViewModel : INotifyPropertyChanged
     {
+        public event PropertyChangedEventHandler? PropertyChanged;
+
         private string? _selectedLanguage;
         private string? _selectedTheme;
         private bool _runDetection;
-
-        public event PropertyChangedEventHandler? PropertyChanged;
 
         public ObservableCollection<string> AvailableLanguages { get; } = new();
         public ObservableCollection<string> AvailableThemes { get; } = new();
@@ -27,11 +25,8 @@ namespace LinuxFanControl.Gui.ViewModels.Dialogs
             get => _selectedLanguage;
             set
             {
-                if (SetField(ref _selectedLanguage, value))
-                {
-                    if (!string.IsNullOrWhiteSpace(value))
-                        LocalizationService.SetLanguage(value!); // apply immediately
-                }
+                if (SetField(ref _selectedLanguage, value) && !string.IsNullOrWhiteSpace(value))
+                    LocalizationService.SetLanguage(value!);
             }
         }
 
@@ -40,11 +35,8 @@ namespace LinuxFanControl.Gui.ViewModels.Dialogs
             get => _selectedTheme;
             set
             {
-                if (SetField(ref _selectedTheme, value))
-                {
-                    if (!string.IsNullOrWhiteSpace(value))
-                        ThemeManager.ApplyTheme(value!); // apply immediately
-                }
+                if (SetField(ref _selectedTheme, value) && !string.IsNullOrWhiteSpace(value))
+                    ThemeManager.ApplyTheme(value!);
             }
         }
 
@@ -56,22 +48,19 @@ namespace LinuxFanControl.Gui.ViewModels.Dialogs
 
         public SetupDialogViewModel()
         {
-            // Populate from services (dynamic discovery, no hardcoding)
-            var langs = LocalizationService.ListLanguages();
+            // dynamic discovery (no hardcoding)
             AvailableLanguages.Clear();
-            foreach (var l in langs) AvailableLanguages.Add(l);
+            foreach (var l in LocalizationService.ListLanguages())
+                AvailableLanguages.Add(l);
 
-            var themes = ThemeManager.ListThemes();
             AvailableThemes.Clear();
-            foreach (var t in themes) AvailableThemes.Add(t);
+            foreach (var t in ThemeManager.ListThemes())
+                AvailableThemes.Add(t);
 
-            // Defaults from persisted GUI config (if any)
             var (lang, theme) = LocalizationService.LoadGuiConfigOrDefault();
             _selectedLanguage = lang;
             _selectedTheme = theme;
-
-            // Sensible default: do not auto-run detection unless user opts in
-            _runDetection = false;
+            _runDetection = false; // explicit opt-in
         }
 
         public void SavePreferences()
@@ -81,12 +70,11 @@ namespace LinuxFanControl.Gui.ViewModels.Dialogs
             LocalizationService.SaveGuiConfig(lang, theme);
         }
 
-        protected bool SetField<T>(ref T field, T value, [CallerMemberName] string? prop = null)
+        private bool SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)
         {
-            if (RuntimeHelpers.Equals(field, value))
-                return false;
+            if (Equals(field, value)) return false;
             field = value;
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(prop));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
             return true;
         }
     }
