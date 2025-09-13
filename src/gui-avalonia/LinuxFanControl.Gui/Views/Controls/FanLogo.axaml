@@ -3,16 +3,18 @@
     xmlns="https://github.com/avaloniaui"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-  <!-- Style-based animation (Avalonia 11): animate the element named 'rotor' -->
+  <!-- Style-based animation (Avalonia 11):
+       Animiert die RenderTransform per TransformOperations-String (rotate()),
+       statt Untereigenschaften wie RotateTransform.Angle zu setzen. -->
   <UserControl.Styles>
-    <Style Selector="Canvas#rotor">
+    <Style Selector="#rotor">
       <Style.Animations>
         <Animation Duration="0:0:1.2" IterationCount="Infinite">
           <KeyFrame Cue="0%">
-            <Setter Property="RenderTransform.(RotateTransform.Angle)" Value="0"/>
+            <Setter Property="RenderTransform" Value="rotate(0deg)"/>
           </KeyFrame>
           <KeyFrame Cue="100%">
-            <Setter Property="RenderTransform.(RotateTransform.Angle)" Value="360"/>
+            <Setter Property="RenderTransform" Value="rotate(360deg)"/>
           </KeyFrame>
         </Animation>
       </Style.Animations>
@@ -20,19 +22,17 @@
   </UserControl.Styles>
 
   <Viewbox Stretch="Uniform">
-    <!-- Rotating canvas -->
+    <!-- Rotierendes Icon -->
     <Canvas x:Name="rotor"
             Width="24" Height="24"
             RenderTransformOrigin="0.5,0.5">
-      <Canvas.RenderTransform>
-        <RotateTransform Angle="0"/>
-      </Canvas.RenderTransform>
 
-      <!-- three blades -->
+      <!-- drei Rotorblätter -->
       <Path Fill="#8EC8FF" Data="M12,2 L13,9 L11,9 Z" Opacity="0.85"/>
       <Path Fill="#8EC8FF" Data="M22,12 L15,13 L15,11 Z" Opacity="0.85"/>
       <Path Fill="#8EC8FF" Data="M12,22 L13,15 L11,15 Z" Opacity="0.85"/>
-      <!-- hub -->
+
+      <!-- Nabe -->
       <Ellipse Fill="#E6F0FF" Width="4" Height="4" Canvas.Left="10" Canvas.Top="10"/>
     </Canvas>
   </Viewbox>
