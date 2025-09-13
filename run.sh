@@ -9,7 +9,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="/tmp"
-DAEMON="${LFC_DAEMON:-${ROOT}/build/lfcd}"
+DAEMON="${LFC_DAEMON:-${ROOT}/build/src/daemon/lfcd}"
 DAEMON_ARGS="${LFC_DAEMON_ARGS:-}"
 GUI_DIR="${ROOT}/src/gui-avalonia/LinuxFanControl.Gui"
 GUI_CMD="dotnet run -c Debug"
