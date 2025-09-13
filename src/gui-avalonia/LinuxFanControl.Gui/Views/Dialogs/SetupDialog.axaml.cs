@@ -11,13 +11,13 @@ namespace LinuxFanControl.Gui.Views.Dialogs
         public SetupDialog()
         {
             InitializeComponent();
-            // IMPORTANT: pass the Window to the VM constructor
+            // Pass the owning window into the ViewModel (required by its ctor)
             DataContext ??= new SetupDialogViewModel(this);
         }
 
         private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
 
-        // Helper for code that expects dialog.ShowAsync(owner)
+        // Convenience wrapper: await dlg.ShowAsync(owner)
         public Task ShowAsync(Window owner) => this.ShowDialog(owner);
     }
 }

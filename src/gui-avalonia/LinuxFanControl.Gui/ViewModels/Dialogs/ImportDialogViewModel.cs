@@ -8,7 +8,7 @@ using LinuxFanControl.Gui.Services;
 
 namespace LinuxFanControl.Gui.ViewModels.Dialogs
 {
-    public partial class ImportDialogViewModel : ObservableObject
+    public sealed partial class ImportDialogViewModel : ObservableObject
     {
         private readonly Window _window;
 
@@ -30,7 +30,6 @@ namespace LinuxFanControl.Gui.ViewModels.Dialogs
             SelectedPath = path;
             var importer = new FanControlImporter();
             var result = await importer.TryImportAsync(path);
-
             Status = result.Success ? "Imported." : $"Failed: {result.Error}";
         }
     }

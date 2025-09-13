@@ -18,7 +18,6 @@ namespace LinuxFanControl.Gui.Views.Dialogs
 
         private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
 
-        // Helper for callers expecting dialog.ShowAsync(owner)
         public Task ShowAsync(Window owner) => this.ShowDialog(owner);
 
         private async void OnBrowseClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)

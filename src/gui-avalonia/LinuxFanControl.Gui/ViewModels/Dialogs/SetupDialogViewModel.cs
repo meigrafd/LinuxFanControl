@@ -1,6 +1,4 @@
 // (c) 2025 LinuxFanControl contributors. MIT License.
-// Purpose: ViewModel for Auto-Setup dialog (detect + calibrate). Single definition to avoid MVVMTK duplicates.
-
 using System;
 using System.Threading;
 using System.Threading.Tasks;
