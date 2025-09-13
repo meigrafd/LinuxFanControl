@@ -2,19 +2,50 @@
     x:Class="LinuxFanControl.Gui.Views.DashboardView"
     xmlns="https://github.com/avaloniaui"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:views="clr-namespace:LinuxFanControl.Gui.Views.Controls">
-  <ScrollViewer>
-    <ItemsControl ItemsSource="{Binding Fans}">
-      <ItemsControl.ItemsPanel>
-        <ItemsPanelTemplate>
-          <WrapPanel ItemWidth="360" ItemHeight="180"/>
-        </ItemsPanelTemplate>
-      </ItemsControl.ItemsPanel>
-      <ItemsControl.ItemTemplate>
-        <DataTemplate>
-          <views:FanTile/>
-        </DataTemplate>
-      </ItemsControl.ItemTemplate>
-    </ItemsControl>
-  </ScrollViewer>
+    xmlns:controls="clr-namespace:LinuxFanControl.Gui.Views.Controls">
+  <Grid RowDefinitions="Auto,*,Auto" Margin="12">
+    <!-- Section header -->
+    <TextBlock Grid.Row="0" Text="Dashboard" Foreground="#E6F0FF"
+               FontSize="14" FontWeight="SemiBold" Margin="0,4,0,8"/>
+
+    <!-- Tiles -->
+    <Grid Grid.Row="1">
+      <!-- When there are tiles -->
+      <ItemsControl Items="{Binding FanTiles}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <WrapPanel Orientation="Horizontal" ItemWidth="320" ItemHeight="180" />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <controls:FanTile DataContext="{Binding}" Margin="8"/>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+
+      <!-- Placeholder when empty -->
+      <TextBlock Text="No channels configured — click Setup"
+                 Foreground="#94A3B8" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <TextBlock.Styles>
+          <Style Selector="TextBlock">
+            <Style.Triggers>
+              <DataTrigger Binding="{Binding FanTiles.Count}" Value="0">
+                <Setter Property="IsVisible" Value="True"/>
+              </DataTrigger>
+              <DataTrigger Binding="{Binding FanTiles.Count}" Value="1">
+                <Setter Property="IsVisible" Value="False"/>
+              </DataTrigger>
+              <DataTrigger Binding="{Binding FanTiles.Count}" Value="2">
+                <Setter Property="IsVisible" Value="False"/>
+              </DataTrigger>
+            </Style.Triggers>
+          </Style>
+        </TextBlock.Styles>
+      </TextBlock>
+    </Grid>
+
+    <!-- Status line -->
+    <TextBlock Grid.Row="2" Text="{Binding StatusMessage}" Foreground="#94A3B8" Margin="2,8,2,0"/>
+  </Grid>
 </UserControl>

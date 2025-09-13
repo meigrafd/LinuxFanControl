@@ -1,42 +1,35 @@
 // (c) 2025 LinuxFanControl contributors. MIT License.
-using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using LiveChartsCore;
 using LiveChartsCore.SkiaSharpView;
-using LinuxFanControl.Gui.Services;
 
 namespace LinuxFanControl.Gui.ViewModels
 {
     public partial class FanTileViewModel : ObservableObject
     {
-        private const int HistoryCapacity = 60;
-        private readonly ObservableCollection<double> _history = new();
-
-        [ObservableProperty] private string id = "";
-        [ObservableProperty] private string name = "";
-        [ObservableProperty] private string sensor = "";
-        [ObservableProperty] private string mode = "Auto";
-        [ObservableProperty] private int dutyPercent;
+        [ObservableProperty] private string title;
         [ObservableProperty] private int rpm;
-        [ObservableProperty] private double tempC;
+        [ObservableProperty] private int pwmDuty;
+        [ObservableProperty] private string temperature;
 
-        public ISeries[] SparkSeries { get; }
+        public ISeries[] Series { get; }
 
-        public FanTileViewModel(string id)
+        public FanTileViewModel(string title, int rpm, int pwmDuty, string temperature)
         {
-            this.id = id;
-            SparkSeries = new ISeries[]
+            this.title = title;
+            this.rpm = rpm;
+            this.pwmDuty = pwmDuty;
+            this.temperature = temperature;
+
+            // Simple sparkline series (dummy values)
+            Series = new ISeries[]
             {
-                new LineSeries<double> { Values = _history, GeometrySize = 0, Fill = null, LineSmoothness = 0 }
+                new LineSeries<double> { Values = new double[] { 30, 32, 31, 33, 34, 35 } }
             };
         }
 
-        public void UpdateFrom(FanSnapshot f)
-        {
-            Name = f.Name; Sensor = f.Sensor; Mode = f.Mode;
-            DutyPercent = f.DutyPercent; Rpm = f.Rpm; TempC = f.TempC;
-            _history.Add(f.TempC);
-            while (_history.Count > HistoryCapacity) _history.RemoveAt(0);
-        }
+        [RelayCommand] private void Edit() { /* open editor dialog */ }
+        [RelayCommand] private void Remove() { /* remove from dashboard */ }
     }
 }

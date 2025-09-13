@@ -1,11 +1,13 @@
+// (c) 2025 LinuxFanControl contributors. MIT License.
 using Avalonia.Controls;
-using Avalonia.Markup.Xaml;
 
 namespace LinuxFanControl.Gui.Views
 {
     public partial class MainWindow : Window
     {
-        public MainWindow() { InitializeComponent(); }
-        private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
+        public MainWindow()
+        {
+            InitializeComponent();
+        }
     }
 }

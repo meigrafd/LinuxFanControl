@@ -3,25 +3,28 @@
   xmlns="https://github.com/avaloniaui"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
   xmlns:views="clr-namespace:LinuxFanControl.Gui.Views"
-  Width="1280" Height="800"
-  Title="Linux Fan Control">
-  <DockPanel>
+  Title="Linux Fan Control"
+  Width="1200" Height="800"
+  Background="#0E1A2A">
+  <Grid RowDefinitions="Auto,*" Margin="0">
     <!-- Top bar -->
-    <Border DockPanel.Dock="Top" Background="#0B1220" Padding="8">
-      <Grid ColumnDefinitions="*,Auto,Auto,Auto">
-        <TextBlock Text="Linux Fan Control" VerticalAlignment="Center" FontSize="16" FontWeight="SemiBold"/>
-        <ComboBox Grid.Column="1" Width="180" Margin="8,0,0,0"
-          ItemsSource="{Binding AvailableLanguages}" SelectedItem="{Binding CurrentLanguage}"/>
-        <ComboBox Grid.Column="2" Width="180" Margin="8,0,0,0"
-          ItemsSource="{Binding AvailableThemes}" SelectedItem="{Binding CurrentTheme}"/>
-        <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8">
-          <Button Content="Setup" Command="{Binding OpenSetupAsyncCommand}" CommandParameter="{Binding $parent[Window]}"/>
-          <Button Content="Import" Command="{Binding OpenImportAsyncCommand}" CommandParameter="{Binding $parent[Window]}"/>
+    <Border Background="#0B1522" Padding="10,8" BorderBrush="#0B1522" BorderThickness="0" >
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto" VerticalAlignment="Center">
+        <TextBlock Text="Linux Fan Control" Foreground="#E6F0FF" FontSize="16" FontWeight="SemiBold" />
+        <ComboBox Grid.Column="1" Margin="12,0,0,0" Width="220"
+          Items="{Binding Profiles}" SelectedItem="{Binding SelectedProfile}"
+          PlaceholderText="Profile" />
+        <ComboBox Grid.Column="2" Margin="8,0,0,0" Width="180"
+          Items="{Binding Languages}" SelectedItem="{Binding SelectedLanguage}"
+          PlaceholderText="Language" />
+        <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8" Margin="12,0,0,0">
+          <Button Content="Setup" Command="{Binding SetupCommand}" />
+          <Button Content="Import" Command="{Binding ImportCommand}" />
         </StackPanel>
       </Grid>
     </Border>
 
-    <!-- Dashboard -->
-    <views:DashboardView/>
-  </DockPanel>
+    <!-- Main content -->
+    <views:DashboardView Grid.Row="1" DataContext="{Binding Dashboard}" />
+  </Grid>
 </Window>
