@@ -8,17 +8,37 @@ using LinuxFanControl.Gui.Services;
 
 namespace LinuxFanControl.Gui.ViewModels.Dialogs
 {
-    public sealed partial class ImportDialogViewModel : ObservableObject
+    /// <summary>
+    /// ViewModel for importing a FanControl.Release JSON config.
+    /// Uses explicit IAsyncRelayCommand to avoid source-generator dependency.
+    /// </summary>
+    public sealed class ImportDialogViewModel : ObservableObject
     {
         private readonly Window _window;
 
-        [ObservableProperty] private string? selectedPath;
-        [ObservableProperty] private string status = "";
+        private string? _selectedPath;
+        public string? SelectedPath
+        {
+            get => _selectedPath;
+            set => SetProperty(ref _selectedPath, value);
+        }
 
-        public ImportDialogViewModel(Window window) => _window = window;
+        private string _status = "";
+        public string Status
+        {
+            get => _status;
+            set => SetProperty(ref _status, value);
+        }
 
-        [RelayCommand]
-        public async Task OnFilePicked(string? path)
+        public IAsyncRelayCommand<string?> OnFilePickedCommand { get; }
+
+        public ImportDialogViewModel(Window window)
+        {
+            _window = window;
+            OnFilePickedCommand = new AsyncRelayCommand<string?>(OnFilePickedAsync);
+        }
+
+        private async Task OnFilePickedAsync(string? path)
         {
             if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
             {
@@ -27,9 +47,12 @@ namespace LinuxFanControl.Gui.ViewModels.Dialogs
             }
 
             SelectedPath = path;
+
             var importer = new FanControlImporter();
             var result = await importer.TryImportAsync(path);
+
             Status = result.Success ? "Imported." : $"Failed: {result.Error}";
+            // TODO: merge result.Config into current app config and persist if needed.
         }
     }
 }
