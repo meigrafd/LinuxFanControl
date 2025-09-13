@@ -1,81 +1,62 @@
 using System.Collections.ObjectModel;
-using System.ComponentModel;
-using System.Runtime.CompilerServices;
+using System.Linq;
+using System.Reactive;
+using ReactiveUI;
 using LinuxFanControl.Gui.Services;
 
 namespace LinuxFanControl.Gui.ViewModels.Dialogs
 {
-    /// <summary>
-    /// ViewModel for the initial Setup dialog: language, theme, and optional detection toggle.
-    /// Plain INotifyPropertyChanged to avoid extra package dependencies.
-    /// </summary>
-    public class SetupDialogViewModel : INotifyPropertyChanged
+    public class SetupDialogViewModel : ReactiveObject
     {
-        public event PropertyChangedEventHandler? PropertyChanged;
+        public ObservableCollection<string> Themes { get; } = new();
+        public ObservableCollection<LocalizationService.LanguageItem> Languages { get; } = new();
 
-        private string? _selectedLanguage;
         private string? _selectedTheme;
-        private bool _runDetection;
-
-        public ObservableCollection<string> AvailableLanguages { get; } = new();
-        public ObservableCollection<string> AvailableThemes { get; } = new();
-
-        public string? SelectedLanguage
-        {
-            get => _selectedLanguage;
-            set
-            {
-                if (SetField(ref _selectedLanguage, value) && !string.IsNullOrWhiteSpace(value))
-                    LocalizationService.SetLanguage(value!);
-            }
-        }
-
         public string? SelectedTheme
         {
             get => _selectedTheme;
-            set
-            {
-                if (SetField(ref _selectedTheme, value) && !string.IsNullOrWhiteSpace(value))
-                    ThemeManager.ApplyTheme(value!);
-            }
+            set => this.RaiseAndSetIfChanged(ref _selectedTheme, value);
         }
 
-        public bool RunDetection
+        private LocalizationService.LanguageItem? _selectedLanguage;
+        public LocalizationService.LanguageItem? SelectedLanguage
         {
-            get => _runDetection;
-            set => SetField(ref _runDetection, value);
+            get => _selectedLanguage;
+            set => this.RaiseAndSetIfChanged(ref _selectedLanguage, value);
         }
+
+        public bool RunDetection { get; set; } = true;
+        public bool RunCalibration { get; set; } = false;
+
+        public ReactiveCommand<Unit, Unit> ApplyCommand { get; }
+        public ReactiveCommand<Unit, Unit> CancelCommand { get; }
 
         public SetupDialogViewModel()
         {
-            // dynamic discovery (no hardcoding)
-            AvailableLanguages.Clear();
-            foreach (var l in LocalizationService.ListLanguages())
-                AvailableLanguages.Add(l);
-
-            AvailableThemes.Clear();
+            // Fill themes
             foreach (var t in ThemeManager.ListThemes())
-                AvailableThemes.Add(t);
+                Themes.Add(t);
+            SelectedTheme = Themes.Contains(ThemeManager.CurrentTheme)
+            ? ThemeManager.CurrentTheme
+            : Themes.FirstOrDefault() ?? ThemeManager.DefaultTheme;
 
-            var (lang, theme) = LocalizationService.LoadGuiConfigOrDefault();
-            _selectedLanguage = lang;
-            _selectedTheme = theme;
-            _runDetection = false; // explicit opt-in
-        }
+            // Fill languages
+            foreach (var l in LocalizationService.ListLanguages())
+                Languages.Add(l);
+            var cur = Languages.FirstOrDefault(x => x.Code == LocalizationService.CurrentLanguage)
+            ?? Languages.FirstOrDefault();
+            SelectedLanguage = cur;
 
-        public void SavePreferences()
-        {
-            var lang = _selectedLanguage ?? LocalizationService.DefaultLanguage;
-            var theme = _selectedTheme ?? ThemeManager.DefaultTheme;
-            LocalizationService.SaveGuiConfig(lang, theme);
-        }
+            ApplyCommand = ReactiveCommand.Create(() =>
+            {
+                if (!string.IsNullOrWhiteSpace(SelectedTheme))
+                    ThemeManager.ApplyTheme(SelectedTheme!);
+                if (SelectedLanguage != null)
+                    LocalizationService.SetLanguage(SelectedLanguage.Code);
+                // Detection flags are read by the dialog’s code-behind after close
+            });
 
-        private bool SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)
-        {
-            if (Equals(field, value)) return false;
-            field = value;
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
-            return true;
+            CancelCommand = ReactiveCommand.Create(() => { /* nothing, dialog will close */ });
         }
     }
 }

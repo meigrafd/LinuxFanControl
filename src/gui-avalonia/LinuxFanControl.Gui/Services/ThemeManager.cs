@@ -13,17 +13,25 @@ namespace LinuxFanControl.Gui.Services
 {
     /// <summary>
     /// Loads a simple JSON theme and applies brushes/colors to Application.Resources.
-    /// Themes live as plain JSON files in ./Themes (next to the executable).
-    /// No hard-coded includes in the project file; fully dynamic.
+    /// Themes live as plain JSON files in ./Themes (next to the executable) or repo-local during dev.
+    /// Example JSON:
+    /// {
+    ///   "name": "midnight",
+    ///   "colors": {
+    ///     "background": "#0E1A2B",
+    ///     "panel": "#14233A",
+    ///     "panelAlt": "#0B1626",
+    ///     "accent": "#3B82F6",
+    ///     "accent2": "#60A5FA",
+    ///     "text": "#E6EDF3",
+    ///     "textMuted": "#93A4B3"
+    ///   }
+    /// }
     /// </summary>
     public static class ThemeManager
     {
         public const string DefaultThemeName = "midnight";
-
-        /// <summary>Alias used by other parts of the app expecting "DefaultTheme".</summary>
         public static string DefaultTheme => DefaultThemeName;
-
-        /// <summary>The last successfully applied theme name.</summary>
         public static string CurrentTheme { get; private set; } = DefaultThemeName;
 
         public sealed class ThemeColors
@@ -36,19 +44,28 @@ namespace LinuxFanControl.Gui.Services
             public string text       { get; set; } = "#E6EDF3";
             public string textMuted  { get; set; } = "#93A4B3";
         }
-
         public sealed class ThemeSpec
         {
             public string name { get; set; } = DefaultThemeName;
             public ThemeColors colors { get; set; } = new ThemeColors();
         }
 
-        public static string ThemesDir =>
-        Path.Combine(AppContext.BaseDirectory, "Themes");
+        private static string ResolveDir(string name)
+        {
+            var baseDir = AppContext.BaseDirectory;
+            string[] candidates = new[]
+            {
+                Path.Combine(baseDir, name),
+                // dev-time (…/bin/Debug/net9.0/ → repo root)
+                Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", name)),
+                Path.GetFullPath(Path.Combine(baseDir, "..", "..", name)),
+            };
+            return candidates.FirstOrDefault(Directory.Exists) ?? Path.Combine(baseDir, name);
+        }
 
-        /// <summary>
-        /// Returns theme names available in ThemesDir (file names without .json).
-        /// </summary>
+        public static string ThemesDir => ResolveDir("Themes");
+
+        /// <summary>Return available theme names (file names without .json), dynamic, no csproj hardcoding.</summary>
         public static string[] ListThemes()
         {
             try
@@ -67,16 +84,12 @@ namespace LinuxFanControl.Gui.Services
             }
         }
 
-        /// <summary>
-        /// Loads theme JSON and applies resources. Falls back to default palette on error.
-        /// </summary>
         public static bool ApplyTheme(string themeName)
         {
             try
             {
                 var path = Path.Combine(ThemesDir, $"{themeName}.json");
                 ThemeSpec spec;
-
                 if (File.Exists(path))
                 {
                     var json = File.ReadAllText(path);
@@ -87,16 +100,14 @@ namespace LinuxFanControl.Gui.Services
                 }
                 else
                 {
-                    spec = new ThemeSpec(); // fallback midnight palette
+                    spec = new ThemeSpec(); // fallback palette
                 }
-
                 Apply(spec);
                 CurrentTheme = string.IsNullOrWhiteSpace(spec.name) ? themeName : spec.name;
                 return true;
             }
             catch
             {
-                // Very last resort: fallback palette
                 Apply(new ThemeSpec());
                 CurrentTheme = DefaultThemeName;
                 return false;
@@ -109,57 +120,43 @@ namespace LinuxFanControl.Gui.Services
 
             var res = Application.Current.Resources;
 
-            // Parse colors
-            var bg      = Parse(spec.colors.background);
-            var panel   = Parse(spec.colors.panel);
-            var panel2  = Parse(spec.colors.panelAlt);
-            var accent  = Parse(spec.colors.accent);
-            var accent2 = Parse(spec.colors.accent2);
-            var text    = Parse(spec.colors.text);
-            var text2   = Parse(spec.colors.textMuted);
+            // Parse → Brushes
+            var bBg      = new SolidColorBrush(Parse(spec.colors.background));
+            var bPanel   = new SolidColorBrush(Parse(spec.colors.panel));
+            var bPanel2  = new SolidColorBrush(Parse(spec.colors.panelAlt));
+            var bAccent  = new SolidColorBrush(Parse(spec.colors.accent));
+            var bAccent2 = new SolidColorBrush(Parse(spec.colors.accent2));
+            var bText    = new SolidColorBrush(Parse(spec.colors.text));
+            var bText2   = new SolidColorBrush(Parse(spec.colors.textMuted));
 
-            // Create brushes
-            var bBg      = new SolidColorBrush(bg);
-            var bPanel   = new SolidColorBrush(panel);
-            var bPanel2  = new SolidColorBrush(panel2);
-            var bAccent  = new SolidColorBrush(accent);
-            var bAccent2 = new SolidColorBrush(accent2);
-            var bText    = new SolidColorBrush(text);
-            var bText2   = new SolidColorBrush(text2);
+            // Common keys
+            res["ThemeBackgroundBrush"]  = bBg;
+            res["SystemAccentColor"]     = bAccent.Color;
+            res["SystemAccentBrush"]     = bAccent;
+            res["SystemAccentBrush2"]    = bAccent2;
 
-            // Common keys (Fluent-ish + custom)
-            res["ThemeBackgroundBrush"]      = bBg;
-            res["SystemAccentColor"]         = accent;
-            res["SystemAccentBrush"]         = bAccent;
-            res["SystemAccentBrush2"]        = bAccent2;
+            // App keys (used by XAML)
+            res["Lfc/Background"]        = bBg;
+            res["Lfc/Panel"]             = bPanel;
+            res["Lfc/PanelAlt"]          = bPanel2;
+            res["Lfc/Accent"]            = bAccent;
+            res["Lfc/Accent2"]           = bAccent2;
+            res["Lfc/Text"]              = bText;
+            res["Lfc/TextMuted"]         = bText2;
 
-            // Our custom keys used by views/controls
-            res["Lfc/Background"]            = bBg;
-            res["Lfc/Panel"]                 = bPanel;
-            res["Lfc/PanelAlt"]              = bPanel2;
-            res["Lfc/Accent"]                = bAccent;
-            res["Lfc/Accent2"]               = bAccent2;
-            res["Lfc/Text"]                  = bText;
-            res["Lfc/TextMuted"]             = bText2;
-
-            // Reasonable defaults for common controls (keeps things readable)
-            res["ControlBackground"]         = bPanel;
-            res["ControlForeground"]         = bText;
-            res["ButtonBackground"]          = bPanel2;
-            res["ButtonForeground"]          = bText;
-            res["TextControlForeground"]     = bText;
+            // Reasonable defaults
+            res["ControlBackground"]     = bPanel;
+            res["ControlForeground"]     = bText;
+            res["ButtonBackground"]      = bPanel2;
+            res["ButtonForeground"]      = bText;
 
             EnsureGlobalStyles();
         }
 
-        /// <summary>
-        /// Adds global styles (once) to use our dynamic resources for Window, UserControl, TextBlock, Button.
-        /// </summary>
         private static void EnsureGlobalStyles()
         {
             if (Application.Current is null) return;
 
-            // Avoid adding duplicates by checking an existing style targeting Window
             foreach (var s in Application.Current.Styles)
             {
                 if (s is Style st && st.Selector?.ToString()?.Contains("Window") == true)
@@ -168,7 +165,6 @@ namespace LinuxFanControl.Gui.Services
 
             var styles = new Styles
             {
-                // Window background = app background
                 new Style(x => x.OfType<Window>())
                 {
                     Setters =
@@ -177,7 +173,6 @@ namespace LinuxFanControl.Gui.Services
                                    new DynamicResourceExtension("Lfc/Background"))
                     }
                 },
-                // UserControl background = panel (makes tiles/cards readable)
                 new Style(x => x.OfType<UserControl>())
                 {
                     Setters =
@@ -186,7 +181,6 @@ namespace LinuxFanControl.Gui.Services
                                    new DynamicResourceExtension("Lfc/Panel"))
                     }
                 },
-                // TextBlock foreground = text
                 new Style(x => x.OfType<TextBlock>())
                 {
                     Setters =
@@ -195,7 +189,6 @@ namespace LinuxFanControl.Gui.Services
                                    new DynamicResourceExtension("Lfc/Text"))
                     }
                 },
-                // Buttons use panelAlt/bg + text
                 new Style(x => x.OfType<Button>())
                 {
                     Setters =
@@ -211,12 +204,7 @@ namespace LinuxFanControl.Gui.Services
             Application.Current.Styles.Add(styles);
         }
 
-        private static Color Parse(string hex)
-        {
-            // Accept #RRGGBB or #AARRGGBB
-            if (Color.TryParse(hex, out var c)) return c;
-            // fallback white (should never happen with our defaults)
-            return Colors.White;
-        }
+        private static Color Parse(string hex) =>
+        Color.TryParse(hex, out var c) ? c : Colors.White;
     }
 }
