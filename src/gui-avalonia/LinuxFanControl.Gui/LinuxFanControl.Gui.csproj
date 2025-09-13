@@ -2,17 +2,18 @@
 
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
+    <OutputType>WinExe</OutputType>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
 
-    <OutputType>WinExe</OutputType>
-    <UseWPF>false</UseWPF>
-    <UseWindowsForms>false</UseWindowsForms>
-    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <!-- Avalonia/XAML -->
     <AvaloniaCompileXaml>true</AvaloniaCompileXaml>
-    <PublishSingleFile>false</PublishSingleFile>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+
+    <!-- WICHTIG: Implizite Items aus! (sonst doppelte App.axaml) -->
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <!-- Compile-Globs trotzdem anlassen -->
     <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
-    <EnableDefaultItems>true</EnableDefaultItems>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,7 +24,7 @@
     <PackageReference Include="LiveChartsCore.SkiaSharpView.Avalonia" Version="2.0.0-rc3" />
   </ItemGroup>
 
-  <!-- explizit alle XAML-Dateien, keine Wildcards für Code nötig -->
+  <!-- EXPLIZITE XAML-Liste (keine Wildcards) -->
   <ItemGroup>
     <AvaloniaXaml Include="App.axaml" />
     <AvaloniaXaml Include="Views/MainWindow.axaml" />
@@ -33,7 +34,7 @@
     <AvaloniaXaml Include="Views/Dialogs/DetectProgressDialog.axaml" />
   </ItemGroup>
 
-  <!-- Themes / Locales dynamisch einlesen, aber als Content ins Build ausliefern -->
+  <!-- Laufzeit-Assets (Themes/Locales) -->
   <ItemGroup>
     <Content Include="Themes/*.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
