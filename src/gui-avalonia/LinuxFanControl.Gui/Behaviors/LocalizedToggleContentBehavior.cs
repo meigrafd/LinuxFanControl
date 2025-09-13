@@ -25,12 +25,11 @@ public static class LocalizedToggleContentBehavior
             toggle.Content = ResolveLocalizedString(key);
         }
 
-        // initial apply
+        // Initial apply
         Update();
 
-        // react to IsChecked changes (no deprecated events)
-        toggle.GetObservable(ToggleButton.IsCheckedProperty)
-        .Subscribe(_ => Update());
+        // Avalonia 11+: prefer IsCheckedChanged over Checked/Unchecked/Indeterminate
+        toggle.IsCheckedChanged += (_, __) => Update();
     }
 
     /// <summary>
