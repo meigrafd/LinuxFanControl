@@ -1,33 +1,32 @@
 <UserControl
-    x:Class="LinuxFanControl.Gui.Views.Controls.FanTile"
+    x:Class="LinuxFanControl.Gui.Views.Controls.FanLogo"
     xmlns="https://github.com/avaloniaui"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.Avalonia;assembly=LiveChartsCore.SkiaSharpView.Avalonia">
-  <Border Padding="8" CornerRadius="8" Background="#1F2430">
-    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,*,Auto">
-      <!-- Title -->
-      <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
-                 Text="{Binding Title}" FontWeight="SemiBold" FontSize="14" />
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Viewbox Stretch="Uniform">
+    <Grid Width="24" Height="24"
+          RenderTransformOrigin="0.5,0.5">
+      <Grid.RenderTransform>
+        <RotateTransform Angle="0"/>
+      </Grid.RenderTransform>
+      <Grid.Animations>
+        <Animation Duration="0:0:1.2" RepeatCount="Forever">
+          <KeyFrame Cue="0%">
+            <Setter Property="RenderTransform.(RotateTransform.Angle)" Value="0"/>
+          </KeyFrame>
+          <KeyFrame Cue="100%">
+            <Setter Property="RenderTransform.(RotateTransform.Angle)" Value="360"/>
+          </KeyFrame>
+        </Animation>
+      </Grid.Animations>
 
-      <!-- Metrics -->
-      <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12">
-        <TextBlock Text="RPM:"/>
-        <TextBlock Text="{Binding Rpm}"/>
-        <TextBlock Text="PWM:" Margin="16,0,0,0"/>
-        <TextBlock Text="{Binding PwmDuty}"/>
-        <TextBlock Text="Temp:" Margin="16,0,0,0"/>
-        <TextBlock Text="{Binding Temperature}"/>
-      </StackPanel>
-
-      <!-- Chart (ohne explizite Achsen; vermeidet Axis-Resolver-Fehler) -->
-      <lvc:CartesianChart Grid.Row="2" Height="120" Margin="0,6,0,0"
-                          Series="{Binding Series}" />
-
-      <!-- Actions -->
-      <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
-        <Button Content="Edit" Command="{Binding EditCommand}"/>
-        <Button Content="Remove" Command="{Binding RemoveCommand}"/>
-      </StackPanel>
+      <!-- three blades -->
+      <Canvas Width="24" Height="24">
+        <Path Fill="#8EC8FF" Data="M12,2 L13,9 L11,9 Z" Opacity="0.85"/>
+        <Path Fill="#8EC8FF" Data="M22,12 L15,13 L15,11 Z" Opacity="0.85"/>
+        <Path Fill="#8EC8FF" Data="M12,22 L13,15 L11,15 Z" Opacity="0.85"/>
+        <!-- hub -->
+        <Ellipse Fill="#E6F0FF" Width="4" Height="4" Canvas.Left="10" Canvas.Top="10"/>
+      </Canvas>
     </Grid>
-  </Border>
+  </Viewbox>
 </UserControl>

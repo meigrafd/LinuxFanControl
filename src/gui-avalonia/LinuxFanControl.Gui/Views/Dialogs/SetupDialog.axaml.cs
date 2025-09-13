@@ -1,23 +1,38 @@
 // (c) 2025 LinuxFanControl contributors. MIT License.
-using System.Threading.Tasks;
 using Avalonia.Controls;
-using Avalonia.Markup.Xaml;
-using LinuxFanControl.Gui.ViewModels.Dialogs;
 
 namespace LinuxFanControl.Gui.Views.Dialogs
 {
+    public sealed class SetupDialogResult
+    {
+        public string Theme { get; init; } = "Dark";
+        public string Language { get; init; } = "en";
+        public bool StartDetection { get; init; }
+    }
+
     public partial class SetupDialog : Window
     {
         public SetupDialog()
         {
             InitializeComponent();
-            // Pass the owning window into the ViewModel (required by its ctor)
-            DataContext ??= new SetupDialogViewModel(this);
         }
 
-        private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
+        private void OnCancel(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        => Close(null);
 
-        // Convenience wrapper: await dlg.ShowAsync(owner)
-        public Task ShowAsync(Window owner) => this.ShowDialog(owner);
+        private void OnApply(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        {
+            if (DataContext is not SetupDialogViewModel vm)
+            {
+                Close(null);
+                return;
+            }
+            Close(new SetupDialogResult
+            {
+                Theme = vm.SelectedTheme ?? "Dark",
+                Language = vm.SelectedLanguage ?? "en",
+                StartDetection = vm.RunDetection
+            });
+        }
     }
 }

@@ -4,14 +4,12 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <!-- Kompilierte Bindings erst aktivieren, wenn x:DataType sauber gesetzt ist -->
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.2.0" />
     <PackageReference Include="Avalonia.Desktop" Version="11.2.0" />
-    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.2.0" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.0" />
     <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.2.0" />
     <PackageReference Include="Avalonia.Xaml.Interactivity" Version="11.2.0" />
@@ -21,6 +19,7 @@
     <PackageReference Include="LiveChartsCore.SkiaSharpView" Version="2.0.0-rc3" />
     <PackageReference Include="LiveChartsCore.SkiaSharpView.Avalonia" Version="2.0.0-rc3" />
     <PackageReference Include="SkiaSharp" Version="2.88.8" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.2.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -31,11 +30,12 @@
 
   <ItemGroup>
     <AvaloniaXaml Include="App.axaml" />
-    <AvaloniaXaml Include="Views/Controls/FanTile.axaml" />
-    <AvaloniaXaml Include="Views/DashboardView.axaml" />
-    <AvaloniaXaml Include="Views/Dialogs/ImportDialog.axaml" />
-    <AvaloniaXaml Include="Views/Dialogs/SetupDialog.axaml" />
-    <AvaloniaXaml Include="Views/Editors/CurveEditorView.axaml" />
     <AvaloniaXaml Include="Views/MainWindow.axaml" />
+    <AvaloniaXaml Include="Views/DashboardView.axaml" />
+    <AvaloniaXaml Include="Views/Controls/FanTile.axaml" />
+    <AvaloniaXaml Include="Views/Controls/FanLogo.axaml" />
+    <AvaloniaXaml Include="Views/Editors/CurveEditorView.axaml" />
+    <AvaloniaXaml Include="Views/Dialogs/SetupDialog.axaml" />
+    <AvaloniaXaml Include="Views/Dialogs/ImportDialog.axaml" />
   </ItemGroup>
 </Project>

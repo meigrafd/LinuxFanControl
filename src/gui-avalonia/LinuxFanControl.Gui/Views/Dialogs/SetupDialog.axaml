@@ -2,23 +2,32 @@
     x:Class="LinuxFanControl.Gui.Views.Dialogs.SetupDialog"
     xmlns="https://github.com/avaloniaui"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Width="780" Height="520"
-    Title="Auto-Setup (Detect &amp; Calibrate)">
-  <Grid RowDefinitions="Auto,*,Auto" Margin="12">
-    <TextBlock Text="Auto-Setup (Detect &amp; Calibrate)" FontSize="18" FontWeight="SemiBold" />
-    <Border Grid.Row="1" Margin="0,10" BorderThickness="1" CornerRadius="6"
-            BorderBrush="#334" Background="#111827">
-      <ScrollViewer Margin="8">
-        <TextBlock Text="{Binding LogText}" FontFamily="Consolas, monospace" TextWrapping="Wrap"/>
-      </ScrollViewer>
-    </Border>
+    Width="560" Height="360" CanResize="False"
+    Title="Setup">
+  <Grid RowDefinitions="Auto,*,Auto" Margin="16">
+    <TextBlock Text="Initial setup" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>
+
+    <StackPanel Grid.Row="1" Spacing="12">
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <TextBlock Text="Theme:" Width="120" VerticalAlignment="Center"/>
+        <ComboBox Width="220" ItemsSource="{Binding Themes}" SelectedItem="{Binding SelectedTheme}"/>
+      </StackPanel>
+
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <TextBlock Text="Language:" Width="120" VerticalAlignment="Center"/>
+        <ComboBox Width="220" ItemsSource="{Binding Languages}" SelectedItem="{Binding SelectedLanguage}"/>
+      </StackPanel>
+
+      <Separator/>
+
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <CheckBox Content="Run detection & calibration after closing" IsChecked="{Binding RunDetection}"/>
+      </StackPanel>
+    </StackPanel>
+
     <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
-      <Button Content="Start" IsEnabled="{Binding IsRunning, Converter={StaticResource InverseBoolConverter}}"
-              Command="{Binding StartAsyncCommand}"/>
-      <Button Content="Cancel" IsEnabled="{Binding IsRunning}"
-              Command="{Binding CancelAsyncCommand}"/>
-      <Button Content="Close" IsEnabled="{Binding IsRunning, Converter={StaticResource InverseBoolConverter}}"
-              Command="{Binding CloseWindowCommand}"/>
+      <Button Content="Cancel" MinWidth="100" Click="OnCancel"/>
+      <Button Content="Apply"  MinWidth="120" Click="OnApply"/>
     </StackPanel>
   </Grid>
 </Window>
