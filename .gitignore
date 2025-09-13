@@ -2,3 +2,4 @@
 build/
 patch.sh
 cleanup_candidates.txt
+verify_repo.py
