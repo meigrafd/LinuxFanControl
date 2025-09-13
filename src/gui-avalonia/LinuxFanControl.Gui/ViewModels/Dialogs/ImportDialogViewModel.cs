@@ -17,7 +17,6 @@ namespace LinuxFanControl.Gui.ViewModels.Dialogs
 
         public ImportDialogViewModel(Window window) => _window = window;
 
-        // Generates IAsyncRelayCommand OnFilePickedCommand
         [RelayCommand]
         public async Task OnFilePicked(string? path)
         {
