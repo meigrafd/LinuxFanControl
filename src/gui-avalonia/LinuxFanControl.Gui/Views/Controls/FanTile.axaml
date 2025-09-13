@@ -39,16 +39,14 @@
         <Button Classes="flat" Grid.Column="2" Content="Remove" Command="{Binding RemoveCommand}" Margin="6,0,0,0"/>
       </Grid>
 
-      <!-- Sparkline / chart -->
+      <!-- Chart (LiveCharts 2): remove unsupported props -->
       <lvc:CartesianChart Grid.Row="1"
                           Series="{Binding Series}"
                           Background="Transparent"
                           LegendPosition="Hidden"
                           ZoomMode="None"
-                          DrawMarginFrame="0"
-                          DisableAnimations="False"
                           AnimationsSpeed="0:0:0.25"
-                          IsHitTestVisible="False"/>
+                          IsHitTestVisible="False" />
 
       <!-- Footer meta -->
       <Grid Grid.Row="2" ColumnDefinitions="*,*,*" Margin="0,6,0,0">
