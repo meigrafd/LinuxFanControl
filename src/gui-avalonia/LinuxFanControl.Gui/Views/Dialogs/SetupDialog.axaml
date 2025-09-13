@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Window
-    x:Class="LinuxFanControl.Gui.Views.Dialogs.SetupDialog"
-    xmlns="https://github.com/avaloniaui"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Width="640" Height="420"
-    WindowStartupLocation="CenterOwner"
-    CanResize="False"
-    Title="Setup">
+  x:Class="LinuxFanControl.Gui.Views.Dialogs.SetupDialog"
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  Width="640" Height="420"
+  WindowStartupLocation="CenterOwner"
+  CanResize="False"
+  Title="Setup">
 
-  <!-- No Grid.Padding (Grid has no Padding) – use Margin where needed -->
+  <!-- Use Margin on Grid (Grid has no Padding property) -->
   <Grid RowDefinitions="Auto,Auto,Auto,*,Auto" Margin="16">
 
     <!-- Language -->
@@ -17,28 +17,28 @@
       <ComboBox Width="220"
                 ItemsSource="{Binding AvailableLanguages}"
                 SelectedItem="{Binding SelectedLanguage}"/>
-    </StackPanel>
+      </StackPanel>
 
-    <!-- Theme -->
-    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
-      <TextBlock VerticalAlignment="Center" Text="Theme"/>
-      <ComboBox Width="220"
-                ItemsSource="{Binding AvailableThemes}"
-                SelectedItem="{Binding SelectedTheme}"/>
-    </StackPanel>
+      <!-- Theme -->
+      <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+        <TextBlock VerticalAlignment="Center" Text="Theme"/>
+        <ComboBox Width="220"
+                  ItemsSource="{Binding AvailableThemes}"
+                  SelectedItem="{Binding SelectedTheme}"/>
+        </StackPanel>
 
-    <!-- Detection toggle -->
-    <CheckBox Grid.Row="2" Margin="0,12,0,0"
-              IsChecked="{Binding RunDetection}"
-              Content="Run detection & calibration after closing this dialog"/>
+        <!-- Detection toggle (escape & as &amp;) -->
+        <CheckBox Grid.Row="2" Margin="0,12,0,0"
+                  IsChecked="{Binding RunDetection}"
+                  Content="Run detection &amp; calibration after closing this dialog"/>
 
-    <!-- Spacer -->
-    <Border Grid.Row="3"/>
+        <!-- Spacer -->
+        <Border Grid.Row="3"/>
 
-    <!-- Buttons -->
-    <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
-      <Button Width="96" IsDefault="True" Content="OK" Command="{Binding CloseOkCommand}"/>
-      <Button Width="96" IsCancel="True" Content="Cancel"/>
-    </StackPanel>
-  </Grid>
-</Window>
+        <!-- Buttons -->
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+          <Button Width="96" IsDefault="True" Content="OK" Command="{Binding CloseOkCommand}"/>
+          <Button Width="96" IsCancel="True" Content="Cancel"/>
+        </StackPanel>
+      </Grid>
+    </Window>
