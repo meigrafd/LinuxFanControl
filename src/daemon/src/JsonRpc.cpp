@@ -1,6 +1,7 @@
 #include "JsonRpc.hpp"
 #include <nlohmann/json.hpp>
 #include <iostream>
+
 using json = nlohmann::json;
 
 JsonRpcServer::JsonRpcServer(){}
@@ -35,17 +36,21 @@ void JsonRpcServer::runStdio(){
         try{ return make_result(id, h(params.dump())); }
         catch(const std::exception& e){ return make_error(id,-32000,e.what()); }
       };
+
       if(j.is_array()){
         std::cout << "["; bool first=true;
-        for(const auto& it : j){ auto resp=handle_one(it); if(resp.empty()) continue; if(!first) std::cout<<","; first=false; std::cout<<resp; }
-        std::cout << "]
-";
+        for(const auto& it : j){
+          auto resp=handle_one(it); if(resp.empty()) continue;
+          if(!first) std::cout<<","; first=false; std::cout<<resp;
+        }
+        std::cout << "]\n" << std::flush;
       } else {
-        std::cout << handle_one(j) << std::endl;
+        std::cout << handle_one(j) << std::endl << std::flush;
       }
     }catch(...){
-      // ignore
+      // ignore malformed input
     }
   }
 }
+
 void JsonRpcServer::stop(){ running_.store(false); }
