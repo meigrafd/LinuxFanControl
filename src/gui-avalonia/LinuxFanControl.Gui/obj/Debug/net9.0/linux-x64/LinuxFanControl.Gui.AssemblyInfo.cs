@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("LinuxFanControl.Gui")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+ee36c2d91cb194168c986c68574cc24ae5ec479a")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+68a6b6e50ec2a764a55e73ba19856e457ec978a1")]
 [assembly: System.Reflection.AssemblyProductAttribute("LinuxFanControl.Gui")]
 [assembly: System.Reflection.AssemblyTitleAttribute("LinuxFanControl.Gui")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
