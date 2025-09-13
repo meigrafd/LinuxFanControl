@@ -9,7 +9,24 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="/tmp"
-DAEMON="${LFC_DAEMON:-${ROOT}/build/src/daemon/lfcd}"
+
+# auto-detect daemon binary
+detect_daemon() {
+  local candidates=(
+    "${ROOT}/build/lfcd"
+    "${ROOT}/build/src/daemon/lfcd"
+    "${ROOT}/build/src/daemon/src/lfcd"
+  )
+  for c in "${candidates[@]}"; do
+    [[ -x "$c" ]] && { echo "$c"; return; }
+  done
+  local f
+  f="$(find "${ROOT}/build" -maxdepth 5 -type f -name lfcd 2>/dev/null | head -n1 || true)"
+  echo "${f}"
+}
+
+DAEMON_DEFAULT="$(detect_daemon)"
+DAEMON="${LFC_DAEMON:-${DAEMON_DEFAULT}}"
 DAEMON_ARGS="${LFC_DAEMON_ARGS:-}"
 GUI_DIR="${ROOT}/src/gui-avalonia/LinuxFanControl.Gui"
 GUI_CMD="dotnet run -c Debug"
@@ -36,18 +53,20 @@ daemon_running() {
   [[ -f "$pf" ]] || return 1
   local pid; pid="$(cat "$pf" 2>/dev/null || true)"
   [[ -n "${pid}" && -d "/proc/${pid}" ]] || return 1
-  pgrep -a -x lfcd >/dev/null 2>&1 || return 1
+  kill -0 "${pid}" >/dev/null 2>&1 || return 1
   return 0
 }
 
 start_daemon() {
-  [[ -x "${DAEMON}" ]] || { echo "[!] Daemon binary not found: ${DAEMON}"; exit 1; }
+  if [[ -z "${DAEMON}" || ! -x "${DAEMON}" ]]; then
+    echo "[!] Daemon binary not found. Build first or set LFC_DAEMON."
+    exit 1
+  fi
   if daemon_running; then
     echo "[i] Daemon already running (pid $(cat "$(pidfile)")). Use 'stop-daemon' first."
     exit 0
   fi
   echo "[i] Starting daemon: ${DAEMON} ${DAEMON_ARGS}"
-  # Start detached; write PID file; log to /tmp/daemon_lfc.log
   setsid bash -c "exec '${DAEMON}' ${DAEMON_ARGS} >>'${LOG_DIR}/daemon_lfc.log' 2>&1" </dev/null &
   disown
   echo $! >"$(pidfile)"

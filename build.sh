@@ -43,7 +43,7 @@ ONLY_GUI=0
 
 # Paths
 GUI_PROJ="${ROOT}/src/gui-avalonia/LinuxFanControl.Gui/LinuxFanControl.Gui.csproj"
-DAEMON_BIN="${BUILD_DIR}/lfcd"
+DAEMON_BIN=""
 
 # ---------- Usage ----------
 usage() {
@@ -67,10 +67,6 @@ GUI (Avalonia/.NET 9):
   --rid <RID>                    Runtime identifier (default: ${RID_DEFAULT})
   --publish                      dotnet publish (otherwise dotnet build)
   --self-contained               Publish self-contained (implies --publish)
-
-Examples:
-  $(basename "$0") --fresh --type RelWithDebInfo --gui-config Release --publish --self-contained
-  $(basename "$0") --ninja --clang -DSENSORS_INCLUDE_DIRS=/usr/include -DSENSORS_LIBRARIES=/usr/lib64/libsensors.so
 EOF
 }
 
@@ -95,7 +91,7 @@ while (( $# )); do
   shift
 done
 
-# ---------- Env / Tools ----------
+# ---------- Tools ----------
 if [[ $USE_CLANG -eq 1 ]]; then
   export CC="${CC:-clang}"
   export CXX="${CXX:-clang++}"
@@ -119,21 +115,10 @@ SENS_INC=""; SENS_LIB=""
 detect_libsensors() {
   # pkg-config
   if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists libsensors; then
-    local incs libs
+    local incs
     incs=$(pkg-config --cflags-only-I libsensors | tr ' ' '\n' | sed -n 's/^-I//p' | head -n1 || true)
-    for cand in \
-      /usr/lib64/libsensors.so \
-      /usr/lib/x86_64-linux-gnu/libsensors.so \
-      /usr/lib/libsensors.so \
-      /lib64/libsensors.so \
-      /lib/x86_64-linux-gnu/libsensors.so \
-      /lib/libsensors.so; do
-      [[ -f "$cand" ]] && { SENS_LIB="$cand"; break; }
-    done
-    [[ -z "$SENS_LIB" ]] && SENS_LIB="$(pkg-config --variable=libdir libsensors 2>/dev/null)/libsensors.so"
     [[ -n "$incs" ]] && SENS_INC="$incs"
   fi
-  # fallbacks
   [[ -z "$SENS_INC" && -f /usr/include/sensors/sensors.h ]] && SENS_INC="/usr/include"
   for cand in \
     /usr/lib64/libsensors.so \
@@ -144,9 +129,25 @@ detect_libsensors() {
     /lib/libsensors.so; do
     [[ -z "$SENS_LIB" && -f "$cand" ]] && SENS_LIB="$cand"
   done
-  # env overrides
   [[ -n "${SENSORS_INCLUDE_DIRS:-}" ]] && SENS_INC="${SENSORS_INCLUDE_DIRS}"
   [[ -n "${SENSORS_LIBRARIES:-}"    ]] && SENS_LIB="${SENSORS_LIBRARIES}"
+}
+
+# ---------- find lfcd helper ----------
+find_daemon_bin() {
+  # Try common locations produced by CMake
+  local candidates=(
+    "${BUILD_DIR}/lfcd"
+    "${BUILD_DIR}/src/daemon/lfcd"
+    "${BUILD_DIR}/src/daemon/src/lfcd"
+  )
+  for c in "${candidates[@]}"; do
+    [[ -x "$c" ]] && { DAEMON_BIN="$c"; return; }
+  done
+  # Fallback: search
+  local found
+  found="$(find "${BUILD_DIR}" -maxdepth 5 -type f -name lfcd 2>/dev/null | head -n1 || true)"
+  [[ -n "$found" ]] && DAEMON_BIN="$found" || DAEMON_BIN=""
 }
 
 # ---------- Build Daemon ----------
@@ -192,6 +193,7 @@ build_daemon() {
 
   cmake --build "${BUILD_DIR}" -j "${JOBS}"
 
+  find_daemon_bin
   if [[ -x "${DAEMON_BIN}" ]]; then
     log "Daemon built    : $(realpath "${DAEMON_BIN}")"
   else
@@ -206,22 +208,12 @@ need_dotnet() {
     err "dotnet not found. Please install .NET 9 SDK."
     exit 4
   fi
-  local v; v="$(dotnet --version | cut -d. -f1 || echo 0)"
-  if (( v < 9 )); then
-    warn "dotnet >= 9 recommended. Detected: $(dotnet --version)"
-  fi
 }
 
 gui_output_dir() {
-  # return via echo: build output dir
-  # publish + self-contained: .../publish
   local base="${ROOT}/src/gui-avalonia/LinuxFanControl.Gui/bin/${GUI_CFG}/net9.0"
   if [[ $GUI_PUBLISH -eq 1 ]]; then
-    if [[ $GUI_SELF_CONTAINED -eq 1 ]]; then
-      echo "${base}/${GUI_RID}/publish"
-    else
-      echo "${base}/${GUI_RID}/publish"
-    fi
+    echo "${base}/${GUI_RID}/publish"
   else
     echo "${base}"
   fi
@@ -263,7 +255,8 @@ build_gui() {
     fi
     mkdir -p "${DIST_DIR}"
     rsync -a --delete "${out}/" "${DIST_DIR}/"
-    # Copy daemon in dist
+    # Copy daemon
+    find_daemon_bin
     if [[ -x "${DAEMON_BIN}" ]]; then
       cp -f "${DAEMON_BIN}" "${DIST_DIR}/lfcd"
       chmod +x "${DIST_DIR}/lfcd"
@@ -303,6 +296,7 @@ fi
 
 echo
 log "Summary:"
+find_daemon_bin
 [[ -x "${DAEMON_BIN}" ]] && echo "  Daemon: $(realpath "${DAEMON_BIN}")"
 if [[ -d "${DIST_DIR}" ]]; then
   echo "  Dist  : $(realpath "${DIST_DIR}")"
