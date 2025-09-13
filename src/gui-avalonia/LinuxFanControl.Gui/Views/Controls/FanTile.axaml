@@ -1,32 +1,61 @@
 <UserControl
-    x:Class="LinuxFanControl.Gui.Views.Controls.FanLogo"
+    x:Class="LinuxFanControl.Gui.Views.Controls.FanTile"
     xmlns="https://github.com/avaloniaui"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-  <Viewbox Stretch="Uniform">
-    <Grid Width="24" Height="24"
-          RenderTransformOrigin="0.5,0.5">
-      <Grid.RenderTransform>
-        <RotateTransform Angle="0"/>
-      </Grid.RenderTransform>
-      <Grid.Animations>
-        <Animation Duration="0:0:1.2" RepeatCount="Forever">
-          <KeyFrame Cue="0%">
-            <Setter Property="RenderTransform.(RotateTransform.Angle)" Value="0"/>
-          </KeyFrame>
-          <KeyFrame Cue="100%">
-            <Setter Property="RenderTransform.(RotateTransform.Angle)" Value="360"/>
-          </KeyFrame>
-        </Animation>
-      </Grid.Animations>
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.Avalonia;assembly=LiveChartsCore.SkiaSharpView.Avalonia">
+  <UserControl.Styles>
+    <Style Selector="Border.tile">
+      <Setter Property="Background" Value="#132235"/>
+      <Setter Property="BorderBrush" Value="#1F2A3A"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="10"/>
+      <Setter Property="Padding" Value="10"/>
+    </Style>
+    <Style Selector="TextBlock.title">
+      <Setter Property="Foreground" Value="#E6F0FF"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="FontSize" Value="14"/>
+    </Style>
+    <Style Selector="TextBlock.meta">
+      <Setter Property="Foreground" Value="#B8C5D6"/>
+      <Setter Property="FontSize" Value="12"/>
+    </Style>
+    <Style Selector="Button.flat">
+      <Setter Property="Background" Value="#1F2A3A"/>
+      <Setter Property="Foreground" Value="#E6F0FF"/>
+      <Setter Property="BorderBrush" Value="#2C3E55"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="6,4"/>
+      <Setter Property="CornerRadius" Value="6"/>
+    </Style>
+  </UserControl.Styles>
 
-      <!-- three blades -->
-      <Canvas Width="24" Height="24">
-        <Path Fill="#8EC8FF" Data="M12,2 L13,9 L11,9 Z" Opacity="0.85"/>
-        <Path Fill="#8EC8FF" Data="M22,12 L15,13 L15,11 Z" Opacity="0.85"/>
-        <Path Fill="#8EC8FF" Data="M12,22 L13,15 L11,15 Z" Opacity="0.85"/>
-        <!-- hub -->
-        <Ellipse Fill="#E6F0FF" Width="4" Height="4" Canvas.Left="10" Canvas.Top="10"/>
-      </Canvas>
+  <Border Classes="tile" Width="320" Height="180">
+    <Grid RowDefinitions="Auto,*,Auto">
+      <!-- Header -->
+      <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,6">
+        <TextBlock Classes="title" Text="{Binding Title}" VerticalAlignment="Center"/>
+        <Button Classes="flat" Grid.Column="1" Content="Edit" Command="{Binding EditCommand}" Margin="6,0,0,0"/>
+        <Button Classes="flat" Grid.Column="2" Content="Remove" Command="{Binding RemoveCommand}" Margin="6,0,0,0"/>
+      </Grid>
+
+      <!-- Sparkline / chart -->
+      <lvc:CartesianChart Grid.Row="1"
+                          Series="{Binding Series}"
+                          Background="Transparent"
+                          LegendPosition="Hidden"
+                          ZoomMode="None"
+                          DrawMarginFrame="0"
+                          DisableAnimations="False"
+                          AnimationsSpeed="0:0:0.25"
+                          IsHitTestVisible="False"/>
+
+      <!-- Footer meta -->
+      <Grid Grid.Row="2" ColumnDefinitions="*,*,*" Margin="0,6,0,0">
+        <TextBlock Classes="meta" Text="{Binding Rpm, StringFormat='{}{0} RPM'}"/>
+        <TextBlock Classes="meta" Grid.Column="1" Text="{Binding PwmDuty, StringFormat='{}{0}%'}" HorizontalAlignment="Center"/>
+        <TextBlock Classes="meta" Grid.Column="2" Text="{Binding Temperature}" HorizontalAlignment="Right"/>
+      </Grid>
     </Grid>
-  </Viewbox>
+  </Border>
 </UserControl>
