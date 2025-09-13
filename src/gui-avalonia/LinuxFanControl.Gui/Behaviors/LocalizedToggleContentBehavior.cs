@@ -1,50 +1,59 @@
 // (c) 2025 LinuxFanControl contributors. MIT License.
+// Purpose: Simple behavior to swap ToggleSwitch.Content between two texts.
+// No localization service dependency; bind OnText/OffText from resources if needed.
+
+using System;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Interactivity;
-using Avalonia.VisualTree;
 using Avalonia.Xaml.Interactivity;
-using LinuxFanControl.Gui.Services;
 
 namespace LinuxFanControl.Gui.Behaviors
 {
     public sealed class LocalizedToggleContentBehavior : Behavior<ToggleSwitch>
     {
-        public static readonly StyledProperty<string?> OnKeyProperty =
-        AvaloniaProperty.Register<LocalizedToggleContentBehavior, string?>(nameof(OnKey));
+        public static readonly StyledProperty<string?> OnTextProperty =
+        AvaloniaProperty.Register<LocalizedToggleContentBehavior, string?>(nameof(OnText));
 
-        public static readonly StyledProperty<string?> OffKeyProperty =
-        AvaloniaProperty.Register<LocalizedToggleContentBehavior, string?>(nameof(OffKey));
+        public static readonly StyledProperty<string?> OffTextProperty =
+        AvaloniaProperty.Register<LocalizedToggleContentBehavior, string?>(nameof(OffText));
 
-        public string? OnKey { get => GetValue(OnKeyProperty); set => SetValue(OnKeyProperty, value); }
-        public string? OffKey { get => GetValue(OffKeyProperty); set => SetValue(OffKeyProperty, value); }
+        public string? OnText
+        {
+            get => GetValue(OnTextProperty);
+            set => SetValue(OnTextProperty, value);
+        }
+
+        public string? OffText
+        {
+            get => GetValue(OffTextProperty);
+            set => SetValue(OffTextProperty, value);
+        }
 
         protected override void OnAttached()
         {
             base.OnAttached();
+
+            if (AssociatedObject is null)
+                return;
+
+            // initial apply
+            ApplyContent(AssociatedObject.IsChecked == true);
+
+            // react to changes
+            AssociatedObject.GetObservable(ToggleSwitch.IsCheckedProperty)
+            .Subscribe(checkedNow => ApplyContent(checkedNow == true));
+        }
+
+        private void ApplyContent(bool isOn)
+        {
             if (AssociatedObject is null) return;
-            AssociatedObject.AttachedToVisualTree += OnLoaded;
-            AssociatedObject.IsCheckedChanged += OnCheckedChanged;
+            AssociatedObject.Content = isOn ? (OnText ?? "On") : (OffText ?? "Off");
         }
 
         protected override void OnDetaching()
         {
-            if (AssociatedObject is not null)
-            {
-                AssociatedObject.AttachedToVisualTree -= OnLoaded;
-                AssociatedObject.IsCheckedChanged -= OnCheckedChanged;
-            }
+            // nothing to clean up (subscriptions are weak via GetObservable pipeline)
             base.OnDetaching();
-        }
-
-        private void OnLoaded(object? s, VisualTreeAttachmentEventArgs e) => UpdateLabel();
-        private void OnCheckedChanged(object? s, RoutedEventArgs e) => UpdateLabel();
-
-        private void UpdateLabel()
-        {
-            if (AssociatedObject is null) return;
-            var key = AssociatedObject.IsChecked == true ? OnKey : OffKey;
-            AssociatedObject.Content = key is null ? string.Empty : LocalizationProvider.Instance[key];
         }
     }
 }
