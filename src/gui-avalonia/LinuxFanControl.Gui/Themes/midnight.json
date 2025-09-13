@@ -1,15 +1,12 @@
 {
-  "Foreground": "#E6F0FF",
-  "SubtleText": "#94A3B8",
-  "TileBg": "#132235",
-  "TileBorder": "#1F2A3A",
-  "ButtonBg": "#1F2A3A",
-  "ButtonBgHover": "#2C3E55",
-  "ButtonText": "#E6F0FF",
-  "ButtonBorder": "#2C3E55",
-  "AccentBrush": "#3B82F6",
-  "AccentBorder": "#2463EB",
-  "FanLogoBack": "#0B1626",
-  "FanLogoBlade": "#8EC8FF",
-  "FanLogoHub": "#FFFFFF"
+  "name": "midnight",
+  "colors": {
+    "background": "#0E1A2B",
+    "panel":      "#14233A",
+    "panelAlt":   "#0B1626",
+    "accent":     "#3B82F6",
+    "accent2":    "#60A5FA",
+    "text":       "#E6EDF3",
+    "textMuted":  "#93A4B3"
+  }
 }
