@@ -1,5 +1,4 @@
 // (c) 2025 LinuxFanControl contributors. MIT License.
-using System;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
@@ -9,9 +8,6 @@ using LinuxFanControl.Gui.Services;
 
 namespace LinuxFanControl.Gui.Behaviors
 {
-    /// <summary>
-    /// Sets ToggleSwitch content based on localization keys. Avoids deprecated TopLevel.TopLevelInstances API.
-    /// </summary>
     public sealed class LocalizedToggleContentBehavior : Behavior<ToggleSwitch>
     {
         public static readonly StyledProperty<string?> OnKeyProperty =
@@ -27,7 +23,6 @@ namespace LinuxFanControl.Gui.Behaviors
         {
             base.OnAttached();
             if (AssociatedObject is null) return;
-
             AssociatedObject.AttachedToVisualTree += OnLoaded;
             AssociatedObject.IsCheckedChanged += OnCheckedChanged;
         }
@@ -48,10 +43,8 @@ namespace LinuxFanControl.Gui.Behaviors
         private void UpdateLabel()
         {
             if (AssociatedObject is null) return;
-            var loc = LocalizationProvider.Instance;
-
             var key = AssociatedObject.IsChecked == true ? OnKey : OffKey;
-            AssociatedObject.Content = key is null ? string.Empty : loc[key];
+            AssociatedObject.Content = key is null ? string.Empty : LocalizationProvider.Instance[key];
         }
     }
 }

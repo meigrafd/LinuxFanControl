@@ -23,20 +23,20 @@ namespace LinuxFanControl.Gui.ViewModels
             Points.Add(new Point(80, 100));
         }
 
+        // RelayCommand must take a single parameter. We accept a ValueTuple (x,y).
         [RelayCommand]
-        public void AddPoint(double? x, double? y)
+        public void AddPoint((double x, double y) p)
         {
-            var px = x.GetValueOrDefault(50);
-            var py = y.GetValueOrDefault(50);
-            px = Math.Clamp(px, MinX, MaxX);
-            py = Math.Clamp(py, MinY, MaxY);
-            Points.Add(new Point(px, py));
+            var (x, y) = p;
+            x = Math.Clamp(x, MinX, MaxX);
+            y = Math.Clamp(y, MinY, MaxY);
+            Points.Add(new Point(x, y));
         }
 
         [RelayCommand]
         public void Save()
         {
-            // Persist curve to config or send to daemon (out of scope here)
+            // Persist curve to config or send to daemon.
         }
 
         public readonly record struct Point(double X, double Y);
