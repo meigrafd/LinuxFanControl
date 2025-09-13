@@ -4,6 +4,7 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- keep compiled bindings off until all x:DataType are wired -->
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
 
@@ -16,12 +17,26 @@
     <PackageReference Include="LiveChartsCore" Version="2.0.0-rc3" />
     <PackageReference Include="LiveChartsCore.SkiaSharpView" Version="2.0.0-rc3" />
     <PackageReference Include="LiveChartsCore.SkiaSharpView.Avalonia" Version="2.0.0-rc3" />
-    <!-- SkiaSharp anheben/vereinheitlichen, um Downgrade zu vermeiden -->
     <PackageReference Include="SkiaSharp" Version="2.88.8" />
   </ItemGroup>
 
-  <!-- WICHTIG: Nur eine Wildcard-Regel; kein separater Eintrag für App.axaml mehr -->
+  <!-- Wichtig: KEINE Wildcards. Nur diese Dateien werden als AvaloniaXaml eingebunden. -->
   <ItemGroup>
-    <AvaloniaXaml Include="**/*.axaml" Exclude="bin/**;obj/**" />
+    <AvaloniaXaml Include="App.axaml" />
+    <AvaloniaXaml Include="Views/Controls/FanTile.axaml" />
+    <AvaloniaXaml Include="Views/DashboardView.axaml" />
+    <AvaloniaXaml Include="Views/Dialogs/ImportDialog.axaml" />
+    <AvaloniaXaml Include="Views/Dialogs/SetupDialog.axaml" />
+    <AvaloniaXaml Include="Views/Editors/CurveEditorView.axaml" />
+    <AvaloniaXaml Include="Views/MainWindow.axaml" />
+  </ItemGroup>
+
+  <!-- Sicherheitshalber: falls irgendwo anderweitig XAML hinzugefügt wurde, nimm es raus -->
+  <ItemGroup>
+    <AvaloniaXaml Remove="bin/**" />
+    <AvaloniaXaml Remove="obj/**" />
+    <!-- entferne versehentliche Duplikate (nur falls vorhanden) -->
+    <AvaloniaXaml Remove="**/*.axaml" Condition="'@(AvaloniaXaml)' != ''" />
+    <!-- und füge danach explizit (oben) wieder hinzu -->
   </ItemGroup>
 </Project>
