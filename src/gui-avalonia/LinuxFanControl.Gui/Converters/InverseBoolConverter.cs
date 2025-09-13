@@ -8,9 +8,9 @@ namespace LinuxFanControl.Gui.Converters
     public sealed class InverseBoolConverter : IValueConverter
     {
         public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => value is bool b ? !b : value;
+        => value is bool b ? !b : (object)true;
 
         public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => value is bool b ? !b : value;
+        => value is bool b ? !b : (object)false;
     }
 }

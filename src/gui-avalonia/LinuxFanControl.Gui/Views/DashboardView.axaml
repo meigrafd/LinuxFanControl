@@ -10,8 +10,8 @@
 
     <!-- Tiles -->
     <Grid Grid.Row="1">
-      <!-- When there are tiles -->
-      <ItemsControl Items="{Binding FanTiles}">
+      <!-- List -->
+      <ItemsControl ItemsSource="{Binding FanTiles}" IsVisible="{Binding HasTiles}">
         <ItemsControl.ItemsPanel>
           <ItemsPanelTemplate>
             <WrapPanel Orientation="Horizontal" ItemWidth="320" ItemHeight="180" />
@@ -26,23 +26,9 @@
 
       <!-- Placeholder when empty -->
       <TextBlock Text="No channels configured — click Setup"
-                 Foreground="#94A3B8" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center">
-        <TextBlock.Styles>
-          <Style Selector="TextBlock">
-            <Style.Triggers>
-              <DataTrigger Binding="{Binding FanTiles.Count}" Value="0">
-                <Setter Property="IsVisible" Value="True"/>
-              </DataTrigger>
-              <DataTrigger Binding="{Binding FanTiles.Count}" Value="1">
-                <Setter Property="IsVisible" Value="False"/>
-              </DataTrigger>
-              <DataTrigger Binding="{Binding FanTiles.Count}" Value="2">
-                <Setter Property="IsVisible" Value="False"/>
-              </DataTrigger>
-            </Style.Triggers>
-          </Style>
-        </TextBlock.Styles>
-      </TextBlock>
+                 Foreground="#94A3B8" FontSize="14"
+                 HorizontalAlignment="Center" VerticalAlignment="Center"
+                 IsVisible="{Binding HasTiles, Converter={StaticResource InverseBoolConverter}}" />
     </Grid>
 
     <!-- Status line -->
