@@ -1,78 +1,68 @@
-// (c) 2025 LinuxFanControl contributors. MIT License.
-
 using System;
-using System.IO;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Text;
 using Avalonia.Controls;
-using Avalonia.Threading;
+using Avalonia.Interactivity;
 
 namespace LinuxFanControl.Gui.Views.Dialogs
 {
+    // Progress dialog for detection/calibration.
+    // No bindings required; updated via code-behind to keep it simple and robust.
     public partial class DetectProgressDialog : Window
     {
-        private string? _file;
-        private CancellationTokenSource? _cts;
+        private readonly StringBuilder _log = new();
+        public bool CancelRequested { get; private set; }
 
         public DetectProgressDialog()
         {
             InitializeComponent();
+            BtnCancel.Click += OnCancelClicked;
+            BtnClose.Click  += OnCloseClicked;
         }
 
-        public void AttachTail(string file)
+        private void OnCancelClicked(object? sender, RoutedEventArgs e)
         {
-            _file = file;
-            _cts = new CancellationTokenSource();
-            _ = TailLoopAsync(_cts.Token);
+            CancelRequested = true;
+            BtnCancel.IsEnabled = false;
+            BtnCancel.Content = "Canceling…";
         }
 
-        public void AppendLine(string text)
+        private void OnCloseClicked(object? sender, RoutedEventArgs e)
         {
-            if (LogBox is null) return;
-            Dispatcher.UIThread.Post(() =>
-            {
-                LogBox.Text += text + Environment.NewLine;
-                LogBox.CaretIndex = LogBox.Text?.Length ?? 0;
-            });
-        }
-
-        private async Task TailLoopAsync(CancellationToken ct)
-        {
-            if (string.IsNullOrWhiteSpace(_file)) return;
-            long lastLen = 0;
-
-            while (!ct.IsCancellationRequested)
-            {
-                try
-                {
-                    if (File.Exists(_file))
-                    {
-                        using var fs = new FileStream(_file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                        if (fs.Length >= lastLen)
-                        {
-                            fs.Seek(lastLen, SeekOrigin.Begin);
-                            using var sr = new StreamReader(fs);
-                            var chunk = await sr.ReadToEndAsync();
-                            if (!string.IsNullOrEmpty(chunk))
-                                AppendLine(chunk.TrimEnd('\r', '\n'));
-                            lastLen = fs.Length;
-                        }
-                        else
-                        {
-                            lastLen = 0; // rotated/truncated
-                        }
-                    }
-                }
-                catch { /* ignore */ }
-
-                await Task.Delay(300, ct);
-            }
-        }
-
-        private void OnClose(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-        {
-            _cts?.Cancel();
             Close();
+        }
+
+        public void SetIndeterminate(bool indeterminate)
+        {
+            Bar.IsIndeterminate = indeterminate;
+        }
+
+        public void SetProgress(int current, int total, string? label = null)
+        {
+            if (total <= 0)
+            {
+                Bar.IsIndeterminate = true;
+                return;
+            }
+
+            Bar.IsIndeterminate = false;
+            Bar.Minimum = 0;
+            Bar.Maximum = total;
+            Bar.Value   = Math.Clamp(current, 0, total);
+            LblStatus.Text = $"{current}/{total} – {label ?? string.Empty}";
+        }
+
+        public void AppendLog(string line)
+        {
+            if (string.IsNullOrEmpty(line)) return;
+            if (_log.Length > 0) _log.AppendLine();
+            _log.Append(line);
+            LogView.Text = _log.ToString();
+        }
+
+        public void ShowCloseButton()
+        {
+            BtnClose.IsVisible = true;
+            BtnCancel.IsVisible = false;
         }
     }
 }
