@@ -27,12 +27,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <AvaloniaResource Include="App.axaml" />
     <AvaloniaResource Include="Views/MainWindow.axaml" />
     <AvaloniaResource Include="Assets/logo.ico" />
     <AvaloniaResource Include="Styles/Controls.axaml" />
     <AvaloniaResource Include="Styles/Colors.axaml" />
-    <!-- Nur dieser eine Eintrag für App.axaml -->
-    <AvaloniaResource Include="App.axaml" />
   </ItemGroup>
 
 </Project>
