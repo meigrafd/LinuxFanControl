@@ -17,8 +17,12 @@ namespace LinuxFanControl.Gui.Views.Dialogs
         {
             InitializeComponent();
             DataContext = new SetupDialogViewModel();
+
             #if DEBUG
-            this.AttachDevTools();
+            if (this is IControl control)
+            {
+                DevToolsExtensions.AttachDevTools(control);
+            }
             #endif
         }
 
