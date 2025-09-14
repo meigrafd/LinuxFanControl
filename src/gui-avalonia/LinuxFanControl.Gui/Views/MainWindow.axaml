@@ -1,19 +1,14 @@
 <!-- (c) 2025 LinuxFanControl contributors. MIT License. -->
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:d="https://github.com/avaloniaui"
-        xmlns:vm="clr-namespace:LinuxFanControl.Gui.ViewModels;assembly=LinuxFanControl.Gui"
-        xmlns:views="clr-namespace:LinuxFanControl.Gui.Views;assembly=LinuxFanControl.Gui"
         x:Class="LinuxFanControl.Gui.Views.MainWindow"
-        Title="LinuxFanControl"
-        Width="960" Height="640"
         Icon="/Assets/logo.ico"
-        DataContext="{Binding Main, Source={StaticResource Locator}}">
-  <Design.DataContext>
-    <vm:MainWindowViewModel />
-  </Design.DataContext>
-
+        Title="Linux Fan Control"
+        Width="800" Height="600">
   <Grid>
-    <views:DashboardView />
+    <TextBlock Text="Welcome to Linux Fan Control"
+               HorizontalAlignment="Center"
+               VerticalAlignment="Center"
+               FontSize="24" />
   </Grid>
 </Window>
