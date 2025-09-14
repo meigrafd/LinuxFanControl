@@ -1,11 +1,31 @@
 {
   "title": "Lüftersteuerung",
+
   "sidebar.sensors": "Sensoren",
   "sidebar.curve": "Kurve",
   "sidebar.settings": "Einstellungen",
+
   "settings.theme": "Design",
   "settings.locale": "Sprache",
   "settings.status": "Aktives Design: {theme}, Sprache: {locale}",
+
   "curve.title": "Lüfterkurve bearbeiten",
-  "curve.save": "Speichern"
+  "curve.save": "Speichern",
+  "curve.reset": "Zurücksetzen",
+  "curve.clear": "Alle Punkte löschen",
+
+  "trigger.title": "Auslöser",
+  "trigger.add": "Neuen Auslöser hinzufügen",
+  "trigger.remove": "Diesen Auslöser entfernen",
+  "trigger.direction.greater": "> größer als",
+  "trigger.direction.less": "< kleiner als",
+  "trigger.target": "Zielprofil",
+
+  "mix.title": "Mischung",
+  "mix.add": "Neue Mischung hinzufügen",
+  "mix.remove": "Diese Mischung entfernen",
+  "mix.method.max": "Maximum",
+  "mix.method.min": "Minimum",
+  "mix.method.avg": "Durchschnitt",
+  "mix.output": "Name der Mischung"
 }

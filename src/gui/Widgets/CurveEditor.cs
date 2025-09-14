@@ -1,35 +1,65 @@
 using Gtk;
 using Cairo;
-using Gdk;
+using System;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace FanControl.Gui.Widgets;
 
 public class CurveEditor : DrawingArea
 {
-    private List<(double x, double y)> _points = new()
-    {
-        (30, 20),
-        (50, 50),
-        (70, 100)
-    };
-
-    private const int PointRadius = 6;
+    private readonly List<PointD> _points = new();
+    private const double PointRadius = 5;
     private int? _dragIndex = null;
 
     public CurveEditor()
     {
         AddEvents((int)(
-            EventMask.ButtonPressMask |
-            EventMask.ButtonReleaseMask |
-            EventMask.PointerMotionMask
+            Gdk.EventMask.ButtonPressMask |
+            Gdk.EventMask.PointerMotionMask |
+            Gdk.EventMask.ButtonReleaseMask
         ));
 
-        ButtonPressEvent += OnButtonPress;
-        ButtonReleaseEvent += OnButtonRelease;
+        ButtonPressEvent += OnClick;
         MotionNotifyEvent += OnMotion;
+        ButtonReleaseEvent += OnRelease;
         Drawn += OnDraw;
+
+        // Beispielpunkte
+        _points.Add(new PointD(20, 80));
+        _points.Add(new PointD(60, 40));
+        _points.Add(new PointD(100, 20));
+    }
+
+    private void OnClick(object o, ButtonPressEventArgs args)
+    {
+        double x = args.Event.X;
+        double y = args.Event.Y;
+
+        for (int i = 0; i < _points.Count; i++)
+        {
+            var p = _points[i];
+            if (Distance(p.X, p.Y, x, y) < PointRadius * 2)
+            {
+                _dragIndex = i;
+                return;
+            }
+        }
+
+        _points.Add(new PointD(x, y));
+        QueueDraw();
+    }
+
+    private void OnMotion(object o, MotionNotifyEventArgs args)
+    {
+        if (_dragIndex is null) return;
+
+        _points[_dragIndex.Value] = new PointD(args.Event.X, args.Event.Y);
+        QueueDraw();
+    }
+
+    private void OnRelease(object o, ButtonReleaseEventArgs args)
+    {
+        _dragIndex = null;
     }
 
     private void OnDraw(object o, DrawnArgs args)
@@ -41,79 +71,42 @@ public class CurveEditor : DrawingArea
         cr.SetSourceRGB(0.8, 0.8, 0.8);
         cr.LineWidth = 2;
 
-        var sorted = _points.OrderBy(p => p.x).ToList();
-        for (int i = 0; i < sorted.Count - 1; i++)
+        for (int i = 0; i < _points.Count - 1; i++)
         {
-            cr.MoveTo(ToScreenX(sorted[i].x), ToScreenY(sorted[i].y));
-            cr.LineTo(ToScreenX(sorted[i + 1].x), ToScreenY(sorted[i + 1].y));
+            cr.MoveTo(_points[i].X, _points[i].Y);
+            cr.LineTo(_points[i + 1].X, _points[i + 1].Y);
         }
         cr.Stroke();
 
-        foreach (var (x, y) in sorted)
+        foreach (var p in _points)
         {
-            cr.Arc(ToScreenX(x), ToScreenY(y), PointRadius, 0, 2 * System.Math.PI);
+            cr.Arc(p.X, p.Y, PointRadius, 0, 2 * Math.PI);
             cr.SetSourceRGB(0.2, 0.6, 1.0);
             cr.Fill();
         }
     }
 
-    private void OnButtonPress(object o, ButtonPressEventArgs args)
+    private static double Distance(double x1, double y1, double x2, double y2)
     {
-        double mx = args.Event.X;
-        double my = args.Event.Y;
-
-        for (int i = 0; i < _points.Count; i++)
-        {
-            var (x, y) = _points[i];
-            double dx = ToScreenX(x) - mx;
-            double dy = ToScreenY(y) - my;
-            if (dx * dx + dy * dy < PointRadius * PointRadius * 2)
-            {
-                if (args.Event.Button == 3) // Rechtsklick
-                {
-                    _points.RemoveAt(i);
-                    QueueDraw();
-                    return;
-                }
-
-                _dragIndex = i;
-                return;
-            }
-        }
-
-        if (args.Event.Button == 1) // Linksklick → neuen Punkt hinzufügen
-        {
-            double tx = FromScreenX(mx);
-            double ty = FromScreenY(my);
-            _points.Add((tx, ty));
-            QueueDraw();
-        }
+        double dx = x1 - x2;
+        double dy = y1 - y2;
+        return Math.Sqrt(dx * dx + dy * dy);
     }
 
-    private void OnButtonRelease(object o, ButtonReleaseEventArgs args)
+    public void ClearPoints()
     {
-        _dragIndex = null;
-    }
-
-    private void OnMotion(object o, MotionNotifyEventArgs args)
-    {
-        if (_dragIndex is null) return;
-
-        double tx = FromScreenX(args.Event.X);
-        double ty = FromScreenY(args.Event.Y);
-        _points[_dragIndex.Value] = (tx, ty);
+        _points.Clear();
         QueueDraw();
     }
 
-    private double ToScreenX(double x) => x / 100.0 * Allocation.Width;
-    private double ToScreenY(double y) => Allocation.Height - y / 100.0 * Allocation.Height;
-    private double FromScreenX(double sx) => sx / Allocation.Width * 100.0;
-    private double FromScreenY(double sy) => (Allocation.Height - sy) / Allocation.Height * 100.0;
-
-    public List<(double x, double y)> GetPoints() => _points.OrderBy(p => p.x).ToList();
-    public void SetPoints(List<(double x, double y)> points)
+    public void ResetPoints()
     {
-        _points = points;
+        _points.Clear();
+        _points.Add(new PointD(20, 80));
+        _points.Add(new PointD(60, 40));
+        _points.Add(new PointD(100, 20));
         QueueDraw();
     }
+
+    public List<PointD> GetPoints() => new(_points);
 }

@@ -1,11 +1,31 @@
 {
   "title": "Fan Control",
+
   "sidebar.sensors": "Sensors",
   "sidebar.curve": "Curve",
   "sidebar.settings": "Settings",
+
   "settings.theme": "Theme",
   "settings.locale": "Language",
   "settings.status": "Active theme: {theme}, language: {locale}",
-  "curve.title": "Edit fan curve",
-  "curve.save": "Save"
+
+  "curve.title": "Edit Fan curve",
+  "curve.save": "Save",
+  "curve.reset": "Reset",
+  "curve.clear": "Clear all points",
+
+  "trigger.title": "Trigger",
+  "trigger.add": "Add new trigger",
+  "trigger.remove": "Remove this trigger",
+  "trigger.direction.greater": "> greater than",
+  "trigger.direction.less": "< less than",
+  "trigger.target": "Target profile",
+
+  "mix.title": "Mix",
+  "mix.add": "Add new mix",
+  "mix.remove": "Remove this mix",
+  "mix.method.max": "Maximum",
+  "mix.method.min": "Minimum",
+  "mix.method.avg": "Average",
+  "mix.output": "Mix name"
 }
