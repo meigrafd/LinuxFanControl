@@ -17,8 +17,8 @@
   <ItemGroup>
     <!-- Explicit source files -->
     <Compile Include="Program.cs" />
-    <Compile Include="App.xaml.cs" />
-    <Compile Include="MainWindow.xaml.cs" />
+    <Compile Include="App.axaml.cs" />
+    <Compile Include="MainWindow.axaml.cs" />
     <Compile Include="AssetLocator.cs" />
 
     <!-- XAML pages -->
