@@ -4,28 +4,27 @@ using System.Collections;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 
 namespace LinuxFanControl.Gui.Behaviors
 {
-    public static class DragReorderBehavior
+    public class DragReorderBehavior
     {
         public static readonly AttachedProperty<bool> IsEnabledProperty =
-        AvaloniaProperty
-        .RegisterAttached<DragReorderBehavior, ItemsControl, bool>(
+        AvaloniaProperty.RegisterAttached<DragReorderBehavior, ItemsControl, bool>(
             "IsEnabled",
             defaultValue: false);
+
+        static DragReorderBehavior()
+        {
+            IsEnabledProperty.Changed.Subscribe(OnIsEnabledChanged);
+        }
 
         public static bool GetIsEnabled(ItemsControl control) =>
         control.GetValue(IsEnabledProperty);
 
         public static void SetIsEnabled(ItemsControl control, bool value) =>
         control.SetValue(IsEnabledProperty, value);
-
-        static DragReorderBehavior()
-        {
-            // Listen for changes to our attached property
-            IsEnabledProperty.Changed.Subscribe(OnIsEnabledChanged);
-        }
 
         private static void OnIsEnabledChanged(AvaloniaPropertyChangedEventArgs e)
         {
@@ -58,7 +57,6 @@ namespace LinuxFanControl.Gui.Behaviors
             if (sender is not ItemsControl ic || !GetIsEnabled(ic))
                 return;
 
-            // Use IList for reorderable source
             if (ic.Items is IList list)
             {
                 // TODO: Determine sourceIndex and targetIndex, then reorder:

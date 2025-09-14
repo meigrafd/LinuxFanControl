@@ -1,20 +1,29 @@
-using System.Collections.ObjectModel;
+// (c) 2025 LinuxFanControl contributors. MIT License.
+using System;
+using System.Linq;
+using ReactiveUI;
 using LinuxFanControl.Gui.Services;
 
 namespace LinuxFanControl.Gui.ViewModels.Dialogs
 {
-    public class SetupDialogViewModel
+    public partial class SetupDialogViewModel : ViewModelBase
     {
-        public ObservableCollection<string> Languages { get; } = new();
-        public ObservableCollection<string> Themes { get; } = new();
-        public string SelectedLanguage { get; set; } = "en";
-        public string SelectedTheme { get; set; } = "midnight";
+        public string[] Themes { get; }
+
+        private string _selectedTheme = string.Empty;
+        public string SelectedTheme
+        {
+            get => _selectedTheme;
+            set => this.RaiseAndSetIfChanged(ref _selectedTheme, value);
+        }
 
         public SetupDialogViewModel()
         {
-            foreach (var l in LocalizationService.ListLanguages()) Languages.Add(l);
-            foreach (var t in ThemeManager.ListThemes()) Themes.Add(t);
-            SelectedLanguage = LocalizationService.CurrentLanguage;
+            var assetsRoot = AssetLocator.GetAssetsRoot();
+            Themes = ThemeManager.ListThemes(assetsRoot);
+            SelectedTheme = Themes.Length > 0
+            ? Themes[0]
+            : string.Empty;
         }
     }
 }
