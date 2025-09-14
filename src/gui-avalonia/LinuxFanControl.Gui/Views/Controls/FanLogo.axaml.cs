@@ -16,16 +16,19 @@ namespace LinuxFanControl.Gui.Views.Controls
                 Height = 64
             };
 
+            var accentBrush = this.FindResource("Lfc.Accent") as IBrush ?? Brushes.Blue;
+            var strokeBrush = this.FindResource("Lfc.WindowBg") as IBrush ?? Brushes.Black;
+
             var ellipse = new Ellipse
             {
                 Width = 64,
                 Height = 64,
-                Fill = TryFindResource("Lfc.Accent", out var accent) ? (IBrush?)accent : Brushes.Blue
+                Fill = accentBrush
             };
 
             var path = new Path
             {
-                Stroke = TryFindResource("Lfc.WindowBg", out var stroke) ? (IBrush?)stroke : Brushes.Black,
+                Stroke = strokeBrush,
                 StrokeThickness = 4,
                 Data = Geometry.Parse("M32,0 L32,64 M0,32 L64,32")
             };
