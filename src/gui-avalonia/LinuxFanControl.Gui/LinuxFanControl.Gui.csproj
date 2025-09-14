@@ -22,11 +22,11 @@
     <Compile Include="AssetLocator.cs" />
 
     <!-- XAML pages -->
-    <Page Include="App.xaml">
+    <Page Include="App.axaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
-    <Page Include="MainWindow.xaml">
+    <Page Include="MainWindow.axaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
