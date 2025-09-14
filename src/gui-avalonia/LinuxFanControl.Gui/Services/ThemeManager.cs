@@ -1,3 +1,4 @@
+// (c) 2025 LinuxFanControl contributors. MIT License.
 using System;
 using System.IO;
 using System.Linq;
@@ -17,10 +18,29 @@ namespace LinuxFanControl.Gui.Services
             if (!Directory.Exists(themesPath))
                 return Array.Empty<string>();
 
-            var files = Directory.GetFiles(themesPath, "*.json");
-            return files
-            .Select(f => Path.GetFileNameWithoutExtension(f)!)
+            return Directory
+            .GetFiles(themesPath, "*.json")
+            .Select(Path.GetFileNameWithoutExtension)
             .ToArray();
+        }
+
+        /// <summary>
+        /// Alias for GetAvailableThemes, used by ViewModels.
+        /// </summary>
+        public static string[] ListThemes(string assetsRoot) =>
+        GetAvailableThemes(assetsRoot);
+
+        /// <summary>
+        /// Applies the given theme at runtime.
+        /// </summary>
+        public static void ApplyTheme(string assetsRoot, string themeName)
+        {
+            var file = Path.Combine(assetsRoot, ThemesFolder, themeName + ".json");
+            if (!File.Exists(file))
+                return;
+
+            // TODO: Parse JSON and inject into Application.Current.Styles
+            Console.WriteLine($"ApplyTheme called for '{themeName}' at '{file}'");
         }
     }
 }
