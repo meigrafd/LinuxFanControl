@@ -3,6 +3,7 @@ using System;
 using System.Linq;
 using ReactiveUI;
 using LinuxFanControl.Gui.Services;
+using LinuxFanControl.Gui.ViewModels;
 
 namespace LinuxFanControl.Gui.ViewModels.Dialogs
 {
