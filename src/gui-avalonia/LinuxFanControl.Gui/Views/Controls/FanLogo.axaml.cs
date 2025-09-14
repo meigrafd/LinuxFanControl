@@ -1,45 +1,38 @@
-#nullable enable
 // (c) 2025 LinuxFanControl contributors. MIT License.
-using System;
-using Avalonia;
-using Avalonia.Controls.Shapes;
+#nullable enable
+using Avalonia.Controls;
 using Avalonia.Media;
+using Avalonia.Shapes;
 
 namespace LinuxFanControl.Gui.Views.Controls
 {
-    public partial class FanLogo : Shape
+    public partial class FanLogo : UserControl
     {
-        public static readonly StyledProperty<double> AngleProperty =
-        AvaloniaProperty.Register<FanLogo, double>(
-            nameof(Angle),
-                                                   0d);
-
-        public double Angle
+        public FanLogo()
         {
-            get => GetValue(AngleProperty);
-            set => SetValue(AngleProperty, value);
-        }
-
-        protected override Geometry CreateDefiningGeometry()
-        {
-            var w = Bounds.Width;
-            var h = Bounds.Height;
-            var center = new Point(w / 2, h / 2);
-            var radius = Math.Min(w, h) / 2;
-
-            var geometry = new StreamGeometry();
-            using (var ctx = geometry.Open())
+            var canvas = new Canvas
             {
-                ctx.BeginFigure(
-                    new Point(center.X + radius, center.Y),
-                                isFilled: false);
+                Width = 64,
+                Height = 64
+            };
 
-                ctx.LineTo(new Point(center.X, center.Y - radius));
-                ctx.LineTo(new Point(center.X - radius, center.Y));
-                ctx.EndFigure(isClosed: false);
-            }
+            var ellipse = new Ellipse
+            {
+                Width = 64,
+                Height = 64,
+                Fill = TryFindResource("Lfc.Accent", out var accent) ? (IBrush?)accent : Brushes.Blue
+            };
 
-            return geometry;
+            var path = new Path
+            {
+                Stroke = TryFindResource("Lfc.WindowBg", out var stroke) ? (IBrush?)stroke : Brushes.Black,
+                StrokeThickness = 4,
+                Data = Geometry.Parse("M32,0 L32,64 M0,32 L64,32")
+            };
+
+            canvas.Children.Add(ellipse);
+            canvas.Children.Add(path);
+            Content = canvas;
         }
     }
 }
