@@ -1,43 +1,22 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
-    <OutputType>WinExe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AvaloniaUseCompiledXaml>true</AvaloniaUseCompiledXaml>
+    <AssemblyName>LinuxFanControl.Gui</AssemblyName>
     <RootNamespace>LinuxFanControl.Gui</RootNamespace>
-    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- Keine Wildcards, keine expliziten Content-Listen.
+         Themes/Locales werden zur Laufzeit aus Verzeichnissen geladen. -->
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Avalonia NuGet -->
-    <PackageReference Include="Avalonia" Version="11.0.0" />
-    <PackageReference Include="Avalonia.Desktop" Version="11.0.0" />
-    <PackageReference Include="Avalonia.ReactiveUI" Version="11.0.0" />
+    <PackageReference Include="Avalonia" Version="11.2.0" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.2.0" />
+    <PackageReference Include="Avalonia.ReactiveUI" Version="11.2.0" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.2.0" />
+    <PackageReference Include="LiveChartsCore.SkiaSharpView.Avalonia" Version="2.0.0-rc3" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="2.88.9" />
+    <PackageReference Include="ReactiveUI" Version="20.1.1" />
   </ItemGroup>
-
-  <ItemGroup>
-    <!-- Explicit source files -->
-    <Compile Include="Program.cs" />
-    <Compile Include="App.axaml.cs" />
-    <Compile Include="MainWindow.axaml.cs" />
-    <Compile Include="AssetLocator.cs" />
-
-    <!-- XAML pages -->
-    <Page Include="App.axaml">
-      <Generator>MSBuild:Compile</Generator>
-      <SubType>Designer</SubType>
-    </Page>
-    <Page Include="MainWindow.axaml">
-      <Generator>MSBuild:Compile</Generator>
-      <SubType>Designer</SubType>
-    </Page>
-
-    <!-- Dynamische Assets: kopieren zur Ausgabe -->
-    <None Include="Assets/Locales/*.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="Assets/Themes/*.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-
 </Project>
