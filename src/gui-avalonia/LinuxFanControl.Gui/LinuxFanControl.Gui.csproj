@@ -30,8 +30,6 @@
     <AvaloniaResource Include="Views/MainWindow.axaml" />
     <AvaloniaResource Include="Styles/Controls.axaml" />
     <AvaloniaResource Include="Styles/Colors.axaml" />
-    <!-- logo.ico nur einbinden, wenn die Datei vorhanden ist -->
-    <!-- <AvaloniaResource Include="Assets/logo.ico" /> -->
   </ItemGroup>
 
 </Project>
