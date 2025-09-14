@@ -5,7 +5,6 @@
              x:Class="LinuxFanControl.Gui.App">
   <Application.Styles>
     <fluent:FluentTheme Mode="Light" />
-    <!-- Colors will be applied at runtime via ThemeManager to these resource keys -->
     <Style>
       <Style.Resources>
         <SolidColorBrush x:Key="Lfc.WindowBg">#111827</SolidColorBrush>
