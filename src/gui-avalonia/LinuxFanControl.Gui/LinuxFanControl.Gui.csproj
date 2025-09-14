@@ -17,8 +17,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Update="App.axaml.cs">
-      <DependentUpon>App.axaml</DependentUpon>
+    <Compile Update="MainApp.axaml.cs">
+      <DependentUpon>MainApp.axaml</DependentUpon>
     </Compile>
     <Compile Update="Views/MainWindow.axaml.cs">
       <DependentUpon>MainWindow.axaml</DependentUpon>
@@ -26,7 +26,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <AvaloniaResource Include="App.axaml" />
+    <AvaloniaResource Include="MainApp.axaml" />
     <AvaloniaResource Include="Views/MainWindow.axaml" />
     <AvaloniaResource Include="Styles/Controls.axaml" />
     <AvaloniaResource Include="Styles/Colors.axaml" />
