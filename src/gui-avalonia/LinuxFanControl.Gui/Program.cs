@@ -1,3 +1,4 @@
+#nullable enable
 using Avalonia;
 using System;
 

@@ -1,3 +1,4 @@
+#nullable enable
 using System.Collections.ObjectModel;
 using LinuxFanControl.Gui.Services;
 

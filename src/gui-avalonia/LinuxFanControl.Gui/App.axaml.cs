@@ -1,3 +1,4 @@
+#nullable enable
 // (c) 2025 LinuxFanControl contributors. MIT License.
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;

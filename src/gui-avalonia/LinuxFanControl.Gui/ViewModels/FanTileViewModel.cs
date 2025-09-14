@@ -1,3 +1,4 @@
+#nullable enable
 using LinuxFanControl.Gui.Services;
 
 namespace LinuxFanControl.Gui.ViewModels
