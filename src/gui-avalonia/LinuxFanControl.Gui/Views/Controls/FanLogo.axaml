@@ -1,19 +1,11 @@
 <!-- (c) 2025 LinuxFanControl contributors. MIT License. -->
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:controls="clr-namespace:LinuxFanControl.Gui.Views.Controls"
              x:Class="LinuxFanControl.Gui.Views.Controls.FanLogo">
-  <UserControl.Styles>
-    <Style Selector="Canvas">
-      <Setter Property="Width" Value="64"/>
-      <Setter Property="Height" Value="64"/>
-    </Style>
-  </UserControl.Styles>
-
-  <Canvas>
-    <Ellipse Width="64" Height="64" Fill="{DynamicResource Lfc.Accent}" />
+  <Grid Width="64" Height="64">
+    <Ellipse Fill="{DynamicResource Lfc.Accent}" />
     <Path Stroke="{DynamicResource Lfc.WindowBg}"
           StrokeThickness="4"
           Data="M32,0 L32,64 M0,32 L64,32" />
-  </Canvas>
+  </Grid>
 </UserControl>
