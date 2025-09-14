@@ -4,7 +4,7 @@
              xmlns:fluent="clr-namespace:Avalonia.Themes.Fluent;assembly=Avalonia.Themes.Fluent"
              x:Class="LinuxFanControl.Gui.App">
   <Application.Styles>
-    <fluent:FluentTheme Mode="Light" />
+    <fluent:FluentTheme />
     <Style>
       <Style.Resources>
         <SolidColorBrush x:Key="Lfc.WindowBg">#111827</SolidColorBrush>
