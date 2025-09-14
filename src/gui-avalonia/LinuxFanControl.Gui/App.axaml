@@ -1,9 +1,10 @@
+<!-- (c) 2025 LinuxFanControl contributors. MIT License. -->
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:fluent="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls">
+             xmlns:fluent="clr-namespace:Avalonia.Themes.Fluent;assembly=Avalonia.Themes.Fluent"
              x:Class="LinuxFanControl.Gui.App">
   <Application.Styles>
-    <FluentTheme />
+    <fluent:FluentTheme Mode="Light" />
     <!-- Colors will be applied at runtime via ThemeManager to these resource keys -->
     <Style>
       <Style.Resources>

@@ -1,10 +1,10 @@
-#nullable enable
 // (c) 2025 LinuxFanControl contributors. MIT License.
+#nullable enable
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
-using LinuxFanControl.Gui;
 using LinuxFanControl.Gui.Services;
+using LinuxFanControl.Gui.Views;
 
 namespace LinuxFanControl.Gui
 {

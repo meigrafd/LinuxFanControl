@@ -1,11 +1,13 @@
-#nullable enable
 // (c) 2025 LinuxFanControl contributors. MIT License.
+#nullable enable
 using Avalonia.Controls;
 using Avalonia.Interactivity;
-using Avalonia.Diagnostics;
-using LinuxFanControl.Gui;
 using LinuxFanControl.Gui.Services;
 using LinuxFanControl.Gui.ViewModels.Dialogs;
+
+#if DEBUG
+using Avalonia.Diagnostics;
+#endif
 
 namespace LinuxFanControl.Gui.Views.Dialogs
 {
