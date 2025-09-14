@@ -3,6 +3,8 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using LinuxFanControl.Gui.Services;
+using LinuxFanControl.Gui;
+using LinuxFanControl.Gui.Views;
 
 namespace LinuxFanControl.Gui
 {

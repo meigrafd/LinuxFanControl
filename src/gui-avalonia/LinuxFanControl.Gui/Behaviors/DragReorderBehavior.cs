@@ -13,7 +13,7 @@ namespace LinuxFanControl.Gui.Behaviors
         public static readonly AttachedProperty<bool> IsEnabledProperty =
         AvaloniaProperty.RegisterAttached<DragReorderBehavior, ItemsControl, bool>(
             "IsEnabled",
-            defaultValue: false);
+            false);
 
         static DragReorderBehavior()
         {

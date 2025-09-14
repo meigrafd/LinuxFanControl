@@ -2,6 +2,7 @@
 using System;
 using System.Linq;
 using ReactiveUI;
+using LinuxFanControl.Gui;
 using LinuxFanControl.Gui.Services;
 using LinuxFanControl.Gui.ViewModels;
 

@@ -1,7 +1,7 @@
 // (c) 2025 LinuxFanControl contributors. MIT License.
-using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.Diagnostics;
 using LinuxFanControl.Gui;
 using LinuxFanControl.Gui.Services;
 using LinuxFanControl.Gui.ViewModels.Dialogs;
@@ -27,12 +27,12 @@ namespace LinuxFanControl.Gui.Views.Dialogs
                 ThemeManager.ApplyTheme(assetsRoot, vm.SelectedTheme);
             }
 
-            Close(Window.CloseReason.Ok);
+            Close(true);
         }
 
         private void OnCancel(object? sender, RoutedEventArgs e)
         {
-            Close(Window.CloseReason.Cancel);
+            Close(false);
         }
     }
 }
