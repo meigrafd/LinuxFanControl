@@ -9,9 +9,6 @@ namespace LinuxFanControl.Gui.Services
     {
         private const string ThemesFolder = "Themes";
 
-        /// <summary>
-        /// Returns the names (without “.json”) of all theme files in Assets/Themes.
-        /// </summary>
         public static string[] GetAvailableThemes(string assetsRoot)
         {
             var themesPath = Path.Combine(assetsRoot, ThemesFolder);
@@ -20,19 +17,13 @@ namespace LinuxFanControl.Gui.Services
 
             return Directory
             .GetFiles(themesPath, "*.json")
-            .Select(Path.GetFileNameWithoutExtension)
+            .Select(f => Path.GetFileNameWithoutExtension(f)!)
             .ToArray();
         }
 
-        /// <summary>
-        /// Alias for GetAvailableThemes, used by ViewModels.
-        /// </summary>
         public static string[] ListThemes(string assetsRoot) =>
         GetAvailableThemes(assetsRoot);
 
-        /// <summary>
-        /// Applies the given theme at runtime.
-        /// </summary>
         public static void ApplyTheme(string assetsRoot, string themeName)
         {
             var file = Path.Combine(assetsRoot, ThemesFolder, themeName + ".json");

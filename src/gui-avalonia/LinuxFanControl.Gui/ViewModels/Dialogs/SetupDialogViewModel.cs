@@ -8,7 +8,7 @@ using LinuxFanControl.Gui.ViewModels;
 
 namespace LinuxFanControl.Gui.ViewModels.Dialogs
 {
-    public partial class SetupDialogViewModel : ViewModelBase
+    public class SetupDialogViewModel : ViewModelBase
     {
         public string[] Themes { get; }
 

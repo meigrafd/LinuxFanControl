@@ -1,22 +1,88 @@
 <Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <AvaloniaUseCompiledXaml>true</AvaloniaUseCompiledXaml>
-    <AssemblyName>LinuxFanControl.Gui</AssemblyName>
+    <OutputType>WinExe</OutputType>
     <RootNamespace>LinuxFanControl.Gui</RootNamespace>
-    <!-- Keine Wildcards, keine expliziten Content-Listen.
-         Themes/Locales werden zur Laufzeit aus Verzeichnissen geladen. -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Avalonia" Version="11.2.0" />
-    <PackageReference Include="Avalonia.Desktop" Version="11.2.0" />
-    <PackageReference Include="Avalonia.ReactiveUI" Version="11.2.0" />
-    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.2.0" />
-    <PackageReference Include="LiveChartsCore.SkiaSharpView.Avalonia" Version="2.0.0-rc3" />
-    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="2.88.9" />
-    <PackageReference Include="ReactiveUI" Version="20.1.1" />
+    <PackageReference Include="Avalonia" Version="11.0.0" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.0.0" />
+    <PackageReference Include="Avalonia.ReactiveUI" Version="11.0.0" />
+    <PackageReference Include="ReactiveUI" Version="18.0.0" />
+    <PackageReference Include="Avalonia.Diagnostics" Version="11.0.0" Condition="'$(Configuration)'=='Debug'" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- Core -->
+    <Compile Include="Program.cs" />
+    <Compile Include="AssetLocator.cs" />
+    <Page    Include="App.axaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Compile Include="App.axaml.cs" />
+
+    <!-- Behaviors -->
+    <Compile Include="Behaviors/DragReorderBehavior.cs" />
+
+    <!-- Models -->
+    <Compile Include="Models/FanModels.cs" />
+
+    <!-- Services -->
+    <Compile Include="Services/ConfigService.cs" />
+    <Compile Include="Services/DaemonClient.cs" />
+    <Compile Include="Services/LocalizationService.cs" />
+    <Compile Include="Services/MiniChartService.cs" />
+    <Compile Include="Services/MockTelemetryService.cs" />
+    <Compile Include="Services/RpcClient.cs" />
+    <Compile Include="Services/ThemeManager.cs" />
+
+    <!-- ViewModels -->
+    <Compile Include="ViewModels/ViewModelBase.cs" />
+    <Compile Include="ViewModels/DashboardViewModel.cs" />
+    <Compile Include="ViewModels/Dialogs/SetupDialogViewModel.cs" />
+    <Compile Include="ViewModels/FanTileViewModel.cs" />
+    <Compile Include="ViewModels/MainWindowViewModel.cs" />
+
+    <!-- Views -->
+    <Page    Include="Views/MainWindow.axaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Compile Include="Views/MainWindow.axaml.cs" />
+
+    <Page    Include="Views/DashboardView.axaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Compile Include="Views/DashboardView.axaml.cs" />
+
+    <Page    Include="Views/Controls/FanLogo.axaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Compile Include="Views/Controls/FanLogo.axaml.cs" />
+
+    <Page    Include="Views/Controls/FanTile.axaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Compile Include="Views/Controls/FanTile.axaml.cs" />
+
+    <Page    Include="Views/Dialogs/DetectProgressDialog.axaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Compile Include="Views/Dialogs/DetectProgressDialog.axaml.cs" />
+
+    <Page    Include="Views/Dialogs/SetupDialog.axaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Compile Include="Views/Dialogs/SetupDialog.axaml.cs" />
+  </ItemGroup>
+
 </Project>
