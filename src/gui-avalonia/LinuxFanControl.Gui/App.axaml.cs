@@ -3,7 +3,6 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
-using LinuxFanControl.Gui.Services;
 using LinuxFanControl.Gui.Views;
 
 namespace LinuxFanControl.Gui
@@ -13,10 +12,6 @@ namespace LinuxFanControl.Gui
         public override void Initialize()
         {
             AvaloniaXamlLoader.Load(this);
-
-            var assetsRoot = AssetLocator.GetAssetsRoot();
-            LoadLocales(assetsRoot);
-            LoadThemes(assetsRoot);
         }
 
         public override void OnFrameworkInitializationCompleted()
@@ -27,20 +22,6 @@ namespace LinuxFanControl.Gui
             }
 
             base.OnFrameworkInitializationCompleted();
-        }
-
-        private void LoadLocales(string root)
-        {
-            // TODO: JSON-Dateien aus root/Locales laden und als ResourceDictionary registrieren
-        }
-
-        private void LoadThemes(string root)
-        {
-            var themes = ThemeManager.ListThemes(root);
-            if (themes.Length > 0)
-            {
-                ThemeManager.ApplyTheme(root, themes[0]);
-            }
         }
     }
 }

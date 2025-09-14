@@ -18,18 +18,20 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Update="Views\MainWindow.axaml.cs">
-      <DependentUpon>MainWindow.axaml</DependentUpon>
-    </Compile>
     <Compile Update="App.axaml.cs">
       <DependentUpon>App.axaml</DependentUpon>
+    </Compile>
+    <Compile Update="Views/MainWindow.axaml.cs">
+      <DependentUpon>MainWindow.axaml</DependentUpon>
     </Compile>
   </ItemGroup>
 
   <ItemGroup>
     <AvaloniaResource Include="App.axaml" />
-    <AvaloniaResource Include="Views\MainWindow.axaml" />
+    <AvaloniaResource Include="Views/MainWindow.axaml" />
     <AvaloniaResource Include="Assets/logo.ico" />
+    <AvaloniaResource Include="Styles/Controls.axaml" />
+    <AvaloniaResource Include="Styles/Colors.axaml" />
   </ItemGroup>
 
 </Project>
