@@ -1,42 +1,32 @@
-// (c) 2025 LinuxFanControl contributors. MIT License.
 using System;
-using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Threading;
 
 namespace LinuxFanControl.Gui.Views.Controls
 {
-    /// <summary>Rotating fan logo with improved contrast.</summary>
     public partial class FanLogo : UserControl
     {
         private readonly DispatcherTimer _timer;
-        private double _angleDeg;
+        private double _angle = 0;
+        private RotateTransform _rt = new RotateTransform();
 
         public FanLogo()
         {
             InitializeComponent();
-            _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
-            _timer.Tick += (_, __) => TickRotate();
+            var blade = this.FindControl<Shape>("Blade");
+            blade.RenderTransform = _rt;
+            blade.RenderTransformOrigin = new RelativePoint(0.5, 0.5, RelativeUnit.Relative);
+            _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(30) };
+            _timer.Tick += (_, __) =>
+            {
+                _angle = (_angle + 6) % 360;
+                _rt.Angle = _angle;
+            };
             _timer.Start();
+            this.DetachedFromVisualTree += (_, __) => _timer.Stop();
         }
-
-        private void TickRotate()
-        {
-            _angleDeg += 360.0 * _timer.Interval.TotalSeconds;
-            if (_angleDeg >= 360.0) _angleDeg -= 360.0;
-
-            var rotor = this.FindControl<Canvas>("Rotor");
-            if (rotor is null) return;
-
-            if (rotor.RenderTransform is RotateTransform rt) rt.Angle = _angleDeg;
-            else rotor.RenderTransform = new RotateTransform(_angleDeg);
-        }
-
-        protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
-        {
-            _timer.Stop();
-            base.OnDetachedFromVisualTree(e);
-        }
+        private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
     }
 }

@@ -1,8 +1,11 @@
 {
-  "palette": {
-    "background": "#0E2135",
-    "panel": "#112A44",
-    "text": "#DDE6F2",
-    "accent": "#4DA3FF"
+  "Name": "Midnight",
+  "Variant": "dark",
+  "Palette": {
+    "WindowBackground": "#0f172a",
+    "CardBackground": "#1e293b",
+    "TextPrimary": "#e5e7eb",
+    "TextSecondary": "#94a3b8",
+    "Accent": "#2563eb"
   }
 }

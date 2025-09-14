@@ -1,59 +1,60 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
-using System.Collections.Generic;
-using System.Linq;
 
 namespace LinuxFanControl.Gui.Services
 {
-    /// <summary>
-    /// Loads ./Locales/*.json and provides string lookup by key.
-    /// Nothing is hardcoded; language files can be added without recompiling.
-    /// </summary>
-    public sealed class LocalizationService
+    // Minimal runtime i18n loader; strings stored in Locales/{lang}.json
+    public static class LocalizationService
     {
-        public static LocalizationService Instance { get; } = new();
+        private static readonly Dictionary<string, string> _strings = new();
+        private static string _current = "en";
 
-        public static string LocalesDir =>
-        Path.Combine(AppContext.BaseDirectory, "Locales");
+        public static string CurrentLanguage => _current;
 
-        public event Action? LanguageChanged;
-
-        public string CurrentLanguage { get; private set; } = "en";
-        Dictionary<string, string> _table = new(StringComparer.OrdinalIgnoreCase);
-
-        LocalizationService()
+        public static string[] ListLanguages()
         {
-            var langs = ListLanguages();
-            CurrentLanguage = langs.Contains("en") ? "en" : langs.FirstOrDefault() ?? "en";
-            Load(CurrentLanguage);
+            var dir = Path.Combine(AppContext.BaseDirectory, "Locales");
+            if (!Directory.Exists(dir)) return new[] { "en" };
+            var langs = new List<string>();
+            foreach (var f in Directory.GetFiles(dir, "*.json"))
+            {
+                langs.Add(Path.GetFileNameWithoutExtension(f));
+            }
+            langs.Sort();
+            return langs.Count > 0 ? langs.ToArray() : new[] { "en" };
         }
 
-        public IReadOnlyList<string> ListLanguages()
+        public static void SetLocale(string language)
         {
-            if (!Directory.Exists(LocalesDir)) return Array.Empty<string>();
-            return Directory.GetFiles(LocalesDir, "*.json")
-            .Select(Path.GetFileNameWithoutExtension)
-            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+            var dir = Path.Combine(AppContext.BaseDirectory, "Locales");
+            var path = Path.Combine(dir, $"{language}.json");
+            if (!File.Exists(path))
+            {
+                language = "en";
+                path = Path.Combine(dir, "en.json");
+            }
+            _strings.Clear();
+            try
+            {
+                var json = File.ReadAllText(path);
+                var doc = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+                if (doc != null)
+                {
+                    foreach (var kv in doc) _strings[kv.Key] = kv.Value;
+                    _current = language;
+                }
+            }
+            catch
+            {
+                // fallback
+                _strings.Clear();
+                _strings["app.title"] = "Linux Fan Control";
+            }
         }
 
-        public void Load(string lang)
-        {
-            var f = Path.Combine(LocalesDir, $"{lang}.json");
-            if (!File.Exists(f))
-                throw new FileNotFoundException($"Locale file not found: {f}");
-
-            var json = File.ReadAllText(f);
-            var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(json)
-            ?? new Dictionary<string, string>();
-
-            _table = new Dictionary<string, string>(dict, StringComparer.OrdinalIgnoreCase);
-            CurrentLanguage = lang;
-            LanguageChanged?.Invoke();
-        }
-
-        public string T(string key, string? fallback = null)
-        => _table.TryGetValue(key, out var v) ? v : (fallback ?? key);
+        public static string T(string key, string? fallback = null)
+            => _strings.TryGetValue(key, out var val) ? val : (fallback ?? key);
     }
 }

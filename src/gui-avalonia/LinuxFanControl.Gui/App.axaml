@@ -1,12 +1,17 @@
-<?xml version="1.0" encoding="utf-8"?>
-<Application
-    xmlns="https://github.com/avaloniaui"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:fluent="clr-namespace:Avalonia.Themes.Fluent;assembly=Avalonia.Themes.Fluent"
-    x:Class="LinuxFanControl.Gui.App">
-
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="LinuxFanControl.Gui.App">
   <Application.Styles>
-    <fluent:FluentTheme />
+    <FluentTheme />
+    <!-- Colors will be applied at runtime via ThemeManager to these resource keys -->
+    <Style>
+      <Style.Resources>
+        <SolidColorBrush x:Key="Lfc.WindowBg">#111827</SolidColorBrush>
+        <SolidColorBrush x:Key="Lfc.CardBg">#1f2937</SolidColorBrush>
+        <SolidColorBrush x:Key="Lfc.Accent">#2563eb</SolidColorBrush>
+        <SolidColorBrush x:Key="Lfc.TextPrimary">#e5e7eb</SolidColorBrush>
+        <SolidColorBrush x:Key="Lfc.TextSecondary">#9ca3af</SolidColorBrush>
+      </Style.Resources>
+    </Style>
   </Application.Styles>
-
 </Application>

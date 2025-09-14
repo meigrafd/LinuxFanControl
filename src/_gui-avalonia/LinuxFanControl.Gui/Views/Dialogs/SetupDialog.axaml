@@ -1,0 +1,40 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="LinuxFanControl.Gui.Views.Dialogs.SetupDialog"
+        Width="640" Height="420"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Title="Setup">
+  <Grid RowDefinitions="Auto,*,Auto"
+        ColumnDefinitions="*">
+    <!-- Header spacer -->
+    <Border Height="16"/>
+
+    <!-- Content -->
+    <StackPanel Grid.Row="1" Spacing="14" HorizontalAlignment="Center">
+      <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+        <TextBlock Text="{Binding L_Language}" Width="160" VerticalAlignment="Center"/>
+        <ComboBox Width="220"
+                  ItemsSource="{Binding Languages}"
+                  SelectedItem="{Binding SelectedLanguage}"/>
+        </StackPanel>
+
+        <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+          <TextBlock Text="{Binding L_Theme}" Width="160" VerticalAlignment="Center"/>
+          <ComboBox Width="220"
+                    ItemsSource="{Binding Themes}"
+                    SelectedItem="{Binding SelectedTheme}"/>
+          </StackPanel>
+
+          <CheckBox Content="{Binding L_Detect}"
+                    IsChecked="{Binding RunDetection}"/>
+          </StackPanel>
+
+          <!-- Buttons -->
+          <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12"
+                      HorizontalAlignment="Right" Margin="0,18,18,18">
+            <Button Content="{Binding L_Cancel}" Name="BtnCancel" Width="110"/>
+            <Button Content="{Binding L_Apply}"  Name="BtnApply"  Width="110" IsDefault="True"/>
+          </StackPanel>
+        </Grid>
+      </Window>

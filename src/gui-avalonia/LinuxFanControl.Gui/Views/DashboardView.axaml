@@ -1,16 +1,11 @@
-<?xml version="1.0" encoding="utf-8"?>
-<UserControl
-  x:Class="LinuxFanControl.Gui.Views.DashboardView"
-  xmlns="https://github.com/avaloniaui"
-  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-  xmlns:views="clr-namespace:LinuxFanControl.Gui.Views.Controls"
-  xmlns:dd="using:Avalonia.Input">
-
-  <!-- ItemsControl named TileBoard; enable DnD via attached property -->
-  <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-    <ItemsControl x:Name="TileBoard"
-                  dd:DragDrop.AllowDrop="True"
-                  ItemsSource="{Binding FanTiles}">
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:LinuxFanControl.Gui.ViewModels"
+             xmlns:views="clr-namespace:LinuxFanControl.Gui.Views"
+             xmlns:ctrls="clr-namespace:LinuxFanControl.Gui.Views.Controls"
+             x:Class="LinuxFanControl.Gui.Views.DashboardView">
+  <ScrollViewer>
+    <ItemsControl x:Name="TileBoard" ItemsSource="{Binding Fans}">
       <ItemsControl.ItemsPanel>
         <ItemsPanelTemplate>
           <WrapPanel />
@@ -18,7 +13,7 @@
       </ItemsControl.ItemsPanel>
       <ItemsControl.ItemTemplate>
         <DataTemplate>
-          <views:FanTile/>
+          <ctrls:FanTile />
         </DataTemplate>
       </ItemsControl.ItemTemplate>
     </ItemsControl>

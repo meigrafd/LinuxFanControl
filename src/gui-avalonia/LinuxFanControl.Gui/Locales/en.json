@@ -1,7 +1,9 @@
 {
-  "ui.language": "Language",
-  "ui.theme": "Theme",
-  "ui.apply": "Apply",
-  "ui.cancel": "Cancel",
-  "ui.setup.run_detection": "Run detection after apply"
+  "app.title": "Linux Fan Control",
+  "menu.setup": "Setup",
+  "setup.title": "First run setup",
+  "setup.language": "Language",
+  "setup.theme": "Theme",
+  "setup.apply": "Apply",
+  "setup.cancel": "Cancel"
 }

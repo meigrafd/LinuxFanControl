@@ -1,8 +1,11 @@
 {
-  "palette": {
-    "background": "#FAFAFC",
-    "panel": "#FFFFFF",
-    "text": "#1E2430",
-    "accent": "#2D6CDF"
+  "Name": "Light",
+  "Variant": "light",
+  "Palette": {
+    "WindowBackground": "#f8fafc",
+    "CardBackground": "#ffffff",
+    "TextPrimary": "#0f172a",
+    "TextSecondary": "#334155",
+    "Accent": "#2563eb"
   }
 }

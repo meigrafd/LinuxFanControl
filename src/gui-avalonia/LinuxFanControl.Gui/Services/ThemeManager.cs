@@ -2,110 +2,53 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
-using System.Collections.Generic;
 using Avalonia;
 using Avalonia.Media;
 
 namespace LinuxFanControl.Gui.Services
 {
-    /// <summary>
-    /// Loads simple theme JSON files from ./Themes/*.json and applies as resource keys.
-    /// Nothing is hardcoded: all keys in the JSON become resources at Application.Current.Resources[key].
-    /// </summary>
+    // Runtime theme loader: Themes/{name}.json => maps to resource keys
+    // Keys: Lfc.WindowBg, Lfc.CardBg, Lfc.TextPrimary, Lfc.TextSecondary, Lfc.Accent, Variant(light|dark)
     public static class ThemeManager
     {
-        public static string ThemesDir =>
-        Path.Combine(AppContext.BaseDirectory, "Themes");
-
-        public static IReadOnlyList<string> ListThemes()
+        public static string[] ListThemes()
         {
-            if (!Directory.Exists(ThemesDir)) return Array.Empty<string>();
-            return Directory.GetFiles(ThemesDir, "*.json")
-            .Select(Path.GetFileNameWithoutExtension)
-            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+            var dir = Path.Combine(AppContext.BaseDirectory, "Themes");
+            if (!Directory.Exists(dir)) return new[] { "midnight", "light" };
+            var list = Directory.GetFiles(dir, "*.json").Select(Path.GetFileNameWithoutExtension).OrderBy(s => s).ToArray();
+            return list.Length > 0 ? list : new[] { "midnight", "light" };
         }
 
-        public static string DefaultTheme()
-        => ListThemes().FirstOrDefault() ?? "midnight";
-
-        public static string CurrentTheme { get; private set; } = "";
-
-        public static void Apply(string themeName)
+        public static void ApplyTheme(string name)
         {
-            var file = Path.Combine(ThemesDir, $"{themeName}.json");
-            if (!File.Exists(file))
-                throw new FileNotFoundException($"Theme file not found: {file}");
-
-            var json = File.ReadAllText(file);
-            var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            var app = Application.Current ?? throw new InvalidOperationException("No Avalonia Application running.");
-            var res = app.Resources;
-
-            // Clear only keys that were previously set by ThemeManager (we track by prefix).
-            var toRemove = res.Keys.OfType<object>()
-            .Where(k => k is string s && s.StartsWith("theme:", StringComparison.Ordinal))
-            .ToList();
-            foreach (var k in toRemove) res.Remove(k);
-
-            // Flatten JSON to resources: theme:<path> -> value (Brush/Color/string/double)
-            void put(string key, JsonElement el)
+            var dir = Path.Combine(AppContext.BaseDirectory, "Themes");
+            var path = Path.Combine(dir, $"{name}.json");
+            if (!File.Exists(path))
             {
-                string resKey = $"theme:{key}";
-                switch (el.ValueKind)
-                {
-                    case JsonValueKind.Number:
-                        if (el.TryGetDouble(out var d)) res[resKey] = d;
-                        break;
-                    case JsonValueKind.String:
-                        var s = el.GetString() ?? "";
-                        // try color => SolidColorBrush
-                        if (TryParseColor(s, out var color))
-                            res[resKey] = new SolidColorBrush(color);
-                    else
-                        res[resKey] = s;
-                    break;
-                    case JsonValueKind.True:
-                    case JsonValueKind.False:
-                        res[resKey] = el.GetBoolean();
-                        break;
-                }
+                name = "midnight";
+                path = Path.Combine(dir, "midnight.json");
             }
-
-            void walk(JsonElement e, string prefix)
+            try
             {
-                if (e.ValueKind == JsonValueKind.Object)
-                {
-                    foreach (var p in e.EnumerateObject())
-                        walk(p.Value, string.IsNullOrEmpty(prefix) ? p.Name : $"{prefix}.{p.Name}");
-                }
-                else
-                {
-                    put(prefix, e);
-                }
+                var json = File.ReadAllText(path);
+                var doc = JsonDocument.Parse(json).RootElement;
+                var pal = doc.GetProperty("Palette");
+                string Get(string k, string def) => pal.TryGetProperty(k, out var v) ? v.GetString() ?? def : def;
+
+                var app = Application.Current!;
+                app.Resources["Lfc.WindowBg"] = new SolidColorBrush(Color.Parse(Get("WindowBackground", "#111827")));
+                app.Resources["Lfc.CardBg"] = new SolidColorBrush(Color.Parse(Get("CardBackground", "#1f2937")));
+                app.Resources["Lfc.TextPrimary"] = new SolidColorBrush(Color.Parse(Get("TextPrimary", "#e5e7eb")));
+                app.Resources["Lfc.TextSecondary"] = new SolidColorBrush(Color.Parse(Get("TextSecondary", "#9ca3af")));
+                app.Resources["Lfc.Accent"] = new SolidColorBrush(Color.Parse(Get("Accent", "#2563eb")));
+
+                var variant = doc.TryGetProperty("Variant", out var vElem) ? vElem.GetString() : "dark";
+                app.RequestedThemeVariant = (variant?.ToLowerInvariant() == "light") ? Avalonia.Styling.ThemeVariant.Light : Avalonia.Styling.ThemeVariant.Dark;
             }
-
-            walk(root, "");
-
-            CurrentTheme = themeName;
-        }
-
-        static bool TryParseColor(string s, out Color color)
-        {
-            s = s.Trim();
-            if (s.StartsWith("#", StringComparison.Ordinal))
+            catch
             {
-                try
-                {
-                    color = Color.Parse(s);
-                    return true;
-                }
-                catch { }
+                // ignore and keep defaults
             }
-            color = default;
-            return false;
         }
     }
 }

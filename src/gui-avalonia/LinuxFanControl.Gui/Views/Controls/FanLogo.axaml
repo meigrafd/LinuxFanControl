@@ -1,18 +1,10 @@
-<UserControl
-    x:Class="LinuxFanControl.Gui.Views.Controls.FanLogo"
-    xmlns="https://github.com/avaloniaui"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Width="28" Height="28">
-  <Grid>
-    <Ellipse Width="28" Height="28" Fill="{DynamicResource FanLogo.Back}" />
-    <Canvas x:Name="Rotor" Width="24" Height="24" RenderTransformOrigin="0.5,0.5" HorizontalAlignment="Center" VerticalAlignment="Center">
-      <Canvas.RenderTransform>
-        <RotateTransform Angle="0"/>
-      </Canvas.RenderTransform>
-      <Path Fill="{DynamicResource FanLogo.Blade}" Data="M12,0 L14,9 L10,9 Z" Opacity="0.95"/>
-      <Path Fill="{DynamicResource FanLogo.Blade}" Data="M24,12 L15,14 L15,10 Z" Opacity="0.95"/>
-      <Path Fill="{DynamicResource FanLogo.Blade}" Data="M12,24 L14,15 L10,15 Z" Opacity="0.95"/>
-      <Ellipse Width="6" Height="6" Canvas.Left="9" Canvas.Top="9" Fill="{DynamicResource FanLogo.Hub}" StrokeThickness="0"/>
-    </Canvas>
-  </Grid>
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="LinuxFanControl.Gui.Views.Controls.FanLogo"
+             Width="28" Height="28">
+  <Canvas>
+    <Path x:Name="Blade" Stroke="{DynamicResource Lfc.Accent}" Fill="{DynamicResource Lfc.Accent}" StrokeThickness="1"
+          Data="M14,0 C12,6 10,8 14,14 C18,8 16,6 14,0 Z"/>
+    <Ellipse Stroke="{DynamicResource Lfc.TextSecondary}" Width="26" Height="26" StrokeThickness="1" Canvas.Left="1" Canvas.Top="1"/>
+  </Canvas>
 </UserControl>

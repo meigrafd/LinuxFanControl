@@ -1,8 +1,7 @@
-// (c) 2025 LinuxFanControl contributors. MIT License.
-// Comments in English, UI texts via external JSON (Locales/*.json).
-
 using System;
-using System.IO;
+using System.Buffers;
+using System.Collections.Generic;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -11,110 +10,103 @@ using System.Threading.Tasks;
 
 namespace LinuxFanControl.Gui.Services
 {
-    /// <summary>
-    /// Minimal JSON-RPC 2.0 TCP client.
-    /// - Endpoint default 127.0.0.1:8765 (override via env LFC_RPC=host:port or ~/.config/LinuxFanControl/daemon.json).
-    /// - Line-delimited JSON for transport (ndjson).
-    /// </summary>
-    public sealed class RpcClient
+    public interface IRpcTransport : IAsyncDisposable
     {
-        public static RpcClient Instance { get; } = new();
+        Task ConnectAsync(CancellationToken ct);
+        Task SendAsync(ReadOnlyMemory<byte> payload, CancellationToken ct);
+        Task<int> ReceiveAsync(Memory<byte> buffer, CancellationToken ct);
+    }
 
-        private string _host = "127.0.0.1";
-        private int _port = 8765;
+    // TCP transport (fallback if unix socket not available)
+    public sealed class TcpRpcTransport : IRpcTransport
+    {
+        private readonly string _host;
+        private readonly int _port;
+        private Socket? _sock;
 
-        private RpcClient()
+        public TcpRpcTransport(string host, int port)
         {
-            var env = Environment.GetEnvironmentVariable("LFC_RPC");
-            if (!string.IsNullOrWhiteSpace(env) && env.Contains(':'))
-            {
-                var parts = env.Split(':', 2);
-                if (int.TryParse(parts[1], out var p)) { _host = parts[0]; _port = p; }
-            }
-            else
-            {
-                try
-                {
-                    var (file, _) = GetDaemonConfigPath();
-                    if (File.Exists(file))
-                    {
-                        using var s = File.OpenRead(file);
-                        using var doc = JsonDocument.Parse(s);
-                        if (doc.RootElement.TryGetProperty("rpc", out var rpc))
-                        {
-                            if (rpc.TryGetProperty("host", out var h)) _host = h.GetString() ?? _host;
-                            if (rpc.TryGetProperty("port", out var p) && p.TryGetInt32(out var pi)) _port = pi;
-                        }
-                    }
-                }
-                catch { /* ignore */ }
-            }
+            _host = host;
+            _port = port;
         }
 
-        public Task<JsonElement?> ListChannelsAsync(CancellationToken ct)
-        => CallAsync("listChannels", JsonSerializer.SerializeToElement(new { }), ct);
-
-        public Task<JsonElement?> DetectCalibrateAsync(CancellationToken ct)
-        => CallAsync("detectCalibrate", JsonSerializer.SerializeToElement(new { quick = false }), ct);
-
-        public async Task<JsonElement?> CallAsync(string method, JsonElement @params, CancellationToken ct)
+        public async Task ConnectAsync(CancellationToken ct)
         {
-            using var tcp = new TcpClient { NoDelay = true };
-            await tcp.ConnectAsync(_host, _port, ct);
-            await using var ns = tcp.GetStream();
-            using var reader = new StreamReader(ns, new UTF8Encoding(false), leaveOpen: true);
-            await using var writer = new StreamWriter(ns, new UTF8Encoding(false), 8192, leaveOpen: true)
-            { AutoFlush = true, NewLine = "\n" };
+            _sock = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            await _sock.ConnectAsync(new IPEndPoint(IPAddress.Loopback, _port), ct);
+        }
 
+        public async Task SendAsync(ReadOnlyMemory<byte> payload, CancellationToken ct)
+        {
+            if (_sock is null) throw new InvalidOperationException("Not connected");
+            await _sock.SendAsync(payload, SocketFlags.None, ct);
+        }
+
+        public async Task<int> ReceiveAsync(Memory<byte> buffer, CancellationToken ct)
+        {
+            if (_sock is null) throw new InvalidOperationException("Not connected");
+            return await _sock.ReceiveAsync(buffer, SocketFlags.None, ct);
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            try { _sock?.Dispose(); } catch {}
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    // JSON-RPC 2.0 client with batch support; newline-delimited frames
+    public sealed class RpcClient : IAsyncDisposable
+    {
+        private readonly IRpcTransport _transport;
+
+        public RpcClient(IRpcTransport transport)
+        {
+            _transport = transport;
+        }
+
+        public async Task ConnectAsync(CancellationToken ct = default) => await _transport.ConnectAsync(ct);
+
+        public async Task<JsonElement> CallAsync(string method, object? @params, CancellationToken ct = default)
+        {
             var id = Guid.NewGuid().ToString("N");
-            var req = new { jsonrpc = "2.0", id, method, @params };
-            await writer.WriteLineAsync(JsonSerializer.Serialize(req).AsMemory(), ct);
-
-            // Read until we receive our id
-            while (!ct.IsCancellationRequested)
-            {
-                var line = await reader.ReadLineAsync();
-                if (line is null) break;
-
-                using var doc = JsonDocument.Parse(line);
-                var root = doc.RootElement;
-
-                if (root.TryGetProperty("id", out var rid) &&
-                    rid.ValueKind == JsonValueKind.String &&
-                    rid.GetString() == id)
-                {
-                    if (root.TryGetProperty("error", out var err))
-                    {
-                        var code = err.TryGetProperty("code", out var ce) ? ce.GetInt32() : 0;
-                        var msg  = err.TryGetProperty("message", out var me) ? me.GetString() : "rpc error";
-                        throw new InvalidOperationException($"RPC error {code}: {msg}");
-                    }
-                    if (root.TryGetProperty("result", out var res))
-                    {
-                        // detach result (copy)
-                        var copy = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(res));
-                        return copy;
-                    }
-                }
-            }
-            return null;
+            var req = new Dictionary<string, object?> {
+                ["jsonrpc"] = "2.0",
+                ["id"] = id,
+                ["method"] = method,
+                ["params"] = @params
+            };
+            var json = JsonSerializer.Serialize(req);
+            var msg = Encoding.UTF8.GetBytes(json + "\n");
+            await _transport.SendAsync(msg, ct);
+            var resp = await ReadFrameAsync(ct);
+            return JsonDocument.Parse(resp).RootElement;
         }
 
-        private static (string file, string dir) GetDaemonConfigPath()
+        public async Task<JsonElement> CallBatchAsync(IEnumerable<object> batchArray, CancellationToken ct = default)
         {
-            string dir;
-            if (OperatingSystem.IsLinux())
-            {
-                var xdg = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
-                dir = !string.IsNullOrEmpty(xdg)
-                ? Path.Combine(xdg, "LinuxFanControl")
-                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "LinuxFanControl");
-            }
-            else
-            {
-                dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LinuxFanControl");
-            }
-            return (Path.Combine(dir, "daemon.json"), dir);
+            var json = JsonSerializer.Serialize(batchArray);
+            var msg = Encoding.UTF8.GetBytes(json + "\n");
+            await _transport.SendAsync(msg, ct);
+            var resp = await ReadFrameAsync(ct);
+            return JsonDocument.Parse(resp).RootElement;
         }
+
+        private async Task<string> ReadFrameAsync(CancellationToken ct)
+        {
+            var buf = ArrayPool<byte>.Shared.Rent(64*1024);
+            try
+            {
+                int n = await _transport.ReceiveAsync(buf, ct);
+                if (n <= 0) throw new Exception("RPC receive returned 0");
+                return Encoding.UTF8.GetString(buf, 0, n);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buf);
+            }
+        }
+
+        public ValueTask DisposeAsync() => _transport.DisposeAsync();
     }
 }

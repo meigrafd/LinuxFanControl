@@ -1,40 +1,38 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:LinuxFanControl.Gui.ViewModels.Dialogs"
         x:Class="LinuxFanControl.Gui.Views.Dialogs.SetupDialog"
-        Width="640" Height="420"
-        WindowStartupLocation="CenterOwner"
+        Width="520" Height="360"
         CanResize="False"
+        Background="{DynamicResource Lfc.WindowBg}"
         Title="Setup">
-  <Grid RowDefinitions="Auto,*,Auto"
-        ColumnDefinitions="*">
-    <!-- Header spacer -->
-    <Border Height="16"/>
+  <Window.DataContext>
+    <vm:SetupDialogViewModel/>
+  </Window.DataContext>
 
-    <!-- Content -->
-    <StackPanel Grid.Row="1" Spacing="14" HorizontalAlignment="Center">
-      <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-        <TextBlock Text="{Binding L_Language}" Width="160" VerticalAlignment="Center"/>
-        <ComboBox Width="220"
-                  ItemsSource="{Binding Languages}"
-                  SelectedItem="{Binding SelectedLanguage}"/>
-        </StackPanel>
+  <Grid Margin="16" RowDefinitions="Auto,Auto,*,Auto" RowSpacing="12">
+    <TextBlock Text="First run setup" Foreground="{DynamicResource Lfc.TextPrimary}" FontSize="18"/>
+    <StackPanel Orientation="Horizontal" Spacing="12">
+      <StackPanel Width="220">
+        <TextBlock Text="Language" Foreground="{DynamicResource Lfc.TextSecondary}"/>
+        <ComboBox ItemsSource="{Binding Languages}" SelectedItem="{Binding SelectedLanguage}"/>
+      </StackPanel>
+      <StackPanel Width="220">
+        <TextBlock Text="Theme" Foreground="{DynamicResource Lfc.TextSecondary}"/>
+        <ComboBox ItemsSource="{Binding Themes}" SelectedItem="{Binding SelectedTheme}"/>
+      </StackPanel>
+    </StackPanel>
 
-        <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-          <TextBlock Text="{Binding L_Theme}" Width="160" VerticalAlignment="Center"/>
-          <ComboBox Width="220"
-                    ItemsSource="{Binding Themes}"
-                    SelectedItem="{Binding SelectedTheme}"/>
-          </StackPanel>
+    <Border Grid.Row="2" Background="{DynamicResource Lfc.CardBg}" CornerRadius="8" Padding="12">
+      <StackPanel>
+        <TextBlock Text="Detection" Foreground="{DynamicResource Lfc.TextPrimary}" />
+        <TextBlock Text="(Mock) You can run hardware detection later." Foreground="{DynamicResource Lfc.TextSecondary}"/>
+      </StackPanel>
+    </Border>
 
-          <CheckBox Content="{Binding L_Detect}"
-                    IsChecked="{Binding RunDetection}"/>
-          </StackPanel>
-
-          <!-- Buttons -->
-          <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12"
-                      HorizontalAlignment="Right" Margin="0,18,18,18">
-            <Button Content="{Binding L_Cancel}" Name="BtnCancel" Width="110"/>
-            <Button Content="{Binding L_Apply}"  Name="BtnApply"  Width="110" IsDefault="True"/>
-          </StackPanel>
-        </Grid>
-      </Window>
+    <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+      <Button x:Name="BtnCancel" Content="Cancel"/>
+      <Button x:Name="BtnApply" Content="Apply" Background="{DynamicResource Lfc.Accent}" Foreground="White"/>
+    </StackPanel>
+  </Grid>
+</Window>

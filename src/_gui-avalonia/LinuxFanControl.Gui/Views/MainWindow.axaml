@@ -1,0 +1,21 @@
+<!-- (c) 2025 LinuxFanControl contributors. MIT License. -->
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:v="clr-namespace:LinuxFanControl.Gui.Views"
+        x:Class="LinuxFanControl.Gui.Views.MainWindow"
+        Width="1200" Height="780"
+        Title="Linux Fan Control">
+
+  <DockPanel>
+    <!-- Top bar -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="8">
+      <Button Content="Setup" Click="OnSetupClick"/>
+      <TextBlock Text="|" VerticalAlignment="Center" Opacity="0.5"/>
+      <Button Content="Quit" Click="OnQuitClick"/>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"/>
+    </StackPanel>
+
+    <!-- Content -->
+    <v:DashboardView/>
+  </DockPanel>
+</Window>
