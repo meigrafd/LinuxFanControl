@@ -2,7 +2,7 @@
 #nullable enable
 using Avalonia.Controls;
 using Avalonia.Media;
-using Avalonia.Shapes;
+using Avalonia.Controls.Shapes;
 
 namespace LinuxFanControl.Gui.Views.Controls
 {
