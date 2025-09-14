@@ -19,9 +19,19 @@ namespace LinuxFanControl.Gui.Views.Dialogs
             DataContext = new SetupDialogViewModel();
 
             #if DEBUG
-            this.AttachDevTools();
+            AttachDevToolsSafe();
             #endif
         }
+
+        #if DEBUG
+        private void AttachDevToolsSafe()
+        {
+            if (this is Window window)
+            {
+                Avalonia.Diagnostics.DevTools.Attach(window);
+            }
+        }
+        #endif
 
         private void OnOk(object? sender, RoutedEventArgs e)
         {
