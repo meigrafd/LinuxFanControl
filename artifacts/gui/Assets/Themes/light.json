@@ -1,0 +1,11 @@
+{
+  "Name": "Light",
+  "Variant": "light",
+  "Palette": {
+    "WindowBackground": "#f8fafc",
+    "CardBackground": "#ffffff",
+    "TextPrimary": "#0f172a",
+    "TextSecondary": "#334155",
+    "Accent": "#2563eb"
+  }
+}

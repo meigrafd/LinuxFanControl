@@ -1,5 +1,5 @@
-#nullable enable
 // (c) 2025 LinuxFanControl contributors. MIT License.
+#nullable enable
 using System;
 using System.IO;
 
@@ -9,17 +9,16 @@ namespace LinuxFanControl.Gui
     {
         public static string GetAssetsRoot()
         {
-            var env = Environment.GetEnvironmentVariable("LFC_GUI_ASSETS_ROOT");
-            if (!string.IsNullOrWhiteSpace(env) && Directory.Exists(env))
-                return env;
+            var envPath = Environment.GetEnvironmentVariable("LFC_GUI_ASSETS_ROOT");
+            if (!string.IsNullOrEmpty(envPath) && Directory.Exists(envPath))
+                return envPath;
 
-            var baseDir = AppContext.BaseDirectory;
-            var candidate = Path.Combine(baseDir, "Assets");
-            if (Directory.Exists(candidate))
-                return candidate;
+            var fallback = Path.Combine(AppContext.BaseDirectory, "Assets");
+            if (Directory.Exists(fallback))
+                return fallback;
 
             throw new DirectoryNotFoundException(
-                $"Assets folder not found in '{baseDir}' and env LFC_GUI_ASSETS_ROOT='{env}'.");
+                $"Assets folder not found in '{fallback}' and env LFC_GUI_ASSETS_ROOT='{envPath}'.");
         }
     }
 }
