@@ -1,32 +1,46 @@
 using System;
-using Avalonia.Controls;
-using Avalonia.Markup.Xaml;
+using Avalonia;
+using Avalonia.Controls.Shapes;
 using Avalonia.Media;
-using Avalonia.Threading;
 
 namespace LinuxFanControl.Gui.Views.Controls
 {
-    public partial class FanLogo : UserControl
+    public class FanLogo : Shape
     {
-        private readonly DispatcherTimer _timer;
-        private double _angle = 0;
-        private RotateTransform _rt = new RotateTransform();
+        public static readonly StyledProperty<double> AngleProperty =
+        AvaloniaProperty.Register<FanLogo, double>(nameof(Angle));
 
-        public FanLogo()
+        public double Angle
         {
-            InitializeComponent();
-            var blade = this.FindControl<Shape>("Blade");
-            blade.RenderTransform = _rt;
-            blade.RenderTransformOrigin = new RelativePoint(0.5, 0.5, RelativeUnit.Relative);
-            _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(30) };
-            _timer.Tick += (_, __) =>
-            {
-                _angle = (_angle + 6) % 360;
-                _rt.Angle = _angle;
-            };
-            _timer.Start();
-            this.DetachedFromVisualTree += (_, __) => _timer.Stop();
+            get => GetValue(AngleProperty);
+            set => SetValue(AngleProperty, value);
         }
-        private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
+
+        public override void Render(DrawingContext context)
+        {
+            base.Render(context);
+
+            // Berechne Kreis-Mitte und Radius
+            var center = new RelativePoint(Bounds.Center, RelativeUnit.Absolute);
+            var radius = Math.Min(Bounds.Width, Bounds.Height) / 2;
+
+            // Erzeuge eine einfache Linien-Geometrie als Platzhalter
+            var geometry = new StreamGeometry();
+            using (var ctx = geometry.Open())
+            {
+                ctx.BeginFigure(
+                    new Point(center.Point.X + radius, center.Point.Y),
+                                isFilled: false);
+                ctx.LineTo(new Point(center.Point.X, center.Point.Y - radius));
+                ctx.LineTo(new Point(center.Point.X - radius, center.Point.Y));
+                ctx.EndFigure(isClosed: false);
+            }
+
+            // Zeichne die Geometrie
+            context.DrawGeometry(
+                Brushes.LightGray,
+                new Pen(Brushes.DarkGray, 2),
+                                 geometry);
+        }
     }
 }
