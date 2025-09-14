@@ -1,15 +1,13 @@
 ﻿using Gtk;
-using FanControl.Gui;
+using System;
 
-namespace FanControl;
+namespace FanControl.Gui;
 
 public static class Program
 {
     public static void Main(string[] args)
     {
         Application.Init();
-
-        Translation.Load("en");
 
         var window = new MainWindow();
         window.Show();

@@ -1,3 +1,13 @@
+* {
+    background-color: #f8f8f8;
+    color: #000000;
+}
+
+button {
+    background-color: #ffffff;
+    border: 1px solid #cccccc;
+}
+
 frame {
     background-color: #f0f0f0;
     border-radius: 8px;

@@ -1,52 +1,118 @@
 using Gtk;
-using FanControl.Gui;
 using System;
+using FanControl.Gui;
+using System.Linq;
 
 namespace FanControl.Gui.Views;
 
-public class SettingsView : Box
+public class SettingsView : VBox
 {
-    private readonly ComboBoxText _themeSelector;
-    private readonly ComboBoxText _localeSelector;
-    private readonly Label _statusLabel;
+    private ComboBoxText _themeSelector = new();
+    private ComboBoxText _localeSelector = new();
+    private Label _statusLabel = new();
+    private Label _titleLabel = new();
+    private Label _themeLabel = new();
+    private Label _localeLabel = new();
 
-    public SettingsView() : base(Orientation.Vertical, 10)
+    private UserSettings _settings;
+
+    public SettingsView()
     {
-        Margin = 20;
+        Spacing = 10;
+        _settings = UserSettings.Load();
+
+        Translation.LanguageChanged += Redraw;
+
+        BuildUi();
+        UpdateStatus();
+    }
+
+    private void BuildUi()
+    {
+        foreach (var child in Children)
+            Remove(child);
+
+        _titleLabel = new Label();
+        _titleLabel.SetMarkup($"<b>{Translation.Get("sidebar.settings")}</b>");
+        PackStart(_titleLabel, false, false, 0);
+
+        _themeLabel = new Label(Translation.Get("settings.theme"));
+        PackStart(_themeLabel, false, false, 0);
 
         _themeSelector = new ComboBoxText();
-        _themeSelector.AppendText("light");
-        _themeSelector.AppendText("dark");
-        _themeSelector.Active = 0;
+        var themes = ThemeManager.AvailableThemes();
+        foreach (var theme in themes)
+            _themeSelector.AppendText(theme);
+
+        int themeIndex = Array.IndexOf(themes, _settings.Theme);
+        _themeSelector.Active = themeIndex >= 0 ? themeIndex : 0;
+        _themeSelector.Changed += OnSelectionChanged;
+        PackStart(_themeSelector, false, false, 0);
+
+        _localeLabel = new Label(Translation.Get("settings.locale"));
+        PackStart(_localeLabel, false, false, 0);
 
         _localeSelector = new ComboBoxText();
-        _localeSelector.AppendText("en");
-        _localeSelector.AppendText("de");
-        _localeSelector.Active = 0;
+        var locales = Translation.AvailableLocales();
+        foreach (var locale in locales)
+            _localeSelector.AppendText(locale);
 
-        var applyButton = new Button("Apply");
-        applyButton.Clicked += (_, _) => ApplySettings();
-
-        _statusLabel = new Label("");
-
-        PackStart(new Label(Translation.T("settings.theme")), false, false, 0);
-        PackStart(_themeSelector, false, false, 0);
-        PackStart(new Label(Translation.T("settings.locale")), false, false, 0);
+        int localeIndex = Array.IndexOf(locales, _settings.Locale);
+        _localeSelector.Active = localeIndex >= 0 ? localeIndex : 0;
+        _localeSelector.Changed += OnSelectionChanged;
         PackStart(_localeSelector, false, false, 0);
-        PackStart(applyButton, false, false, 0);
+
+        _statusLabel = new Label();
         PackStart(_statusLabel, false, false, 0);
     }
 
-    private void ApplySettings()
+    private void OnSelectionChanged(object? sender, EventArgs e)
     {
-        string theme = _themeSelector.ActiveText ?? "light";
-        string locale = _localeSelector.ActiveText ?? "en";
+        var selectedTheme = _themeSelector.ActiveText ?? "Light";
+        var selectedLocale = _localeSelector.ActiveText ?? "en";
 
-        ThemeManager.Apply(theme);
-        Translation.Load(locale);
+        bool themeChanged = selectedTheme != _settings.Theme;
+        bool localeChanged = selectedLocale != _settings.Locale;
 
-        _statusLabel.Text = Translation.T("settings.status")
-        .Replace("{theme}", theme)
-        .Replace("{locale}", locale);
+        _settings.Theme = selectedTheme;
+        _settings.Locale = selectedLocale;
+        _settings.Save();
+
+        if (themeChanged)
+            ThemeManager.Apply(selectedTheme);
+
+        if (localeChanged)
+            Translation.Load(selectedLocale);
+
+        UpdateStatus(themeChanged, localeChanged);
+    }
+
+    private void UpdateStatus(bool themeChanged = false, bool localeChanged = false)
+    {
+        if (themeChanged || localeChanged)
+        {
+            string message = Translation.Get("settings.applied");
+            if (themeChanged && localeChanged)
+                message = Translation.Get("settings.applied.both");
+            else if (themeChanged)
+                message = Translation.Get("settings.applied.theme");
+            else if (localeChanged)
+                message = Translation.Get("settings.applied.locale");
+
+            _statusLabel.Text = message;
+        }
+        else
+        {
+            string status = Translation.Get("settings.status")
+            .Replace("{theme}", _settings.Theme)
+            .Replace("{locale}", _settings.Locale);
+            _statusLabel.Text = status;
+        }
+    }
+
+    private void Redraw()
+    {
+        BuildUi();
+        UpdateStatus();
     }
 }
