@@ -90,6 +90,9 @@ namespace LinuxFanControl.Gui.Behaviors
         }
 
         public static readonly AttachedProperty<DragReorderBehavior?> BehaviorProperty =
-        AvaloniaProperty.RegisterAttached<Panel, DragReorderBehavior?>("Behavior");
+        AvaloniaProperty.RegisterAttached<Panel, DragReorderBehavior?>(
+            "Behavior",
+            typeof(DragReorderBehavior)
+        );
     }
 }
