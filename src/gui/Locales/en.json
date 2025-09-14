@@ -1,0 +1,11 @@
+{
+  "title": "Fan Control",
+  "sidebar.sensors": "Sensors",
+  "sidebar.curve": "Curve",
+  "sidebar.settings": "Settings",
+  "settings.theme": "Theme",
+  "settings.locale": "Language",
+  "settings.status": "Active theme: {theme}, language: {locale}",
+  "curve.title": "Edit fan curve",
+  "curve.save": "Save"
+}

@@ -1,9 +1,0 @@
-{
-  "app.title": "Linux Fan Control",
-  "menu.setup": "Setup",
-  "setup.title": "First run setup",
-  "setup.language": "Language",
-  "setup.theme": "Theme",
-  "setup.apply": "Apply",
-  "setup.cancel": "Cancel"
-}

@@ -1,0 +1,11 @@
+{
+  "title": "Lüftersteuerung",
+  "sidebar.sensors": "Sensoren",
+  "sidebar.curve": "Kurve",
+  "sidebar.settings": "Einstellungen",
+  "settings.theme": "Design",
+  "settings.locale": "Sprache",
+  "settings.status": "Aktives Design: {theme}, Sprache: {locale}",
+  "curve.title": "Lüfterkurve bearbeiten",
+  "curve.save": "Speichern"
+}

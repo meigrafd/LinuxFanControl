@@ -1,0 +1,11 @@
+frame {
+    background-color: #2b2b2b;
+    border-radius: 8px;
+    padding: 10px;
+    color: white;
+}
+
+label {
+    color: white;
+    font-weight: bold;
+}
