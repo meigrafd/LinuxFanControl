@@ -2,9 +2,12 @@
 #nullable enable
 using Avalonia.Controls;
 using Avalonia.Interactivity;
-using Avalonia.Diagnostics;
 using LinuxFanControl.Gui.Services;
 using LinuxFanControl.Gui.ViewModels.Dialogs;
+
+#if DEBUG
+using Avalonia.Diagnostics;
+#endif
 
 namespace LinuxFanControl.Gui.Views.Dialogs
 {
@@ -16,9 +19,16 @@ namespace LinuxFanControl.Gui.Views.Dialogs
             DataContext = new SetupDialogViewModel();
 
             #if DEBUG
-            this.AttachDevTools();
+            AttachDevTools();
             #endif
         }
+
+        #if DEBUG
+        private void AttachDevTools()
+        {
+            Avalonia.Diagnostics.DevToolsExtensions.AttachDevTools(this);
+        }
+        #endif
 
         private void OnOk(object? sender, RoutedEventArgs e)
         {
