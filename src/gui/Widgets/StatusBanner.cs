@@ -1,22 +1,44 @@
 using Gtk;
+using FanControl.Gui.Services;
 
 namespace FanControl.Gui.Widgets;
 
-public class StatusBanner : Box
+public class StatusBanner : EventBox
 {
-    private readonly Label _messageLabel;
+    private Label _statusLabel;
+    private RpcClient _rpc;
 
-    public StatusBanner() : base(Orientation.Horizontal, 10)
+    public StatusBanner()
     {
-        Margin = 10;
-        HeightRequest = 40;
+        _rpc = new RpcClient();
+        _statusLabel = new Label();
+        Add(_statusLabel);
 
-        _messageLabel = new Label("Ready");
-        PackStart(_messageLabel, true, true, 0);
+        Translation.LanguageChanged += Redraw;
+
+        UpdateStatus();
     }
 
-    public void SetMessage(string message)
+    private void UpdateStatus()
     {
-        _messageLabel.Text = message;
+        bool pidExists = System.IO.File.Exists("/run/pid/lfcd.pid");
+        bool responds = _rpc.Ping();
+
+        string key = "daemon.status.unknown";
+        if (pidExists && responds)
+            key = "daemon.status.running";
+        else if (pidExists && !responds)
+            key = "daemon.status.unresponsive";
+        else if (!pidExists && responds)
+            key = "daemon.status.nopid";
+        else
+            key = "daemon.status.dead";
+
+        _statusLabel.Text = Translation.Get(key);
+    }
+
+    private void Redraw()
+    {
+        UpdateStatus();
     }
 }

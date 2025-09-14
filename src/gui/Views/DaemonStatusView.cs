@@ -1,45 +1,58 @@
 using Gtk;
-using FanControl.Gui;
 using System;
+using System.IO;
+using FanControl.Gui.Services;
+using FanControl.Gui.Views;
 
 namespace FanControl.Gui.Views;
 
-public class DaemonStatusView : Box
+public class DaemonStatusView : VBox
 {
-    private readonly Label _statusLabel;
-    private readonly Button _refreshButton;
+    private Label _statusLabel;
+    private RpcClient _rpcClient;
 
-    public DaemonStatusView() : base(Orientation.Vertical, 10)
+    public DaemonStatusView()
     {
-        Margin = 20;
+        Spacing = 10;
+        _rpcClient = new RpcClient();
 
-        _statusLabel = new Label("Status: unknown");
-        _refreshButton = new Button("Refresh");
+        Translation.LanguageChanged += Redraw;
 
-        _refreshButton.Clicked += (_, _) => UpdateStatus();
-
-        PackStart(_statusLabel, false, false, 0);
-        PackStart(_refreshButton, false, false, 0);
-
+        BuildUi();
         UpdateStatus();
+    }
+
+    private void BuildUi()
+    {
+        foreach (var child in Children)
+            Remove(child);
+
+        _statusLabel = new Label();
+        PackStart(_statusLabel, false, false, 0);
     }
 
     private void UpdateStatus()
     {
-        bool running = CheckDaemonRunning();
-        _statusLabel.Text = $"Status: {(running ? "active" : "inactive")}";
+        string pidPath = "/run/pid/lfcd.pid";
+        bool pidExists = File.Exists(pidPath);
+        bool responds = _rpcClient.Ping();
+
+        string statusKey = "daemon.status.unknown";
+
+        if (pidExists && responds)
+            statusKey = "daemon.status.running";
+        else if (pidExists && !responds)
+            statusKey = "daemon.status.unresponsive";
+        else if (!pidExists && responds)
+            statusKey = "daemon.status.nopid";
+        else
+            statusKey = "daemon.status.dead";
+
+        _statusLabel.Text = Translation.Get(statusKey);
     }
 
-    private bool CheckDaemonRunning()
+    private void Redraw()
     {
-        try
-        {
-            var processes = System.Diagnostics.Process.GetProcessesByName("fancontrold");
-            return processes.Length > 0;
-        }
-        catch
-        {
-            return false;
-        }
+        UpdateStatus();
     }
 }

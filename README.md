@@ -7,10 +7,41 @@ Modernes, schnelles Fan Control mit GUI im Stil von **FanControl.Release** für 
 - Multilanguage support über i18n json Dateien.
 - Theme support.
 - Automatische Erkennung und Kalibrierung der verfügbaren Sensoren und Lüfter.
-- Nicht relevante Sensoren können abgewählt und ausgeblendet werden.
+- Nicht relevante Sensoren können ausgeblendet werden.
 - Steuerung über Mix, Trigger oder Graph.
 - FanControl.Release Config importierbar.
- 
+
+### Daemon
+- `--pidfile </path/to/pid>` default `/run/lfcd.pid` fallback `/tmp/lfcd.pid`
+- `--logfile` default `/var/log/lfcd.log` fallback `/tmp/daemon_lfc.log`
+- `--cmds [all|rpc|shm]`
+- `--host` for RPC server, default `127.0.0.1`
+- `--port` default `8765`
+- `--foreground`
+- `--debug`
+
+Test JSON-RPC
+```bash
+curl -s -X POST http://127.0.0.1:8765/rpc \
+     -H 'Content-Type: application/json' \
+     -d '{"jsonrpc":"2.0","id":1,"method":"rpc.list"}'
+```
+Batch
+```bash
+curl -s -X POST http://127.0.0.1:8765/rpc \
+     -H 'Content-Type: application/json' \
+     -d '[{"jsonrpc":"2.0","id":"a","method":"rpc.list"},
+          {"jsonrpc":"2.0","id":"b","method":"engineStart","params":{}},
+          {"jsonrpc":"2.0","method":"engineStop"}]' | jq
+```
+Enumerate
+```bash
+curl -s http://127.0.0.1:8765/rpc \
+     -H 'content-type: application/json' \
+     -d '{"jsonrpc":"2.0","id":2,"method":"enumerate"}' | jq
+
+```
+
 
 ## Install
 ### Installiere je nach Distribution:
@@ -66,7 +97,6 @@ dotnet run -c Debug
 ## Quickstart:
 - GUI starten → Setup-Button → Auto-Detection & Kalibrierung.
 - Danach erscheinen oben die PWM-Tiles (verschiebbar), unten Triggers/Curves/Mixes.
-- Theme (Dark/Light) und Sprache (en/de) sind live umschaltbar.
 - Importer: FanControl.Release-JSON einlesen (Basis-Mapping).
 - Profile verwalten und Kurven/Channel-Zuweisungen konfigurieren.
 

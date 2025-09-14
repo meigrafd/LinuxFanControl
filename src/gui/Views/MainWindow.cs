@@ -1,26 +1,21 @@
 using Gtk;
 using FanControl.Gui.Views;
 
-namespace FanControl.Gui;
+namespace FanControl.Gui.Views;
 
 public class MainWindow : Window
 {
-    private readonly MainView _mainView;
+    private MainView _mainView;
 
-    public MainWindow() : base("Fan Control")
+    public MainWindow() : base("FanControl")
     {
-        SetDefaultSize(1000, 700);
+        SetDefaultSize(800, 600);
         SetPosition(WindowPosition.Center);
-        BorderWidth = 10;
 
         _mainView = new MainView();
         Add(_mainView);
 
-        DeleteEvent += (_, _) =>
-        {
-            Application.Quit();
-        };
-
+        DeleteEvent += (_, _) => Application.Quit();
         ShowAll();
     }
 }

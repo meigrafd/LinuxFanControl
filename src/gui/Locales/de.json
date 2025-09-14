@@ -9,6 +9,12 @@
   "settings.locale": "Sprache",
   "settings.status": "Aktives Design: {theme}, Sprache: {locale}",
 
+  "daemon.status.running": "Daemon läuft und antwortet.",
+  "daemon.status.unresponsive": "Daemon läuft, antwortet aber nicht.",
+  "daemon.status.nopid": "Daemon antwortet, aber PID-Datei fehlt.",
+  "daemon.status.dead": "Daemon läuft nicht.",
+  "daemon.status.unknown": "Daemon-Status unbekannt.",
+
   "curve.title": "Lüfterkurve bearbeiten",
   "curve.save": "Speichern",
   "curve.reset": "Zurücksetzen",

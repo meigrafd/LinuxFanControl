@@ -1,112 +1,59 @@
 using Gtk;
-using Cairo;
-using System;
-using System.Collections.Generic;
+using System.Text.Json.Nodes;
+using FanControl.Gui.Services;
 
 namespace FanControl.Gui.Widgets;
 
-public class CurveEditor : DrawingArea
+public class CurveEditor : VBox
 {
-    private readonly List<PointD> _points = new();
-    private const double PointRadius = 5;
-    private int? _dragIndex = null;
+    private RpcClient _rpc;
+    private string _channelName;
+    private List<(double x, double y)> _points = new();
 
-    public CurveEditor()
+    private Button _saveButton;
+
+    public CurveEditor(string channelName)
     {
-        AddEvents((int)(
-            Gdk.EventMask.ButtonPressMask |
-            Gdk.EventMask.PointerMotionMask |
-            Gdk.EventMask.ButtonReleaseMask
-        ));
+        Spacing = 10;
+        _channelName = channelName;
+        _rpc = new RpcClient();
 
-        ButtonPressEvent += OnClick;
-        MotionNotifyEvent += OnMotion;
-        ButtonReleaseEvent += OnRelease;
-        Drawn += OnDraw;
+        Translation.LanguageChanged += Redraw;
 
-        // Beispielpunkte
-        _points.Add(new PointD(20, 80));
-        _points.Add(new PointD(60, 40));
-        _points.Add(new PointD(100, 20));
+        BuildUi();
     }
 
-    private void OnClick(object o, ButtonPressEventArgs args)
+    private void BuildUi()
     {
-        double x = args.Event.X;
-        double y = args.Event.Y;
+        foreach (var child in Children)
+            Remove(child);
 
-        for (int i = 0; i < _points.Count; i++)
+        _saveButton = new Button(Translation.Get("curve.save"));
+        _saveButton.Clicked += (_, _) => SaveCurve();
+        PackStart(_saveButton, false, false, 0);
+
+        // Hier könntest du später eine echte Kurven-Zeichnung einbauen
+    }
+
+    private void SaveCurve()
+    {
+        var pointsArray = new JsonArray();
+        foreach (var (x, y) in _points)
         {
-            var p = _points[i];
-            if (Distance(p.X, p.Y, x, y) < PointRadius * 2)
-            {
-                _dragIndex = i;
-                return;
-            }
+            pointsArray.Add(new JsonObject { ["x"] = x, ["y"] = y });
         }
 
-        _points.Add(new PointD(x, y));
-        QueueDraw();
-    }
-
-    private void OnMotion(object o, MotionNotifyEventArgs args)
-    {
-        if (_dragIndex is null) return;
-
-        _points[_dragIndex.Value] = new PointD(args.Event.X, args.Event.Y);
-        QueueDraw();
-    }
-
-    private void OnRelease(object o, ButtonReleaseEventArgs args)
-    {
-        _dragIndex = null;
-    }
-
-    private void OnDraw(object o, DrawnArgs args)
-    {
-        var cr = args.Cr;
-        cr.SetSourceRGB(0.1, 0.1, 0.1);
-        cr.Paint();
-
-        cr.SetSourceRGB(0.8, 0.8, 0.8);
-        cr.LineWidth = 2;
-
-        for (int i = 0; i < _points.Count - 1; i++)
+        var payload = new JsonObject
         {
-            cr.MoveTo(_points[i].X, _points[i].Y);
-            cr.LineTo(_points[i + 1].X, _points[i + 1].Y);
-        }
-        cr.Stroke();
+            ["name"] = _channelName,
+            ["points"] = pointsArray
+        };
 
-        foreach (var p in _points)
-        {
-            cr.Arc(p.X, p.Y, PointRadius, 0, 2 * Math.PI);
-            cr.SetSourceRGB(0.2, 0.6, 1.0);
-            cr.Fill();
-        }
+        _rpc.SendRequest("setChannelCurve", payload);
     }
 
-    private static double Distance(double x1, double y1, double x2, double y2)
+    private void Redraw()
     {
-        double dx = x1 - x2;
-        double dy = y1 - y2;
-        return Math.Sqrt(dx * dx + dy * dy);
+        BuildUi();
     }
-
-    public void ClearPoints()
-    {
-        _points.Clear();
-        QueueDraw();
-    }
-
-    public void ResetPoints()
-    {
-        _points.Clear();
-        _points.Add(new PointD(20, 80));
-        _points.Add(new PointD(60, 40));
-        _points.Add(new PointD(100, 20));
-        QueueDraw();
-    }
-
-    public List<PointD> GetPoints() => new(_points);
 }

@@ -17,14 +17,18 @@ endif()
 add_executable(lfcd
   ${SRC_DIR}/main.cpp
   ${SRC_DIR}/Daemon.cpp
-  ${SRC_DIR}/JsonRpc.cpp
+  ${SRC_DIR}/JsonLite.cpp
   ${SRC_DIR}/Hwmon.cpp
   ${SRC_DIR}/Engine.cpp
+  ${SRC_DIR}/RpcServer.cpp
+  ${SRC_DIR}/JsonLite.cpp
   ${SRC_DIR}/Curve.hpp
   ${SRC_DIR}/Hwmon.hpp
   ${SRC_DIR}/Engine.hpp
-  ${SRC_DIR}/JsonRpc.hpp
+  ${SRC_DIR}/JsonLite.hpp
   ${SRC_DIR}/Daemon.hpp
+  ${SRC_DIR}/RpcServer.hpp
+  ${SRC_DIR}/JsonLite.hpp
 )
 
 target_include_directories(lfcd PRIVATE ${SENSORS_INCLUDE_DIRS} ${SRC_DIR})

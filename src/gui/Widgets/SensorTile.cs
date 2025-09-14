@@ -1,27 +1,77 @@
 using Gtk;
+using System;
+using GLib;
+using System.Text.Json.Nodes;
+using FanControl.Gui.Services;
 
 namespace FanControl.Gui.Widgets;
 
-public class SensorTile : Box
+public class SensorTile : Frame
 {
-    private readonly Label _temperatureLabel;
-    private readonly Label _pwmLabel;
+    private Label _nameLabel;
+    private Label _valueLabel;
+    private readonly string _sensorPath;
+    private readonly RpcClient _rpc;
+    private uint _refreshId;
 
-    public SensorTile() : base(Orientation.Vertical, 10)
+    public SensorTile(string sensorPath)
     {
-        Margin = 20;
+        _sensorPath = sensorPath;
+        _rpc = new RpcClient();
 
-        _temperatureLabel = new Label("Temperature: -- °C");
-        _pwmLabel = new Label("Fan PWM: -- %");
+        // Frame-Titel auf Sensor-Label setzen
+        Label = Translation.Get("sensor.loading");
+        var vbox = new VBox { Spacing = 2, BorderWidth = 4 };
+        _nameLabel = new Label();
+        _valueLabel = new Label();
+        vbox.PackStart(_nameLabel, false, false, 0);
+        vbox.PackStart(_valueLabel, false, false, 0);
+        Add(vbox);
 
-        PackStart(new Label("Sensor Data"), false, false, 0);
-        PackStart(_temperatureLabel, false, false, 0);
-        PackStart(_pwmLabel, false, false, 0);
+        Translation.LanguageChanged += Redraw;
+
+        // Initial befüllen und dann zyklisch aktualisieren
+        Redraw();
+        _refreshId = Timeout.Add(2000, new TimeoutHandler(() =>
+        {
+            UpdateValue();
+            return true;
+        }));
     }
 
-    public void UpdateValue(double temperature, double pwm)
+    private void Redraw()
     {
-        _temperatureLabel.Text = $"Temperature: {temperature:F1} °C";
-        _pwmLabel.Text = $"Fan PWM: {pwm:F0} %";
+        // Name & Einheit aus listSensors auslesen
+        try
+        {
+            var response = _rpc.SendRequest("listSensors");
+            if (response is JsonObject obj && obj["result"] is JsonArray sensors)
+            {
+                foreach (var s in sensors)
+                {
+                    if (s?["path"]?.ToString() == _sensorPath)
+                    {
+                        var label = s["label"]?.ToString() ?? _sensorPath;
+                        var unit = s["unit"]?.ToString() ?? "";
+                        _nameLabel.Text = label;
+                        Label = label; // Frame-Titel
+                        _valueLabel.Text = $"-- {unit}";
+                        break;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            _nameLabel.Text = Translation.Get("sensor.error");
+            _valueLabel.Text = "";
+        }
     }
-}
+
+    private void UpdateValue()
+    {
+        // Aktuellen Messwert vom Daemon holen
+        try
+        {
+            var param = new JsonObject { ["path"] = _sensorPath };
+            var response =
