@@ -5,10 +5,6 @@ using Avalonia.Interactivity;
 using LinuxFanControl.Gui.Services;
 using LinuxFanControl.Gui.ViewModels.Dialogs;
 
-#if DEBUG
-using Avalonia.Diagnostics;
-#endif
-
 namespace LinuxFanControl.Gui.Views.Dialogs
 {
     public partial class SetupDialog : Window
@@ -17,21 +13,7 @@ namespace LinuxFanControl.Gui.Views.Dialogs
         {
             InitializeComponent();
             DataContext = new SetupDialogViewModel();
-
-            #if DEBUG
-            AttachDevToolsSafe();
-            #endif
         }
-
-        #if DEBUG
-        private void AttachDevToolsSafe()
-        {
-            if (this is Window window)
-            {
-                Avalonia.Diagnostics.DevTools.Attach(window);
-            }
-        }
-        #endif
 
         private void OnOk(object? sender, RoutedEventArgs e)
         {
