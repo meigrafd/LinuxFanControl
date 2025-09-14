@@ -2,12 +2,10 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="LinuxFanControl.Gui.Views.Controls.FanLogo">
-  <UserControl.Content>
-    <Canvas Width="64" Height="64">
-      <Ellipse Width="64" Height="64" Fill="{DynamicResource Lfc.Accent}" />
-      <Path Stroke="{DynamicResource Lfc.WindowBg}"
-            StrokeThickness="4"
-            Data="M32,0 L32,64 M0,32 L64,32" />
-    </Canvas>
-  </UserControl.Content>
+  <Canvas Width="64" Height="64">
+    <Ellipse Width="64" Height="64" Fill="{DynamicResource Lfc.Accent}" />
+    <Path Stroke="{DynamicResource Lfc.WindowBg}"
+          StrokeThickness="4"
+          Data="M32,0 L32,64 M0,32 L64,32" />
+  </Canvas>
 </UserControl>
