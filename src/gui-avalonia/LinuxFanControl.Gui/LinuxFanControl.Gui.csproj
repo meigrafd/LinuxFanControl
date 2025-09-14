@@ -1,4 +1,3 @@
-<!-- (c) 2025 LinuxFanControl contributors. MIT License. -->
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
@@ -29,9 +28,10 @@
   <ItemGroup>
     <AvaloniaResource Include="App.axaml" />
     <AvaloniaResource Include="Views/MainWindow.axaml" />
-    <AvaloniaResource Include="Assets/logo.ico" />
     <AvaloniaResource Include="Styles/Controls.axaml" />
     <AvaloniaResource Include="Styles/Colors.axaml" />
+    <!-- logo.ico nur einbinden, wenn die Datei vorhanden ist -->
+    <!-- <AvaloniaResource Include="Assets/logo.ico" /> -->
   </ItemGroup>
 
 </Project>
