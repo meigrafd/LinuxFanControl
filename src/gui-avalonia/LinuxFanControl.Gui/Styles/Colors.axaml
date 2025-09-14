@@ -1,0 +1,17 @@
+<!-- (c) 2025 LinuxFanControl contributors. MIT License. -->
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Color x:Key="Lfc.Primary">#FF007ACC</Color>
+  <Color x:Key="Lfc.Secondary">#FF2D2D30</Color>
+  <Color x:Key="Lfc.Accent">#FF1BA1E2</Color>
+  <Color x:Key="Lfc.TextPrimary">#FFFFFFFF</Color>
+  <Color x:Key="Lfc.TextSecondary">#FFCCCCCC</Color>
+  <Color x:Key="Lfc.CardBg">#FF1E1E1E</Color>
+
+  <SolidColorBrush x:Key="Lfc.PrimaryBrush" Color="{DynamicResource Lfc.Primary}" />
+  <SolidColorBrush x:Key="Lfc.SecondaryBrush" Color="{DynamicResource Lfc.Secondary}" />
+  <SolidColorBrush x:Key="Lfc.AccentBrush" Color="{DynamicResource Lfc.Accent}" />
+  <SolidColorBrush x:Key="Lfc.TextPrimaryBrush" Color="{DynamicResource Lfc.TextPrimary}" />
+  <SolidColorBrush x:Key="Lfc.TextSecondaryBrush" Color="{DynamicResource Lfc.TextSecondary}" />
+  <SolidColorBrush x:Key="Lfc.CardBgBrush" Color="{DynamicResource Lfc.CardBg}" />
+</Styles>
