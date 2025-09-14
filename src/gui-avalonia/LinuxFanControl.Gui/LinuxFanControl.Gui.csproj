@@ -1,64 +1,44 @@
 <Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <OutputType>WinExe</OutputType>
-    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <RootNamespace>LinuxFanControl.Gui</RootNamespace>
+    <UseWPF>false</UseWPF>
+    <UseWindowsForms>false</UseWindowsForms>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Avalonia" Version="11.2.0" />
-    <PackageReference Include="Avalonia.Desktop" Version="11.2.0" />
-    <PackageReference Include="Avalonia.ReactiveUI" Version="11.2.0" />
-    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.2.0" />
+    <!-- Avalonia NuGet -->
+    <PackageReference Include="Avalonia" Version="11.0.0-rc3" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.0.0-rc3" />
+    <PackageReference Include="Avalonia.ReactiveUI" Version="11.0.0-rc3" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Compile files (explicit) -->
+    <!-- Source files -->
     <Compile Include="Program.cs" />
-    <Compile Include="App.axaml.cs" />
-    <Compile Include="Services/ConfigService.cs" />
-    <Compile Include="Services/LocalizationService.cs" />
-    <Compile Include="Services/ThemeManager.cs" />
-    <Compile Include="Services/MockTelemetryService.cs" />
-    <Compile Include="ViewModels/MainWindowViewModel.cs" />
-    <Compile Include="ViewModels/DashboardViewModel.cs" />
-    <Compile Include="ViewModels/FanTileViewModel.cs" />
-    <Compile Include="ViewModels/Dialogs/SetupDialogViewModel.cs" />
-    <Compile Include="Views/MainWindow.axaml.cs" />
-    <Compile Include="Views/DashboardView.axaml.cs" />
-    <Compile Include="Views/Dialogs/SetupDialog.axaml.cs" />
-    <Compile Include="Views/Dialogs/DetectProgressDialog.axaml.cs" />
-    <Compile Include="Views/Controls/FanTile.axaml.cs" />
-    <Compile Include="Views/Controls/FanLogo.axaml.cs" />
+    <Compile Include="App.xaml.cs" />
+    <Compile Include="MainWindow.xaml.cs" />
+    <Compile Include="AssetLocator.cs" />
+
+    <!-- XAML pages -->
+    <Page Include="App.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="MainWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+
+    <!-- Dynamic Assets: kopieren zur Ausgabe -->
+    <None Include="Locales/*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Themes/*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- Avalonia XAML (explicit) -->
-    <AvaloniaResource Include="App.axaml" />
-    <AvaloniaResource Include="Views/MainWindow.axaml" />
-    <AvaloniaResource Include="Views/DashboardView.axaml" />
-    <AvaloniaResource Include="Views/Dialogs/SetupDialog.axaml" />
-    <AvaloniaResource Include="Views/Dialogs/DetectProgressDialog.axaml" />
-    <AvaloniaResource Include="Views/Controls/FanTile.axaml" />
-    <AvaloniaResource Include="Views/Controls/FanLogo.axaml" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- Content files (copy themes/locales) -->
-    <None Include="Themes/midnight.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="Themes/light.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="Locales/en.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="Locales/de.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
 </Project>
