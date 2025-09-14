@@ -1,38 +1,31 @@
+<!-- (c) 2025 LinuxFanControl contributors. MIT License. -->
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:vm="clr-namespace:LinuxFanControl.Gui.ViewModels.Dialogs"
         x:Class="LinuxFanControl.Gui.Views.Dialogs.SetupDialog"
-        Width="520" Height="360"
+        Width="500" Height="300"
+        WindowStartupLocation="CenterOwner"
         CanResize="False"
-        Background="{DynamicResource Lfc.WindowBg}"
         Title="Setup">
-  <Window.DataContext>
-    <vm:SetupDialogViewModel/>
-  </Window.DataContext>
+  <Grid RowDefinitions="Auto,Auto,*"
+        Margin="16">
 
-  <Grid Margin="16" RowDefinitions="Auto,Auto,*,Auto" RowSpacing="12">
-    <TextBlock Text="First run setup" Foreground="{DynamicResource Lfc.TextPrimary}" FontSize="18"/>
-    <StackPanel Orientation="Horizontal" Spacing="12">
-      <StackPanel Width="220">
-        <TextBlock Text="Language" Foreground="{DynamicResource Lfc.TextSecondary}"/>
-        <ComboBox ItemsSource="{Binding Languages}" SelectedItem="{Binding SelectedLanguage}"/>
-      </StackPanel>
-      <StackPanel Width="220">
-        <TextBlock Text="Theme" Foreground="{DynamicResource Lfc.TextSecondary}"/>
-        <ComboBox ItemsSource="{Binding Themes}" SelectedItem="{Binding SelectedTheme}"/>
-      </StackPanel>
-    </StackPanel>
+    <TextBlock Grid.Row="0"
+               FontSize="16"
+               FontWeight="Bold"
+               Text="Initial setup required" />
 
-    <Border Grid.Row="2" Background="{DynamicResource Lfc.CardBg}" CornerRadius="8" Padding="12">
-      <StackPanel>
-        <TextBlock Text="Detection" Foreground="{DynamicResource Lfc.TextPrimary}" />
-        <TextBlock Text="(Mock) You can run hardware detection later." Foreground="{DynamicResource Lfc.TextSecondary}"/>
-      </StackPanel>
-    </Border>
+    <TextBlock Grid.Row="1"
+               Margin="0,12,0,0"
+               Foreground="{DynamicResource Lfc.TextSecondary}"
+               Text="Please configure your fan settings before continuing." />
 
-    <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
-      <Button x:Name="BtnCancel" Content="Cancel"/>
-      <Button x:Name="BtnApply" Content="Apply" Background="{DynamicResource Lfc.Accent}" Foreground="White"/>
+    <StackPanel Grid.Row="2"
+                Margin="0,12,0,0"
+                Spacing="8">
+      <Button Content="Open Settings"
+              Command="{Binding OpenSettingsCommand}" />
+      <Button Content="Cancel"
+              Command="{Binding CancelCommand}" />
     </StackPanel>
   </Grid>
 </Window>
