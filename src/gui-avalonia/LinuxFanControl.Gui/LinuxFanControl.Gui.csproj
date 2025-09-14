@@ -4,19 +4,18 @@
     <TargetFramework>net9.0</TargetFramework>
     <OutputType>WinExe</OutputType>
     <RootNamespace>LinuxFanControl.Gui</RootNamespace>
-    <UseWPF>false</UseWPF>
-    <UseWindowsForms>false</UseWindowsForms>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- Avalonia NuGet -->
-    <PackageReference Include="Avalonia" Version="11.0.0-rc3" />
-    <PackageReference Include="Avalonia.Desktop" Version="11.0.0-rc3" />
-    <PackageReference Include="Avalonia.ReactiveUI" Version="11.0.0-rc3" />
+    <PackageReference Include="Avalonia" Version="11.0.0" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.0.0" />
+    <PackageReference Include="Avalonia.ReactiveUI" Version="11.0.0" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Source files -->
+    <!-- Explicit source files -->
     <Compile Include="Program.cs" />
     <Compile Include="App.xaml.cs" />
     <Compile Include="MainWindow.xaml.cs" />
@@ -32,11 +31,11 @@
       <SubType>Designer</SubType>
     </Page>
 
-    <!-- Dynamic Assets: kopieren zur Ausgabe -->
-    <None Include="Locales/*.json">
+    <!-- Dynamische Assets: kopieren zur Ausgabe -->
+    <None Include="Assets/Locales/*.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="Themes/*.json">
+    <None Include="Assets/Themes/*.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
