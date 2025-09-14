@@ -6,18 +6,22 @@
         RowDefinitions="Auto,Auto,Auto"
         Margin="8"
         Background="{DynamicResource Lfc.CardBg}">
+
     <Image Grid.Row="0" Grid.Column="0"
            Width="32" Height="32"
            Source="{Binding Icon}" />
+
     <TextBlock Grid.Row="0" Grid.Column="1"
                VerticalAlignment="Center"
                Foreground="{DynamicResource Lfc.TextPrimary}"
                FontSize="16"
                Text="{Binding Name}" />
+
     <TextBlock Grid.Row="1" Grid.ColumnSpan="2"
                Foreground="{DynamicResource Lfc.TextSecondary}"
                FontSize="12"
                Text="{Binding Description}" />
+
     <ProgressBar Grid.Row="2" Grid.ColumnSpan="2"
                  Minimum="0" Maximum="100"
                  Value="{Binding Speed}" />
