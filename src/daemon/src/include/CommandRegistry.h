@@ -1,6 +1,6 @@
 /*
  * Linux Fan Control — Command Registry (header)
- * - RPC command table and helpers
+ * - RPC command table, metadata, and dispatch
  * (c) 2025 LinuxFanControl contributors
  */
 #pragma once
@@ -29,32 +29,16 @@ namespace lfc {
 
     class CommandRegistry {
     public:
-        using Handler = std::function<RpcResult(const RpcRequest&)>;
+        using RpcHandler = std::function<RpcResult(const RpcRequest&)>;
 
-        void add(const std::string& name, const std::string& help, Handler fn) {
-            handlers_[name] = std::move(fn);
-            help_[name] = help;
-        }
+        void registerMethod(const std::string& name, const std::string& help, RpcHandler fn);
+        bool has(const std::string& name) const;
+        RpcResult call(const RpcRequest& req) const;
+        std::vector<CommandInfo> list() const;
 
-        RpcResult call(const RpcRequest& req) const {
-            auto it = handlers_.find(req.method);
-            if (it == handlers_.end()) return {false, "{\"error\":{\"code\":-32601,\"message\":\"method not found\"}}"};
-            return it->second(req);
-    }
-
-    std::vector<CommandInfo> list() const {
-        std::vector<CommandInfo> v;
-        v.reserve(help_.size());
-        for (auto& kv : help_) v.push_back(CommandInfo{kv.first, kv.second});
-        return v;
-    }
-
-    const std::unordered_map<std::string, Handler>& handlers() const { return handlers_; }
-    const std::unordered_map<std::string, std::string>& help() const { return help_; }
-
-private:
-    std::unordered_map<std::string, Handler> handlers_;
-    std::unordered_map<std::string, std::string> help_;
-};
+    private:
+        std::unordered_map<std::string, RpcHandler> map_;
+        std::unordered_map<std::string, std::string> help_;
+    };
 
 } // namespace lfc
