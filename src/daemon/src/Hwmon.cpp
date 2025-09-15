@@ -1,7 +1,7 @@
 // LinuxFanControl - Daemon hwmon backend (implementation)
 // Comments in English. This file intentionally includes <unistd.h> to fix ::access/W_OK build error.
 
-#include "Hwmon.h"
+#include "Hwmon.hpp"
 
 #include <algorithm>
 #include <cerrno>

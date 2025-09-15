@@ -6,6 +6,7 @@
  */
 
 #include <string>
+#include <vector>
 #include <memory>
 #include <atomic>
 #include "include/CommandRegistry.h"
@@ -21,7 +22,8 @@ namespace lfc {
     Daemon();
     ~Daemon();
 
-    bool init(const Config& cfg);
+    // Auf neues Config-Schema umgestellt (DaemonConfig) + CLI-Debug-Flag
+    bool init(const DaemonConfig& cfg, bool debugCli);
     void runLoop();
     void pumpOnce(int timeoutMs=200);
     void shutdown();
@@ -32,6 +34,10 @@ namespace lfc {
 
     // command reg
     void bindCommands(CommandRegistry& reg);
+
+    // Von RpcTcpServer/CLI genutzt:
+    std::string dispatch(const std::string& method, const std::string& paramsJson);
+    std::vector<CommandInfo> listRpcCommands() const;
 
   private:
     std::unique_ptr<RpcTcpServer> rpc_;
