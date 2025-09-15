@@ -1,7 +1,7 @@
 /*
  * Linux Fan Control — Engine (header)
- * - Periodic sensor readout and PWM control
- * - SHM telemetry writer (fixed-size buffer)
+ * - Periodic sensor readout and telemetry
+ * - Optional PWM control (disabled by default)
  * - Snapshot-driven device inventory
  * (c) 2025 LinuxFanControl contributors
  */
@@ -24,6 +24,10 @@ namespace lfc {
     void stop();
     void tick();
 
+    // Control gating (default: disabled)
+    void enableControl(bool on);
+    bool controlEnabled() const { return controlEnabled_; }
+
   private:
     // devices snapshot
     HwmonSnapshot snap_;
@@ -31,6 +35,10 @@ namespace lfc {
     // lifecycle
     bool running_{false};
     std::chrono::steady_clock::time_point lastTick_{};
+
+    // control flag
+    bool controlEnabled_{false};
+    int lastPercent_{-1};
 
     // telemetry SHM
     std::string shmPath_;

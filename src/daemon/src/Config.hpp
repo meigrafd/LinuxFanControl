@@ -1,10 +1,15 @@
+/*
+ * Linux Fan Control — Config (header)
+ * - JSON-based daemon configuration
+ * - Minimal schema with sane defaults
+ * (c) 2025 LinuxFanControl contributors
+ */
 #pragma once
 #include <string>
 #include <cstddef>
 
 namespace lfc {
 
-    // Structured daemon configuration (no hardcoding – file driven).
     struct DaemonConfig {
         struct Log {
             std::string file;       // /tmp/daemon_lfc.log
@@ -31,7 +36,6 @@ namespace lfc {
         std::string pidFile{"/run/lfcd.pid"};
     };
 
-    // Very small loader/saver (no external deps). If parsing fails -> false.
     struct Config {
         static DaemonConfig Defaults();
         static bool Load(const std::string& path, DaemonConfig& out, std::string& err);

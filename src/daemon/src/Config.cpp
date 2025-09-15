@@ -1,4 +1,11 @@
+/*
+ * Linux Fan Control — Config (implementation)
+ * - JSON load/save using lightweight helper
+ * (c) 2025 LinuxFanControl contributors
+ */
 #include "Config.hpp"
+#include "JsonLite.hpp"
+
 #include <fstream>
 #include <sstream>
 #include <filesystem>
@@ -9,77 +16,120 @@ namespace lfc {
 
     DaemonConfig Config::Defaults() { return DaemonConfig{}; }
 
-    static string trim(const string& s) {
-        const char* ws = " \t\r\n";
-        auto b = s.find_first_not_of(ws);
-        auto e = s.find_last_not_of(ws);
-        if (b == string::npos) return {};
-        return s.substr(b, e - b + 1);
-    }
-
-    bool Config::Load(const string& path, DaemonConfig& out, string& err) {
+    static bool read_file(const string& path, string& out, string& err) {
         if (!std::filesystem::exists(path)) { err = "config not found"; return false; }
         ifstream f(path);
         if (!f) { err = "open failed"; return false; }
-        // ultra-simple line parser: key=value
-        // acceptable keys:
-        // log.file, log.maxBytes, log.rotateCount, log.debug
-        // rpc.host, rpc.port
-        // shm.path
-        // profiles.dir, profiles.active, profiles.backups
-        // pidFile
-        string line;
+        std::ostringstream ss; ss << f.rdbuf();
+        out = ss.str();
+        return true;
+    }
+
+    static string get_str(const jsonlite::Value* v, const string& def) {
+        return (v && v->isStr()) ? v->asStr() : def;
+    }
+    static bool get_bool(const jsonlite::Value* v, bool def) {
+        if (!v) return def;
+        if (v->isBool()) return v->asBool();
+        if (v->isNum())  return v->asNum() != 0.0;
+        return def;
+    }
+    static int get_int(const jsonlite::Value* v, int def) {
+        if (!v) return def;
+        if (v->isNum()) return static_cast<int>(v->asNum());
+        return def;
+    }
+    static std::size_t get_size(const jsonlite::Value* v, std::size_t def) {
+        if (!v) return def;
+        if (v->isNum()) return static_cast<std::size_t>(v->asNum());
+        return def;
+    }
+
+    bool Config::Load(const string& path, DaemonConfig& out, string& err) {
+        string txt;
+        if (!read_file(path, txt, err)) return false;
+
+        jsonlite::Value root;
+        if (!jsonlite::parse(txt, root, err)) return false;
+
         DaemonConfig cfg = Defaults();
-        while (getline(f, line)) {
-            line = trim(line);
-            if (line.empty() || line[0] == '#') continue;
-            auto eq = line.find('=');
-            if (eq == string::npos) continue;
-            string k = trim(line.substr(0, eq));
-            string v = trim(line.substr(eq + 1));
 
-            auto as_bool  = [&](const string& s){ return s=="1"||s=="true"||s=="True"||s=="TRUE"; };
-            auto as_u64   = [&](const string& s){ return static_cast<size_t>(strtoull(s.c_str(), nullptr, 10)); };
-            auto as_int   = [&](const string& s){ return static_cast<int>(strtol(s.c_str(), nullptr, 10)); };
-
-            if      (k=="log.file")         cfg.log.file = v;
-            else if (k=="log.maxBytes")     cfg.log.maxBytes = as_u64(v);
-            else if (k=="log.rotateCount")  cfg.log.rotateCount = as_int(v);
-            else if (k=="log.debug")        cfg.log.debug = as_bool(v);
-
-            else if (k=="rpc.host")         cfg.rpc.host = v;
-            else if (k=="rpc.port")         cfg.rpc.port = as_int(v);
-
-            else if (k=="shm.path")         cfg.shm.path = v;
-
-            else if (k=="profiles.dir")     cfg.profiles.dir = v;
-            else if (k=="profiles.active")  cfg.profiles.active = v;
-            else if (k=="profiles.backups") cfg.profiles.backups = as_bool(v);
-
-            else if (k=="pidFile")          cfg.pidFile = v;
+        // log
+        if (auto jlog = jsonlite::objGet(root, "log")) {
+            cfg.log.file        = get_str(jsonlite::objGet(*jlog, "file"),        cfg.log.file);
+            cfg.log.maxBytes    = get_size(jsonlite::objGet(*jlog, "maxBytes"),   cfg.log.maxBytes);
+            cfg.log.rotateCount = get_int(jsonlite::objGet(*jlog, "rotateCount"), cfg.log.rotateCount);
+            cfg.log.debug       = get_bool(jsonlite::objGet(*jlog, "debug"),      cfg.log.debug);
         }
+
+        // rpc
+        if (auto jr = jsonlite::objGet(root, "rpc")) {
+            cfg.rpc.host = get_str(jsonlite::objGet(*jr, "host"), cfg.rpc.host);
+            cfg.rpc.port = get_int(jsonlite::objGet(*jr, "port"), cfg.rpc.port);
+        }
+
+        // shm
+        if (auto js = jsonlite::objGet(root, "shm")) {
+            cfg.shm.path = get_str(jsonlite::objGet(*js, "path"), cfg.shm.path);
+        }
+
+        // profiles
+        if (auto jp = jsonlite::objGet(root, "profiles")) {
+            cfg.profiles.dir     = get_str(jsonlite::objGet(*jp, "dir"),     cfg.profiles.dir);
+            cfg.profiles.active  = get_str(jsonlite::objGet(*jp, "active"),  cfg.profiles.active);
+            cfg.profiles.backups = get_bool(jsonlite::objGet(*jp, "backups"), cfg.profiles.backups);
+        }
+
+        // pidFile
+        cfg.pidFile = get_str(jsonlite::objGet(root, "pidFile"), cfg.pidFile);
+
         out = cfg;
         return true;
+    }
+
+    static jsonlite::Value to_json(const DaemonConfig& in) {
+        using jsonlite::Value;
+        Value root; root.v = Value::Object{};
+
+        auto& o = root.mutObj();
+
+        Value jlog; jlog.v = Value::Object{};
+        jlog.mutObj()["file"]        = Value{in.log.file};
+        jlog.mutObj()["maxBytes"]    = Value{static_cast<double>(in.log.maxBytes)};
+        jlog.mutObj()["rotateCount"] = Value{static_cast<double>(in.log.rotateCount)};
+        jlog.mutObj()["debug"]       = Value{in.log.debug};
+        o["log"] = jlog;
+
+        Value jr; jr.v = Value::Object{};
+        jr.mutObj()["host"] = Value{in.rpc.host};
+        jr.mutObj()["port"] = Value{static_cast<double>(in.rpc.port)};
+        o["rpc"] = jr;
+
+        Value js; js.v = Value::Object{};
+        js.mutObj()["path"] = Value{in.shm.path};
+        o["shm"] = js;
+
+        Value jp; jp.v = Value::Object{};
+        jp.mutObj()["dir"]     = Value{in.profiles.dir};
+        jp.mutObj()["active"]  = Value{in.profiles.active};
+        jp.mutObj()["backups"] = Value{in.profiles.backups};
+        o["profiles"] = jp;
+
+        o["pidFile"] = Value{in.pidFile};
+
+        return root;
     }
 
     bool Config::Save(const string& path, const DaemonConfig& in, string& err) {
         std::error_code ec;
         std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
-        ofstream f(path, ios::trunc);
+
+        std::ofstream f(path, std::ios::trunc);
         if (!f) { err = "open for write failed"; return false; }
-        f << "# LinuxFanControl daemon config (ini-like key=value)\n";
-        f << "log.file="          << in.log.file          << "\n";
-        f << "log.maxBytes="      << in.log.maxBytes      << "\n";
-        f << "log.rotateCount="   << in.log.rotateCount   << "\n";
-        f << "log.debug="         << (in.log.debug ? "true" : "false") << "\n";
-        f << "rpc.host="          << in.rpc.host          << "\n";
-        f << "rpc.port="          << in.rpc.port          << "\n";
-        f << "shm.path="          << in.shm.path          << "\n";
-        f << "profiles.dir="      << in.profiles.dir      << "\n";
-        f << "profiles.active="   << in.profiles.active   << "\n";
-        f << "profiles.backups="  << (in.profiles.backups ? "true" : "false") << "\n";
-        f << "pidFile="           << in.pidFile           << "\n";
-        return true;
+
+        auto root = to_json(in);
+        f << jsonlite::stringify(root) << "\n";
+        return static_cast<bool>(f);
     }
 
 } // namespace lfc

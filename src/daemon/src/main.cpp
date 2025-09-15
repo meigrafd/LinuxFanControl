@@ -1,6 +1,6 @@
 /*
  * Linux Fan Control — Daemon entry (main)
- * - CLI parsing and config bootstrap (INI)
+ * - CLI parsing and JSON config bootstrap
  * - Foreground/daemon mode toggle
  * - Starts daemon, installs signal handlers
  * (c) 2025 LinuxFanControl contributors
@@ -43,7 +43,7 @@ static void usage(const char* argv0) {
     "  --debug               Enable debug logging\n"
     "  --foreground          Do not daemonize\n"
     "  --cmds                List RPC commands and exit\n"
-    "  --config PATH         Config file path\n"
+    "  --config PATH         Config file path (JSON)\n"
     "  --pidfile PATH        PID file path\n"
     "  --logfile PATH        Log file path\n"
     "  --host HOST           Bind host\n"
@@ -57,10 +57,10 @@ static CliOptions parse_cli(int argc, char** argv) {
     const char* home = std::getenv("HOME");
     if (home && *home) {
         std::filesystem::path base = std::filesystem::path(home) / ".config" / "LinuxFanControl";
-        opt.configPath  = (base / "daemon.ini").string();
+        opt.configPath  = (base / "daemon.json").string();
         opt.profilesDir = (base / "profiles").string();
     } else {
-        opt.configPath  = "/etc/lfc/daemon.ini";
+        opt.configPath  = "/etc/lfc/daemon.json";
         opt.profilesDir = "/etc/lfc/profiles";
     }
 
