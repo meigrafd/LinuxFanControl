@@ -1,8 +1,8 @@
 /*
  * Linux Fan Control — Daemon (header)
  * - JSON-RPC (TCP) server + SHM telemetry
- * - PID file + file logging
- * - Config bootstrap and command registry
+ * - PID file handling with /run primary, /tmp fallback
+ * - Command registry wiring
  * (c) 2025 LinuxFanControl contributors
  */
 #pragma once
@@ -23,7 +23,8 @@ namespace lfc {
     Daemon();
     ~Daemon();
 
-    bool init(const DaemonConfig& cfg, bool debugCli);
+    // cfg is updated in-place (pidFile may change on fallback)
+    bool init(DaemonConfig& cfg, bool debugCli, const std::string& cfgPath);
     void runLoop();
     void pumpOnce(int timeoutMs = 200);
     void shutdown();
@@ -42,6 +43,8 @@ namespace lfc {
     std::string pidFile_;
     std::atomic<bool> running_{false};
     int rpcTimeoutMs_{200};
+
+    std::string configPath_;
 
     Engine engine_;
     HwmonSnapshot hwmon_;

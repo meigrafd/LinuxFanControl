@@ -2,7 +2,7 @@
  * Linux Fan Control — Daemon (implementation)
  * - JSON-RPC (TCP) server lifecycle
  * - SHM telemetry + engine bootstrap
- * - PID file handling and logging setup
+ * - PID file handling with /run primary, /tmp fallback (persisted)
  * - Command registry wiring
  * (c) 2025 LinuxFanControl contributors
  */
@@ -25,30 +25,47 @@ namespace lfc {
   Daemon::Daemon() = default;
   Daemon::~Daemon() { shutdown(); }
 
-  bool Daemon::writePidFile(const std::string& path) {
-    pidFile_ = path;
+  static bool ensureDir(const std::string& path) {
+    std::error_code ec;
     auto dir = std::filesystem::path(path).parent_path();
-    if (!dir.empty()) {
-      std::error_code ec; std::filesystem::create_directories(dir, ec);
-    }
+    if (dir.empty()) return true;
+    std::filesystem::create_directories(dir, ec);
+    return !ec;
+  }
+
+  bool Daemon::writePidFile(const std::string& path) {
+    if (!ensureDir(path)) return false;
     std::ofstream f(path, std::ios::trunc);
     if (!f) return false;
     f << getpid() << "\n";
+    pidFile_ = path;
     return true;
   }
 
   void Daemon::removePidFile() {
-    if (!pidFile_.empty()) {
-      std::error_code ec; std::filesystem::remove(pidFile_, ec);
-    }
+    if (pidFile_.empty()) return;
+    std::error_code ec;
+    std::filesystem::remove(pidFile_, ec);
+    pidFile_.clear();
   }
 
-  bool Daemon::init(const DaemonConfig& cfg, bool debugCli) {
+  bool Daemon::init(DaemonConfig& cfg, bool debugCli, const std::string& cfgPath) {
+    configPath_ = cfgPath;
+
     Logger::instance().configure(cfg.log.file, cfg.log.maxBytes, cfg.log.rotateCount, cfg.log.debug || debugCli);
     if (cfg.log.debug || debugCli) Logger::instance().setLevel(LogLevel::Debug);
 
-    if (!writePidFile(cfg.pidFile)) {
-      LFC_LOGW("pidfile create failed: %s", cfg.pidFile.c_str());
+    // PID: try /run first, then /tmp; on fallback, persist updated path to config.
+    std::string primary = cfg.pidFile.empty() ? std::string("/run/lfcd.pid") : cfg.pidFile;
+    if (!writePidFile(primary)) {
+      std::string fallback{"/tmp/lfcd.pid"};
+      if (writePidFile(fallback)) {
+        cfg.pidFile = fallback;
+        std::string err;
+        (void)Config::Save(configPath_, cfg, err);
+      } else {
+        LFC_LOGW("pidfile create failed (primary: %s, fallback: %s)", primary.c_str(), fallback.c_str());
+      }
     }
 
     hwmon_ = Hwmon::scan();
@@ -81,12 +98,14 @@ namespace lfc {
     while (running_) pumpOnce();
   }
 
-  void Daemon::pumpOnce(int /*timeoutMs*/) { engine_.tick(); }
+  void Daemon::pumpOnce(int /*timeoutMs*/) {
+    engine_.tick();
+  }
 
   static std::string jsonBool(bool b) { return b ? "true" : "false"; }
   static std::string jsonStr(const std::string& s) {
-    std::string out; out.reserve(s.size()+2); out.push_back('"');
-    for (char c : s) { if (c=='"'||c=='\\') out.push_back('\\'); out.push_back(c); }
+    std::string out; out.reserve(s.size() + 2); out.push_back('"');
+    for (char c : s) { if (c == '"' || c == '\\') out.push_back('\\'); out.push_back(c); }
     out.push_back('"'); return out;
   }
 
@@ -99,7 +118,7 @@ namespace lfc {
       std::ostringstream ss;
       ss << "{\"commands\":[";
       auto list = this->listRpcCommands();
-      for (size_t i=0;i<list.size();++i) {
+      for (size_t i = 0; i < list.size(); ++i) {
         if (i) ss << ",";
         ss << "{\"name\":" << jsonStr(list[i].name)
         << ",\"help\":" << jsonStr(list[i].help) << "}";

@@ -21,7 +21,6 @@ endif()
 add_executable(lfcd
   ${SRC_DIR}/Log.cpp
   ${SRC_DIR}/Config.cpp
-  ${SRC_DIR}/JsonLite.cpp
   ${SRC_DIR}/CommandRegistry.cpp
   ${SRC_DIR}/CommandIntrospection.cpp
   ${SRC_DIR}/RpcTcpServer.cpp

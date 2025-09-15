@@ -1,156 +1,107 @@
 /*
  * Linux Fan Control — Config (implementation)
- * - JSON load/save using lightweight helper
+ * - Uses nlohmann/json with 4-space pretty print
  * (c) 2025 LinuxFanControl contributors
  */
 #include "Config.hpp"
-#include "JsonLite.hpp"
 
+#include <nlohmann/json.hpp>
 #include <fstream>
 #include <sstream>
 #include <filesystem>
 
-using namespace std;
+using nlohmann::json;
 
 namespace lfc {
 
-    DaemonConfig Config::Defaults() { return DaemonConfig{}; }
+DaemonConfig Config::Defaults() {
+    return DaemonConfig{};
+}
 
-    static bool read_file(const string& path, string& out, string& err) {
-        if (!std::filesystem::exists(path)) { err = "config not found"; return false; }
-        ifstream f(path);
-        if (!f) { err = "open failed"; return false; }
-        std::ostringstream ss; ss << f.rdbuf();
-        out = ss.str();
-        return true;
+static bool read_file(const std::string& path, std::string& out, std::string& err) {
+    if (!std::filesystem::exists(path)) { err = "config not found"; return false; }
+    std::ifstream f(path);
+    if (!f) { err = "open failed"; return false; }
+    std::ostringstream ss; ss << f.rdbuf();
+    out = ss.str();
+    return true;
+}
+
+bool Config::Load(const std::string& path, DaemonConfig& out, std::string& err) {
+    std::string txt;
+    if (!read_file(path, txt, err)) return false;
+
+    json j;
+    try {
+        j = json::parse(txt);
+    } catch (const std::exception& e) {
+        err = std::string("parse failed: ") + e.what();
+        return false;
     }
 
-    static string get_str(const jsonlite::Value* v, const string& def) {
-        return (v && v->isStr()) ? v->asStr() : def;
-    }
-    static bool get_bool(const jsonlite::Value* v, bool def) {
-        if (!v) return def;
-        if (v->isBool()) return v->asBool();
-        if (v->isNum())  return v->asNum() != 0.0;
-        return def;
-    }
-    static int get_int(const jsonlite::Value* v, int def) {
-        if (!v) return def;
-        if (v->isNum()) return static_cast<int>(v->asNum());
-        return def;
-    }
-    static std::size_t get_size(const jsonlite::Value* v, std::size_t def) {
-        if (!v) return def;
-        if (v->isNum()) return static_cast<std::size_t>(v->asNum());
-        return def;
+    DaemonConfig cfg = Defaults();
+
+    if (j.contains("log") && j["log"].is_object()) {
+        const auto& jl = j["log"];
+        cfg.log.file        = jl.value("file",        cfg.log.file);
+        cfg.log.maxBytes    = static_cast<std::size_t>(jl.value("maxBytes",   static_cast<std::uint64_t>(cfg.log.maxBytes)));
+        cfg.log.rotateCount = jl.value("rotateCount", cfg.log.rotateCount);
+        cfg.log.debug       = jl.value("debug",       cfg.log.debug);
     }
 
-    bool Config::Load(const string& path, DaemonConfig& out, string& err) {
-        string txt;
-        if (!read_file(path, txt, err)) return false;
-
-        jsonlite::Value root;
-        if (!jsonlite::parse(txt, root, err)) return false;
-
-        DaemonConfig cfg = Defaults();
-
-        if (auto jlog = jsonlite::objGet(root, "log")) {
-            cfg.log.file        = get_str(jsonlite::objGet(*jlog, "file"),        cfg.log.file);
-            cfg.log.maxBytes    = get_size(jsonlite::objGet(*jlog, "maxBytes"),   cfg.log.maxBytes);
-            cfg.log.rotateCount = get_int(jsonlite::objGet(*jlog, "rotateCount"), cfg.log.rotateCount);
-            cfg.log.debug       = get_bool(jsonlite::objGet(*jlog, "debug"),      cfg.log.debug);
-        }
-        if (auto jr = jsonlite::objGet(root, "rpc")) {
-            cfg.rpc.host = get_str(jsonlite::objGet(*jr, "host"), cfg.rpc.host);
-            cfg.rpc.port = get_int(jsonlite::objGet(*jr, "port"), cfg.rpc.port);
-        }
-        if (auto js = jsonlite::objGet(root, "shm")) {
-            cfg.shm.path = get_str(jsonlite::objGet(*js, "path"), cfg.shm.path);
-        }
-        if (auto jp = jsonlite::objGet(root, "profiles")) {
-            cfg.profiles.dir     = get_str(jsonlite::objGet(*jp, "dir"),     cfg.profiles.dir);
-            cfg.profiles.active  = get_str(jsonlite::objGet(*jp, "active"),  cfg.profiles.active);
-            cfg.profiles.backups = get_bool(jsonlite::objGet(*jp, "backups"), cfg.profiles.backups);
-        }
-        cfg.pidFile = get_str(jsonlite::objGet(root, "pidFile"), cfg.pidFile);
-
-        out = cfg;
-        return true;
+    if (j.contains("rpc") && j["rpc"].is_object()) {
+        const auto& jr = j["rpc"];
+        cfg.rpc.host = jr.value("host", cfg.rpc.host);
+        cfg.rpc.port = jr.value("port", cfg.rpc.port);
     }
 
-    // manual pretty JSON (4-space indent) from DaemonConfig
-    static inline void put_indent(std::ostream& os, int n) {
-        for (int i = 0; i < n; ++i) os.put(' ');
-    }
-    static std::string jstr(const std::string& s) {
-        std::string out; out.reserve(s.size() + 2);
-        out.push_back('"');
-        for (char c : s) {
-            switch (c) {
-                case '\\': out += "\\\\"; break;
-                case '\"': out += "\\\""; break;
-                case '\n': out += "\\n"; break;
-                case '\r': out += "\\r"; break;
-                case '\t': out += "\\t"; break;
-                default:   out.push_back(c); break;
-            }
-        }
-        out.push_back('"');
-        return out;
+    if (j.contains("shm") && j["shm"].is_object()) {
+        const auto& js = j["shm"];
+        cfg.shm.path = js.value("path", cfg.shm.path);
     }
 
-    bool Config::Save(const string& path, const DaemonConfig& in, string& err) {
-        std::error_code ec;
-        std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
-
-        std::ofstream f(path, std::ios::trunc);
-        if (!f) { err = "open for write failed"; return false; }
-
-        int i = 0;
-        f << "{\n";
-        i += 4;
-
-        // log
-        put_indent(f, i); f << "\"log\": {\n";
-        i += 4;
-        put_indent(f, i); f << "\"file\": "        << jstr(in.log.file) << ",\n";
-        put_indent(f, i); f << "\"maxBytes\": "    << static_cast<unsigned long long>(in.log.maxBytes) << ",\n";
-        put_indent(f, i); f << "\"rotateCount\": " << in.log.rotateCount << ",\n";
-        put_indent(f, i); f << "\"debug\": "       << (in.log.debug ? "true" : "false") << "\n";
-        i -= 4;
-        put_indent(f, i); f << "},\n";
-
-        // rpc
-        put_indent(f, i); f << "\"rpc\": {\n";
-        i += 4;
-        put_indent(f, i); f << "\"host\": " << jstr(in.rpc.host) << ",\n";
-        put_indent(f, i); f << "\"port\": " << in.rpc.port << "\n";
-        i -= 4;
-        put_indent(f, i); f << "},\n";
-
-        // shm
-        put_indent(f, i); f << "\"shm\": {\n";
-        i += 4;
-        put_indent(f, i); f << "\"path\": " << jstr(in.shm.path) << "\n";
-        i -= 4;
-        put_indent(f, i); f << "},\n";
-
-        // profiles
-        put_indent(f, i); f << "\"profiles\": {\n";
-        i += 4;
-        put_indent(f, i); f << "\"dir\": "     << jstr(in.profiles.dir) << ",\n";
-        put_indent(f, i); f << "\"active\": "  << jstr(in.profiles.active) << ",\n";
-        put_indent(f, i); f << "\"backups\": " << (in.profiles.backups ? "true" : "false") << "\n";
-        i -= 4;
-        put_indent(f, i); f << "},\n";
-
-        // pidFile
-        put_indent(f, i); f << "\"pidFile\": " << jstr(in.pidFile) << "\n";
-
-        i -= 4;
-        f << "}\n";
-
-        return static_cast<bool>(f);
+    if (j.contains("profiles") && j["profiles"].is_object()) {
+        const auto& jp = j["profiles"];
+        cfg.profiles.dir     = jp.value("dir",     cfg.profiles.dir);
+        cfg.profiles.active  = jp.value("active",  cfg.profiles.active);
+        cfg.profiles.backups = jp.value("backups", cfg.profiles.backups);
     }
+
+    cfg.pidFile = j.value("pidFile", cfg.pidFile);
+
+    out = cfg;
+    return true;
+}
+
+bool Config::Save(const std::string& path, const DaemonConfig& in, std::string& err) {
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+
+    json j;
+    j["log"] = {
+        {"file",        in.log.file},
+        {"maxBytes",    static_cast<std::uint64_t>(in.log.maxBytes)},
+        {"rotateCount", in.log.rotateCount},
+        {"debug",       in.log.debug}
+    };
+    j["rpc"] = {
+        {"host", in.rpc.host},
+        {"port", in.rpc.port}
+    };
+    j["shm"] = {
+        {"path", in.shm.path}
+    };
+    j["profiles"] = {
+        {"dir",     in.profiles.dir},
+        {"active",  in.profiles.active},
+        {"backups", in.profiles.backups}
+    };
+    j["pidFile"] = in.pidFile;
+
+    std::ofstream f(path, std::ios::trunc);
+    if (!f) { err = "open for write failed"; return false; }
+    f << j.dump(4) << '\n';
+    return static_cast<bool>(f);
+}
 
 } // namespace lfc
