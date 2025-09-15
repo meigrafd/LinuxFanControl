@@ -89,33 +89,34 @@ namespace lfc {
 
     static jsonlite::Value to_json(const DaemonConfig& in) {
         using jsonlite::Value;
+        using jsonlite::Object;
 
-        Value root; root.v = Value::Object{};
+        Value root(Object{});
         auto& o = root.mutObj();
 
-        Value jlog; jlog.v = Value::Object{};
-        jlog.mutObj()["file"]        = Value{in.log.file};
-        jlog.mutObj()["maxBytes"]    = Value{static_cast<double>(in.log.maxBytes)};
-        jlog.mutObj()["rotateCount"] = Value{static_cast<double>(in.log.rotateCount)};
-        jlog.mutObj()["debug"]       = Value{in.log.debug};
+        Value jlog(Object{});
+        jlog.mutObj()["file"]        = Value(in.log.file);
+        jlog.mutObj()["maxBytes"]    = Value(static_cast<double>(in.log.maxBytes));
+        jlog.mutObj()["rotateCount"] = Value(static_cast<double>(in.log.rotateCount));
+        jlog.mutObj()["debug"]       = Value(in.log.debug);
         o["log"] = jlog;
 
-        Value jr; jr.v = Value::Object{};
-        jr.mutObj()["host"] = Value{in.rpc.host};
-        jr.mutObj()["port"] = Value{static_cast<double>(in.rpc.port)};
+        Value jr(Object{});
+        jr.mutObj()["host"] = Value(in.rpc.host);
+        jr.mutObj()["port"] = Value(static_cast<double>(in.rpc.port));
         o["rpc"] = jr;
 
-        Value js; js.v = Value::Object{};
-        js.mutObj()["path"] = Value{in.shm.path};
+        Value js(Object{});
+        js.mutObj()["path"] = Value(in.shm.path);
         o["shm"] = js;
 
-        Value jp; jp.v = Value::Object{};
-        jp.mutObj()["dir"]     = Value{in.profiles.dir};
-        jp.mutObj()["active"]  = Value{in.profiles.active};
-        jp.mutObj()["backups"] = Value{in.profiles.backups};
+        Value jp(Object{});
+        jp.mutObj()["dir"]     = Value(in.profiles.dir);
+        jp.mutObj()["active"]  = Value(in.profiles.active);
+        jp.mutObj()["backups"] = Value(in.profiles.backups);
         o["profiles"] = jp;
 
-        o["pidFile"] = Value{in.pidFile};
+        o["pidFile"] = Value(in.pidFile);
 
         return root;
     }
