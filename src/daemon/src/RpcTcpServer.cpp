@@ -16,6 +16,7 @@
 #include <cstring>
 #include <sstream>
 #include <cctype>
+#include <thread>
 
 RpcTcpServer::RpcTcpServer(Daemon& d, const std::string& host, uint16_t port, bool debug)
 : daemon_(d), host_(host), port_(port), debug_(debug) {}

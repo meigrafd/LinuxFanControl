@@ -1,70 +1,59 @@
-/*
- * Linux Fan Control — Daemon
- * JSON-RPC over TCP, SHM telemetry, detection, channels, logging.
- * (c) 2025 LinuxFanControl contributors
- */
 #include "Daemon.hpp"
 #include "RpcTcpServer.hpp"
-#include "Log.hpp"
-#include "include/CommandIntrospection.h"
 #include "Hwmon.hpp"
+#include "Config.hpp"
+#include "include/CommandRegistry.h"
+#include "include/CommandIntrospection.h"
+#include "Log.hpp"
 
 #include <fstream>
-#include <thread>
 #include <sstream>
+#include <thread>
+#include <filesystem>
+#include <unistd.h>
+#include <sys/stat.h>
 
-#include <sys/stat.h>   // umask, mkdir
-#include <unistd.h>     // getpid, unlink
-
-using namespace lfc;
+namespace lfc {
 
 Daemon::Daemon() = default;
 Daemon::~Daemon() { shutdown(); }
 
 bool Daemon::writePidFile(const std::string& path) {
   pidFile_ = path;
-  ::umask(0022);
-  auto pos = path.rfind('/');
-  if (pos!=std::string::npos) {
-    std::string dir=path.substr(0,pos);
-    ::mkdir(dir.c_str(),0755);
+  auto dir = std::filesystem::path(path).parent_path();
+  if (!dir.empty()) {
+    std::error_code ec; std::filesystem::create_directories(dir, ec);
   }
   std::ofstream f(path, std::ios::trunc);
   if (!f) return false;
-  f<<getpid()<<"\n";
+  f << getpid() << "\n";
   return true;
 }
-void Daemon::removePidFile() { if (!pidFile_.empty()) ::unlink(pidFile_.c_str()); }
 
-// -----------------------------
-// Init mit neuem Config-Layout
-// -----------------------------
+void Daemon::removePidFile() {
+  if (!pidFile_.empty()) {
+    std::error_code ec; std::filesystem::remove(pidFile_, ec);
+  }
+}
+
 bool Daemon::init(const DaemonConfig& cfg, bool debugCli) {
-  // Logger
   Logger::instance().configure(cfg.log.file, cfg.log.maxBytes, cfg.log.rotateCount, cfg.log.debug || debugCli);
   if (cfg.log.debug || debugCli) Logger::instance().setLevel(LogLevel::Debug);
-  LFC_LOGI("daemon: init");
 
-  // PID-File (best effort)
-  if (!writePidFile(cfg.pidFile)) LFC_LOGW("pidfile create failed: %s", cfg.pidFile.c_str());
+  if (!writePidFile(cfg.pidFile)) {
+    LFC_LOGW("pidfile create failed: %s", cfg.pidFile.c_str());
+  }
 
-  // hwmon inventory
   hwmon_ = Hwmon::scan();
-  LFC_LOGI("hwmon: found %zu pwms, %zu fans, %zu temps", hwmon_.pwms.size(), hwmon_.fans.size(), hwmon_.temps.size());
-
-  // Engine + SHM
   engine_.setSnapshot(hwmon_);
   engine_.initShm(cfg.shm.path);
 
-  // RPC-Registry
-  reg_.reset(new CommandRegistry());
+  reg_ = std::make_unique<CommandRegistry>();
   bindCommands(*reg_);
 
-  // TCP RPC-Server
-  rpc_ = std::make_unique<RpcTcpServer>(*this, cfg.rpc.host, static_cast<std::uint16_t>(cfg.rpc.port), /*debug*/(cfg.log.debug || debugCli));
-  std::string err;
-  if (!rpc_->start(err)) {
-    LFC_LOGE("rpc start failed: %s", err.c_str());
+  rpc_ = std::make_unique<RpcTcpServer>(*this, cfg.rpc.host, static_cast<std::uint16_t>(cfg.rpc.port), (cfg.log.debug || debugCli));
+  if (!rpc_->start(reg_.get())) {
+    LFC_LOGE("rpc start failed");
     return false;
   }
 
@@ -78,7 +67,6 @@ void Daemon::shutdown() {
   if (rpc_) { rpc_->stop(); rpc_.reset(); }
   engine_.stop();
   removePidFile();
-  LFC_LOGI("daemon: stopped");
 }
 
 void Daemon::runLoop() {
@@ -86,42 +74,24 @@ void Daemon::runLoop() {
   while (running_) pumpOnce();
 }
 
-void Daemon::pumpOnce(int timeoutMs) {
-  if (rpc_) rpc_->pumpOnce(timeoutMs);
+void Daemon::pumpOnce(int /*timeoutMs*/) {
   engine_.tick();
 }
 
-std::string Daemon::jsonError(const char* msg) const {
-  std::string s="{\"code\":-32000,\"message\":\"";
-  for (const char* p=msg; *p; ++p){ if(*p=='"'||*p=='\\') s.push_back('\\'); s.push_back(*p); }
-  s+="\"}";
-  return s;
+void Daemon::bindCommands(CommandRegistry& reg) {
+  (void)reg; // implemented elsewhere in your tree
 }
 
-// -----------------------------
-// Dispatch + Introspection (für RpcTcpServer / CLI)
-// -----------------------------
 std::string Daemon::dispatch(const std::string& method, const std::string& paramsJson) {
   if (!reg_) return "{\"error\":{\"code\":-32601,\"message\":\"no registry\"}}";
-  RpcRequest req{method, /*id*/"", paramsJson};
-  auto it = reg_->handlers().find(method);
-  if (it == reg_->handlers().end()) return "{\"error\":{\"code\":-32601,\"message\":\"method not found\"}}";
-  RpcResult r = it->second(req);
-  // Falls Handler bereits vollst. Objekt liefert (result/error Felder), direkt durchreichen
-  return r.json;
-  }
+  RpcRequest req{method, "", paramsJson};
+  auto res = reg_->call(req);
+  return res.json;
+}
 
-  std::vector<CommandInfo> Daemon::listRpcCommands() const {
-    if (!reg_) return {};
-    std::vector<CommandInfo> out;
-    out.reserve(reg_->handlers().size());
-    for (auto& kv : reg_->handlers()) {
-      CommandInfo ci;
-      ci.name = kv.first;
-      // Help-Text aus Registry, falls vorhanden
-      auto it = reg_->help().find(kv.first);
-      ci.help = (it==reg_->help().end()? std::string() : it->second);
-      out.push_back(std::move(ci));
-    }
-    return out;
-  }
+std::vector<CommandInfo> Daemon::listRpcCommands() const {
+  if (!reg_) return {};
+  return reg_->list();
+}
+
+} // namespace lfc

@@ -1,41 +1,47 @@
 #pragma once
-/*
- * Linux Fan Control — Daemon
- * JSON-RPC over TCP (no HTTP), SHM telemetry, detection, channels, logging.
- * (c) 2025 LinuxFanControl contributors
- */
-
 #include <string>
 #include <vector>
 #include <memory>
 #include <atomic>
-#include "include/CommandRegistry.h"
-#include "Engine.hpp"
 #include "Config.hpp"
+#include "Engine.hpp"
 
 namespace lfc {
 
+  class CommandRegistry;
   class RpcTcpServer;
+
+  struct CommandInfo {
+    std::string name;
+    std::string help;
+  };
+
+  struct RpcRequest {
+    std::string method;
+    std::string id;
+    std::string paramsJson;
+  };
+
+  struct RpcResult {
+    bool ok{false};
+    std::string json;
+  };
 
   class Daemon {
   public:
     Daemon();
     ~Daemon();
 
-    // Auf neues Config-Schema umgestellt (DaemonConfig) + CLI-Debug-Flag
     bool init(const DaemonConfig& cfg, bool debugCli);
     void runLoop();
-    void pumpOnce(int timeoutMs=200);
+    void pumpOnce(int timeoutMs = 200);
     void shutdown();
 
-    // PID
     bool writePidFile(const std::string& path);
     void removePidFile();
 
-    // command reg
     void bindCommands(CommandRegistry& reg);
 
-    // Von RpcTcpServer/CLI genutzt:
     std::string dispatch(const std::string& method, const std::string& paramsJson);
     std::vector<CommandInfo> listRpcCommands() const;
 
@@ -46,12 +52,8 @@ namespace lfc {
     std::atomic<bool> running_{false};
     int rpcTimeoutMs_{200};
 
-    // subsystems
     Engine engine_;
     HwmonSnapshot hwmon_;
-
-    // helpers
-    std::string jsonError(const char* msg) const;
   };
 
 } // namespace lfc
