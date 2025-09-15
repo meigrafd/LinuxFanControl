@@ -1,3 +1,9 @@
+/*
+ * Linux Fan Control — HWMON abstraction (implementation)
+ * - Sysfs scanning and helpers
+ * - Basic PWM write and sensor read
+ * (c) 2025 LinuxFanControl contributors
+ */
 #include "Hwmon.hpp"
 #include <cstdio>
 #include <cstdlib>

@@ -1,3 +1,10 @@
+/*
+ * Linux Fan Control — Daemon (header)
+ * - JSON-RPC (TCP) server + SHM telemetry
+ * - PID file + file logging
+ * - Config bootstrap and command registry
+ * (c) 2025 LinuxFanControl contributors
+ */
 #pragma once
 #include <string>
 #include <vector>
@@ -5,27 +12,11 @@
 #include <atomic>
 #include "Config.hpp"
 #include "Engine.hpp"
+#include "include/CommandRegistry.h"
 
 namespace lfc {
 
-  class CommandRegistry;
   class RpcTcpServer;
-
-  struct CommandInfo {
-    std::string name;
-    std::string help;
-  };
-
-  struct RpcRequest {
-    std::string method;
-    std::string id;
-    std::string paramsJson;
-  };
-
-  struct RpcResult {
-    bool ok{false};
-    std::string json;
-  };
 
   class Daemon {
   public:

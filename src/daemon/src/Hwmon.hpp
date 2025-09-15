@@ -1,3 +1,10 @@
+/*
+ * Linux Fan Control — HWMON abstraction (header)
+ * - Sysfs discovery (temps, fans, pwms)
+ * - Minimal I/O helpers for engine
+ * - Percent-based PWM control
+ * (c) 2025 LinuxFanControl contributors
+ */
 #pragma once
 #include <string>
 #include <vector>

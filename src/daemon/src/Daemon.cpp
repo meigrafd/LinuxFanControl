@@ -1,3 +1,11 @@
+/*
+ * Linux Fan Control — Daemon (implementation)
+ * - JSON-RPC (TCP) server lifecycle
+ * - SHM telemetry + engine bootstrap
+ * - PID file handling and logging setup
+ * - Command registry wiring
+ * (c) 2025 LinuxFanControl contributors
+ */
 #include "Daemon.hpp"
 #include "RpcTcpServer.hpp"
 #include "Hwmon.hpp"
@@ -79,7 +87,7 @@ void Daemon::pumpOnce(int /*timeoutMs*/) {
 }
 
 void Daemon::bindCommands(CommandRegistry& reg) {
-  (void)reg; // implemented elsewhere in your tree
+  (void)reg;
 }
 
 std::string Daemon::dispatch(const std::string& method, const std::string& paramsJson) {

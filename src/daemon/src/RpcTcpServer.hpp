@@ -1,3 +1,11 @@
+/*
+ * Linux Fan Control — RPC TCP Server (header)
+ * - Pure JSON-RPC over plain TCP (no HTTP)
+ * - Accept loop + per-client handling thread
+ * - Integrated command registry forwarding
+ * - Minimal surface; daemon owns lifecycle
+ * (c) 2025 LinuxFanControl contributors
+ */
 #pragma once
 #include <string>
 #include <vector>
@@ -15,10 +23,8 @@ namespace lfc {
         RpcTcpServer(Daemon& d, const std::string& host, std::uint16_t port, bool debug);
         ~RpcTcpServer();
 
-        // Start using an existing command registry
         bool start(CommandRegistry* reg);
         void stop();
-        // Non-blocking step to keep interface symmetrical with main loop
         void pumpOnce(int /*timeoutMs*/);
 
         std::vector<std::string> listMethods() const;

@@ -1,10 +1,8 @@
 /*
- * Linux Fan Control — Daemon entry
- * - Pure JSON-RPC (TCP) + SHM, no HTTP
- * - PID file + file logging (Linux style)
- * - Config bootstrap with sane defaults
- * - Dynamic command introspection (no duplicate source-of-truth)
- * - Clean signal handling & graceful shutdown
+ * Linux Fan Control — Daemon entry (main)
+ * - CLI parsing and config bootstrap (INI)
+ * - Foreground/daemon mode toggle
+ * - Starts daemon, installs signal handlers
  * (c) 2025 LinuxFanControl contributors
  */
 #include <iostream>
