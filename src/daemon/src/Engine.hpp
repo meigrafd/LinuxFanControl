@@ -2,6 +2,7 @@
  * Linux Fan Control — Engine (header)
  * - Periodic sensor readout and telemetry
  * - Optional PWM control (disabled by default)
+ * - Snapshot-driven device inventory
  * (c) 2025 LinuxFanControl contributors
  */
 #pragma once
@@ -25,6 +26,7 @@ namespace lfc {
     void enableControl(bool on);
     bool controlEnabled() const { return controlEnabled_; }
 
+    // Provides current telemetry JSON from SHM buffer.
     bool getTelemetry(std::string& out) const;
 
   private:

@@ -26,13 +26,18 @@ namespace lfc {
   Engine::Engine() = default;
   Engine::~Engine() { stop(); }
 
-  void Engine::setSnapshot(const HwmonSnapshot& snap) { snap_ = snap; }
+  void Engine::setSnapshot(const HwmonSnapshot& snap) {
+    snap_ = snap;
+  }
 
   bool Engine::initShm(const std::string& path) {
     shmPath_ = path;
     int fd = ::shm_open(shmPath_.c_str(), O_CREAT | O_RDWR, 0660);
     if (fd < 0) return false;
-    if (::ftruncate(fd, static_cast<off_t>(kShmSize)) != 0) { ::close(fd); return false; }
+    if (::ftruncate(fd, static_cast<off_t>(kShmSize)) != 0) {
+      ::close(fd);
+      return false;
+    }
     void* p = ::mmap(nullptr, kShmSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     ::close(fd);
     if (p == MAP_FAILED) return false;
@@ -54,7 +59,9 @@ namespace lfc {
     }
   }
 
-  void Engine::enableControl(bool on) { controlEnabled_ = on; }
+  void Engine::enableControl(bool on) {
+    controlEnabled_ = on;
+  }
 
   static int clampPercent(int v) {
     if (v < 0) return 0;
@@ -84,12 +91,16 @@ namespace lfc {
     }
 
     int maxMilliC = 0;
-    for (const auto& kv : temps) if (kv.second > maxMilliC) maxMilliC = kv.second;
+    for (const auto& kv : temps) {
+      if (kv.second > maxMilliC) maxMilliC = kv.second;
+    }
 
     int target = 0;
-    if (maxMilliC <= 40000) target = 20;
-    else if (maxMilliC >= 80000) target = 100;
-    else {
+    if (maxMilliC <= 40000) {
+      target = 20;
+    } else if (maxMilliC >= 80000) {
+      target = 100;
+    } else {
       double x = (maxMilliC - 40000) / 40000.0;
       target = static_cast<int>(20 + x * 80);
     }
@@ -113,9 +124,7 @@ namespace lfc {
     {
       bool first = true;
       for (const auto& kv : temps) {
-        if (!first) {
-          tele << ",";
-        }
+        if (!first) tele << ",";
         first = false;
         tele << "{\"name\":\"";
         for (char c : kv.first) {
@@ -131,9 +140,7 @@ namespace lfc {
     {
       bool first = true;
       for (const auto& kv : fans) {
-        if (!first) {
-          tele << ",";
-        }
+        if (!first) tele << ",";
         first = false;
         tele << "{\"path\":\"";
         for (char c : kv.first) {
@@ -159,6 +166,15 @@ namespace lfc {
       std::memcpy(shmPtr_, s.data(), n);
       shmPtr_[n] = '\0';
     }
+  }
+
+  bool Engine::getTelemetry(std::string& out) const {
+    if (!shmPtr_) return false;
+    const char* p = shmPtr_;
+    std::size_t n = 0;
+    while (n < kShmSize && p[n] != '\0') ++n;
+    out.assign(p, n);
+    return true;
   }
 
 } // namespace lfc
