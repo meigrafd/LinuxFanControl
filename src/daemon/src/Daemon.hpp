@@ -1,7 +1,7 @@
 #pragma once
 /*
  * Linux Fan Control — Daemon
- * Dynamic RPC command registry, engine, detection, channels, logging.
+ * JSON-RPC over TCP (no HTTP), SHM telemetry, detection, channels, logging.
  * (c) 2025 LinuxFanControl contributors
  */
 
@@ -18,6 +18,10 @@
 
 #include "Hwmon.hpp"
 #include "JsonLite.hpp"
+#include "Config.hpp"
+#include "ShmTelemetry.hpp"
+
+class RpcTcpServer;
 
 class Daemon {
 public:
@@ -29,20 +33,12 @@ public:
     Handler     fn;
   };
 
-  struct Options {
-    std::string pidfile   = "/tmp/lfcd.pid";
-    std::string logfile   = "/tmp/daemon_lfc.log";
-    bool        debug     = false;
-    std::string bindHost  = "127.0.0.1";
-    uint16_t    bindPort  = 8765;
-  };
-
   enum class Mode { Manual, Auto };
 
   struct CurvePoint { double x=30.0; double y=30.0; }; // x=°C, y=% (0..100)
 
   struct Channel {
-    std::string id;           // stable uuid-ish or pwm id
+    std::string id;           // stable id (here: pwm id)
     std::string label;
     std::string pwmId;        // links to HwmonPwm.id
     Mode mode = Mode::Auto;
@@ -56,7 +52,7 @@ public:
   ~Daemon();
 
   // lifecycle
-  bool init(const Options& opt, std::string& err);
+  bool init(const DaemonConfig& cfg, std::string& err);
   void run();
   void pumpOnce(int timeoutMs);
   void requestShutdown();
@@ -64,7 +60,6 @@ public:
 
   // dynamic command API
   bool addCommand(const std::string& name, const std::string& description, Handler h);
-  bool hasCommand(const std::string& name) const;
   std::vector<Command> listCommands() const;
 
   // dispatch entry used by RPC server
@@ -72,8 +67,8 @@ public:
 
   // logging helpers
   void logf(const char* fmt, ...);
-  void setDebug(bool on) { opts_.debug = on; }
-  const Options& options() const { return opts_; }
+  void setDebug(bool on) { config_.debug = on; }
+  const DaemonConfig& config() const { return config_; }
 
 private:
   // built-ins
@@ -82,10 +77,13 @@ private:
   // sysfs
   void rescanHwmon();
 
+  // detection (aggressive)
+  jsonlite::Value detectAggressive();
+
   // engine
   void engineThreadFn();
   double evalCurveDuty(const Channel& ch, double tempC) const;
-  std::optional<HwmonSensor> pickBestTempSensor() const; // naive: first temp sensor
+  std::optional<HwmonSensor> pickBestTempSensor() const;
 
   // channel helpers
   Channel* findChannel(const std::string& id);
@@ -96,19 +94,24 @@ private:
   void removePidfile();
   bool openLogfile(std::string& err);
   void closeLogfile();
+  void rotateLogIfNeeded(size_t addBytes);
 
   // JSON helpers
   static std::string result(const jsonlite::Value& v);
   static std::string ok();
 
+  // profile persistence
+  bool loadActiveProfile(std::string& err);
+  bool saveActiveProfile(std::string& err);
+
 private:
-  Options opts_;
+  DaemonConfig config_;
 
   HwmonSnapshot hw_;
-  std::mutex hwMx_;
+  mutable std::mutex hwMx_;
 
   std::vector<Channel> channels_;
-  std::mutex chMx_;
+  mutable std::mutex chMx_;
 
   std::unordered_map<std::string, Command> reg_;
   mutable std::mutex regMx_;
@@ -121,4 +124,8 @@ private:
 
   FILE* flog_ = nullptr;
   int   pidfd_ = -1;
+  size_t logBytes_ = 0;
+
+  ShmPublisher shm_;
+  friend class RpcTcpServer;
 };

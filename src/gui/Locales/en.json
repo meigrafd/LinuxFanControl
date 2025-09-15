@@ -1,6 +1,4 @@
 {
-  "title": "Fan Control",
-
   "sidebar.sensors": "Sensors",
   "sidebar.curve": "Curve",
   "sidebar.settings": "Settings",
@@ -9,23 +7,46 @@
   "settings.locale": "Language",
   "settings.status": "Active theme: {theme}, language: {locale}",
 
-  "curve.title": "Edit Fan curve",
+  "daemon.status.running": "Daemon is running and responsive.",
+  "daemon.status.unresponsive": "Daemon is running but not responding.",
+  "daemon.status.nopid": "Daemon responds but PID file is missing.",
+  "daemon.status.dead": "Daemon is not running.",
+  "daemon.status.unknown": "Daemon status unknown.",
+
+  "engine.start": "Start",
+  "engine.stop": "Stop",
+
+  "profile.load": "Load",
+  "profile.save": "Save",
+  "profile.delete": "Delete",
+  "profile.apply": "Apply",
+
+  "curve.title": "Edit Fan Curve",
   "curve.save": "Save",
   "curve.reset": "Reset",
-  "curve.clear": "Clear all points",
+  "curve.clear": "Clear All Points",
+
+  "hysteresis.label": "Hysteresis",
+  "tau.label": "Response Time",
+
+  "mode.manual": "Manual",
+  "mode.curve": "Curve",
+  "mode.trigger": "Trigger",
+
+  "coupling.delete": "Remove",
 
   "trigger.title": "Trigger",
-  "trigger.add": "Add new trigger",
-  "trigger.remove": "Remove this trigger",
+  "trigger.add": "Add New Trigger",
+  "trigger.remove": "Remove This Trigger",
   "trigger.direction.greater": "> greater than",
   "trigger.direction.less": "< less than",
-  "trigger.target": "Target profile",
+  "trigger.target": "Target Profile",
 
   "mix.title": "Mix",
-  "mix.add": "Add new mix",
-  "mix.remove": "Remove this mix",
+  "mix.add": "Add New Mix",
+  "mix.remove": "Remove This Mix",
   "mix.method.max": "Maximum",
   "mix.method.min": "Minimum",
   "mix.method.avg": "Average",
-  "mix.output": "Mix name"
+  "mix.output": "Mix Name"
 }

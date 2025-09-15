@@ -1,0 +1,27 @@
+[Unit]
+Description=LinuxFanControl Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/lfcd --config /etc/lfc/daemon.json
+Restart=on-failure
+# Run as root for hwmon writes; adjust if you use capabilities/udev rules
+User=root
+Group=root
+
+# Basic hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+
+# Ensure runtime & state dirs (tmpfiles handles creation)
+RuntimeDirectory=lfc
+StateDirectory=lfc
+LogsDirectory=lfc
+
+[Install]
+WantedBy=multi-user.target

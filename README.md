@@ -12,23 +12,26 @@ Modernes, schnelles Fan Control mit GUI im Stil von **FanControl.Release** für 
 - FanControl.Release Config importierbar.
 
 ### Daemon
-- `--pidfile </path/to/pid>` default `/run/lfcd.pid` fallback `/tmp/lfcd.pid`
-- `--logfile` default `/var/log/lfcd.log` fallback `/tmp/daemon_lfc.log`
+- `--config PATH` default `~/.config/LinuxFanControl/daemon.json`
+- `--pidfile PATH` default `/run/lfcd.pid` fallback `/tmp/lfcd.pid`
+- `--logfile PATH` default `/var/log/lfc/daemon.log` fallback `/tmp/daemon_lfc.log`
+- `--profiles PATH` default `~/.config/LinuxFanControl/profiles/`
 - `--cmds [all|rpc|shm]`
 - `--host` for RPC server, default `127.0.0.1`
-- `--port` default `8765`
+- `--port` default `8777`
+- `--shm_path` default `/lfc_telemetry`
 - `--foreground`
 - `--debug`
 
 Test JSON-RPC
 ```bash
-curl -s -X POST http://127.0.0.1:8765/rpc \
+curl -s -X POST http://127.0.0.1:8777/rpc \
      -H 'Content-Type: application/json' \
      -d '{"jsonrpc":"2.0","id":1,"method":"rpc.list"}'
 ```
 Batch
 ```bash
-curl -s -X POST http://127.0.0.1:8765/rpc \
+curl -s -X POST http://127.0.0.1:8777/rpc \
      -H 'Content-Type: application/json' \
      -d '[{"jsonrpc":"2.0","id":"a","method":"rpc.list"},
           {"jsonrpc":"2.0","id":"b","method":"engineStart","params":{}},
@@ -36,12 +39,34 @@ curl -s -X POST http://127.0.0.1:8765/rpc \
 ```
 Enumerate
 ```bash
-curl -s http://127.0.0.1:8765/rpc \
+curl -s http://127.0.0.1:8777/rpc \
      -H 'content-type: application/json' \
      -d '{"jsonrpc":"2.0","id":2,"method":"enumerate"}' | jq
-
 ```
-
+JSON-RPC Test per netcat (eine Zeile pro Request):
+```bash
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"rpc.version"}' | nc 127.0.0.1 8777
+printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"enumerate"}'   | nc 127.0.0.1 8777
+printf '%s\n' '[{"jsonrpc":"2.0","id":"a","method":"rpc.list"},{"jsonrpc":"2.0","method":"engineStart"}]' | nc 127.0.0.1 8777
+```
+SHM lesen (einfacher Dumper):
+```bash
+python3 - <<'PY'
+import mmap, posix_ipc, struct, sys, time
+name="/lfc_telemetry"
+slotSize=1024
+capacity=512
+shm=posix_ipc.SharedMemory(name)
+m=mmap.mmap(shm.fd, struct.calcsize("8sIIIII")+slotSize*capacity)
+shm.close_fd()
+hdr=m.read(8+4*5)
+magic,ver,cap,ss,wi,_=struct.unpack("8sIIIII",hdr)
+print("magic",magic,"ver",ver,"cap",cap,"ss",ss,"wi",wi)
+m.seek(8+4*5)
+for i in range(10):
+    print(m.read(ss).split(b'\0',1)[0].decode(errors='ignore').strip())
+PY
+```
 
 ## Install
 ### Installiere je nach Distribution:
@@ -118,5 +143,5 @@ newgrp lfc
 ## Konfiguration
 - Pfad: `~/.config/LinuxFanControl/config.json` (wird automatisch angelegt).
 - Versionierung & Backups: Beim Speichern wird eine Kopie `config_YYYYMMDD_HHMMSS.bak.json` erzeugt.
-- Sprachdateien: `i18n/en/`, `i18n/de/` (erweiterbar).
-- Themes: `Themes/Dark.xaml`, `Themes/Light.xaml` (anpassbar/erweiterbar).
+- Sprachdateien (erweiterbar): `Locales/en.json`, `Locales/de.json`
+- Themes (erweiterbar): `Themes/default.json`

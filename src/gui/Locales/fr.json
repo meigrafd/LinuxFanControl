@@ -1,0 +1,52 @@
+{
+  "sidebar.sensors": "Capteurs",
+  "sidebar.curve": "Courbe",
+  "sidebar.settings": "Paramètres",
+
+  "settings.theme": "Thème",
+  "settings.locale": "Langue",
+  "settings.status": "Thème actif : {theme}, langue : {locale}",
+
+  "daemon.status.running": "Le démon fonctionne et répond.",
+  "daemon.status.unresponsive": "Le démon fonctionne mais ne répond pas.",
+  "daemon.status.nopid": "Le démon répond mais le fichier PID est manquant.",
+  "daemon.status.dead": "Le démon ne fonctionne pas.",
+  "daemon.status.unknown": "Statut du démon inconnu.",
+
+  "engine.start": "Démarrer",
+  "engine.stop": "Arrêter",
+
+  "profile.load": "Charger",
+  "profile.save": "Enregistrer",
+  "profile.delete": "Supprimer",
+  "profile.apply": "Appliquer",
+
+  "curve.title": "Modifier la courbe du ventilateur",
+  "curve.save": "Enregistrer",
+  "curve.reset": "Réinitialiser",
+  "curve.clear": "Supprimer tous les points",
+
+  "hysteresis.label": "Hystérésis",
+  "tau.label": "Temps de réponse",
+
+  "mode.manual": "Manuel",
+  "mode.curve": "Courbe",
+  "mode.trigger": "Déclencheur",
+
+  "coupling.delete": "Retirer",
+
+  "trigger.title": "Déclencheur",
+  "trigger.add": "Ajouter un nouveau déclencheur",
+  "trigger.remove": "Supprimer ce déclencheur",
+  "trigger.direction.greater": "> supérieur à",
+  "trigger.direction.less": "< inférieur à",
+  "trigger.target": "Profil cible",
+
+  "mix.title": "Mélange",
+  "mix.add": "Ajouter un nouveau mélange",
+  "mix.remove": "Supprimer ce mélange",
+  "mix.method.max": "Maximum",
+  "mix.method.min": "Minimum",
+  "mix.method.avg": "Moyenne",
+  "mix.output": "Nom du mélange"
+}

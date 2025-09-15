@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LinuxFanControl - unified build helper for Daemon (C++) + GUI (Avalonia/.NET 9)
+# LinuxFanControl - unified build helper for Daemon (C++) + GUI (.NET 9)
 # - Auto-detect libsensors (pkg-config or common paths)
 # - Fresh builds (--fresh)
 # - Daemon options: --type, --ninja, --clang, --sanitize, -D...
@@ -29,7 +29,7 @@ USE_CLANG=0
 SANITIZE=""       # address|undefined|thread|leak
 EXTRA_CMAKE=()
 
-# GUI (Avalonia/.NET 9)
+# GUI
 GUI_CFG="Debug"   # or Release
 RID_DEFAULT="linux-x64"
 GUI_RID="$RID_DEFAULT"
@@ -42,7 +42,7 @@ ONLY_DAEMON=0
 ONLY_GUI=0
 
 # Paths
-GUI_PROJ="${ROOT}/src/gui-avalonia/LinuxFanControl.Gui/LinuxFanControl.Gui.csproj"
+GUI_PROJ="${ROOT}/src/gui/gui.csproj"
 DAEMON_BIN=""
 
 # ---------- Usage ----------
@@ -62,7 +62,7 @@ C++ Daemon (CMake):
   --sanitize <address|undefined|thread|leak>
   -D<VAR>=<VAL>                  Extra -D flag passed to CMake (repeatable)
 
-GUI (Avalonia/.NET 9):
+GUI:
   --gui-config <Debug|Release>   GUI configuration (default: ${GUI_CFG})
   --rid <RID>                    Runtime identifier (default: ${RID_DEFAULT})
   --publish                      dotnet publish (otherwise dotnet build)

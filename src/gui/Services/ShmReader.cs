@@ -1,55 +1,55 @@
 using System;
-using System.IO;
+using System.IO.MemoryMappedFiles;
 using System.Runtime.InteropServices;
-
-namespace FanControl.Gui.Services;
 
 public class ShmReader
 {
-    private const string ShmPath = "/dev/shm/fancontrol_telemetry";
-    private const int SensorCount = 64;
-    private const int FloatSize = 4;
+    private const string ShmName = "/linuxfancontrol.telemetry";
+    private const int BufferSize = 65536;
 
-    private IntPtr _mappedPtr = IntPtr.Zero;
-    private bool _available = false;
+    private MemoryMappedFile? _mmf;
+    private MemoryMappedViewAccessor? _accessor;
 
-    public ShmReader()
+    public bool Init()
     {
-        int fd = open(ShmPath, 0);
-        if (fd < 0)
+        try
         {
-            _available = false;
-            return;
+            _mmf = MemoryMappedFile.OpenExisting(ShmName, MemoryMappedFileRights.Read);
+            _accessor = _mmf.CreateViewAccessor(0, BufferSize, MemoryMappedFileAccess.Read);
+            return true;
         }
-
-        _mappedPtr = mmap(IntPtr.Zero, SensorCount * FloatSize, 1, 1, fd, IntPtr.Zero);
-        if (_mappedPtr == new IntPtr(-1))
+        catch
         {
-            _available = false;
-            return;
+            return false;
         }
-
-        _available = true;
     }
 
-    public float[] ReadValues()
+    public byte[]? ReadRaw()
     {
-        float[] values = new float[SensorCount];
-        if (!_available)
-            return values;
+        if (_accessor == null)
+            return null;
 
-        for (int i = 0; i < SensorCount; i++)
-        {
-            IntPtr offset = IntPtr.Add(_mappedPtr, i * FloatSize);
-            values[i] = Marshal.PtrToStructure<float>(offset);
-        }
-
-        return values;
+        var buffer = new byte[BufferSize];
+        _accessor.ReadArray(0, buffer, 0, BufferSize);
+        return buffer;
     }
 
-    [DllImport("libc", SetLastError = true)]
-    private static extern int open(string pathname, int flags);
+    public Span<byte> ReadSpan()
+    {
+        if (_accessor == null)
+            return Span<byte>.Empty;
 
-    [DllImport("libc", SetLastError = true)]
-    private static extern IntPtr mmap(IntPtr addr, int length, int prot, int flags, int fd, IntPtr offset);
+        unsafe
+        {
+            byte* ptr = null;
+            _accessor.SafeMemoryMappedViewHandle.AcquirePointer(ref ptr);
+            return new Span<byte>(ptr, BufferSize);
+        }
+    }
+
+    public void Dispose()
+    {
+        _accessor?.Dispose();
+        _mmf?.Dispose();
+    }
 }

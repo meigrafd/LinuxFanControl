@@ -1,9 +1,12 @@
+/*
+ * /sys/class/hwmon scanner & helpers
+ * (c) 2025 LinuxFanControl contributors
+ */
 #include "Hwmon.hpp"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <cstring>
-#include <cerrno>
 
 namespace fs = std::filesystem;
 
@@ -59,7 +62,6 @@ HwmonSnapshot hwmon::scanSysfs(const std::string& root) {
         p.label = chip + ":" + stem;
         p.pathPwm = f.path().string();
         p.pathEnable = (base / (stem + "_enable")).string();
-        // probe writability (do not change current value)
         p.writable = fs::exists(p.pathEnable);
         snap.pwms.push_back(std::move(p));
       }
@@ -86,7 +88,6 @@ bool hwmon::writePwmRaw(const HwmonPwm& p, int value) {
 
 bool hwmon::enableManual(const HwmonPwm& p) {
   if (p.pathEnable.empty()) return false;
-  // "1" -> manual (common); other drivers use 2 or 3; we try 1 then 2
   if (writeFile(p.pathEnable, "1")) return true;
   (void)writeFile(p.pathEnable, "2");
   return false;

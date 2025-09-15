@@ -120,7 +120,8 @@ namespace jsonlite {
         if (!parseString(p, k)) return false;
         p.ws();
         if (p.get() != ':') return false;
-        p.ws();
+        p.ws()
+        ;
         Value v;
         if (!parseValue(p, v)) return false;
         obj.emplace(std::move(k), std::move(v));

@@ -39,7 +39,7 @@ namespace hwmon {
   // raw 0..255 write, returns false on error
   bool writePwmRaw(const HwmonPwm& p, int value);
 
-  // try to switch to manual mode (pwmX_enable=1), returns whether manual is available
+  // try to switch to manual mode (pwmX_enable=1 or 2), returns whether manual is available
   bool enableManual(const HwmonPwm& p);
 
   // read current pwm raw 0..255 (if readable)

@@ -1,0 +1,13 @@
+{
+  "logfile": "/var/log/lfc/daemon.log",
+  "pidfile": "/run/lfc/lfcd.pid",
+  "log_size_bytes": 1048576,
+  "log_rotate": 5,
+  "debug": false,
+  "profiles_dir": "/var/lib/lfc/profiles",
+  "active_profile": "default",
+  "profiles_backup": true,
+  "rpc_host": "127.0.0.1",
+  "rpc_port": 8777,
+  "shm_path": "/lfc_telemetry"
+}

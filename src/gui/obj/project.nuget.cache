@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "dgSpecHash": "CoCJzgIPjLI=",
+  "success": true,
+  "projectFilePath": "/mnt/Github/LinuxFanControl/src/gui/gui.csproj",
+  "expectedPackageFiles": [
+    "/home/meigrafd/.nuget/packages/cstools/7.23.0/cstools.7.23.0.nupkg.sha512",
+    "/home/meigrafd/.nuget/packages/gtk4dotnet/6.8.1/gtk4dotnet.6.8.1.nupkg.sha512",
+    "/home/meigrafd/.nuget/packages/microsoft.bcl.asyncinterfaces/6.0.0/microsoft.bcl.asyncinterfaces.6.0.0.nupkg.sha512",
+    "/home/meigrafd/.nuget/packages/system.linq.async/6.0.1/system.linq.async.6.0.1.nupkg.sha512"
+  ],
+  "logs": []
+}

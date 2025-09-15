@@ -1,17 +1,24 @@
-﻿using Gtk;
-using System;
-
-namespace FanControl.Gui;
-
-public static class Program
+﻿public static class Program
 {
     public static void Main(string[] args)
     {
-        Application.Init();
+        var configDir = Path.Combine(AppContext.BaseDirectory, "config");
+        var localeDir = Path.Combine(AppContext.BaseDirectory, "Locales");
 
-        var window = new MainWindow();
-        window.Show();
+        var langArg  = args.FirstOrDefault(a => a.StartsWith("--lang="));
+        var themeArg = args.FirstOrDefault(a => a.StartsWith("--theme="));
 
-        Application.Run();
+        var langCode = langArg?.Split("=")[1] ?? "auto";
+        var themeName = themeArg?.Split("=")[1] ?? "default";
+
+        LocaleManager.Load(langCode);
+        ThemeManager.Load(themeName);
+
+        var rpc = new JsonRpcClient
+        {
+            TransportSendReceive = RpcTransport.SendReceive
+        };
+
+        Startup.Launch(rpc);
     }
 }
