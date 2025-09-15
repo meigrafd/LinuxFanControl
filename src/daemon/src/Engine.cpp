@@ -105,29 +105,52 @@ namespace lfc {
 
     std::ostringstream tele;
     tele << "{";
+
     tele << "\"control\":" << (controlEnabled_ ? "true" : "false") << ",";
     tele << "\"max_mC\":" << maxMilliC << ",";
+
     tele << "\"temps\":[";
-    { bool first = true;
+    {
+      bool first = true;
       for (const auto& kv : temps) {
-        if (!first) tele << ","; first = false;
+        if (!first) {
+          tele << ",";
+        }
+        first = false;
         tele << "{\"name\":\"";
-        for (char c : kv.first) { if (c=='\"'||c=='\\') tele << '\\'; tele << c; }
+        for (char c : kv.first) {
+          if (c == '\"' || c == '\\') tele << '\\';
+          tele << c;
+        }
         tele << "\",\"mC\":" << kv.second << "}";
-      } }
-      tele << "],";
-      tele << "\"fans\":[";
-      { bool first = true;
-        for (const auto& kv : fans) {
-          if (!first) tele << ","; first = false;
-          tele << "{\"path\":\"";
-          for (char c : kv.first) { if (c=='\"'||c=='\\') tele << '\\'; tele << c; }
-          tele << "\",\"rpm\":" << kv.second << "}";
-        } }
-        tele << "],";
-        if (controlEnabled_) tele << "\"pwm\":{\"percent\":" << target << "}";
-        else tele << "\"pwm\":null";
-        tele << "}";
+      }
+    }
+    tele << "],";
+
+    tele << "\"fans\":[";
+    {
+      bool first = true;
+      for (const auto& kv : fans) {
+        if (!first) {
+          tele << ",";
+        }
+        first = false;
+        tele << "{\"path\":\"";
+        for (char c : kv.first) {
+          if (c == '\"' || c == '\\') tele << '\\';
+          tele << c;
+        }
+        tele << "\",\"rpm\":" << kv.second << "}";
+      }
+    }
+    tele << "],";
+
+    if (controlEnabled_) {
+      tele << "\"pwm\":{\"percent\":" << target << "}";
+    } else {
+      tele << "\"pwm\":null";
+    }
+    tele << "}";
 
     const std::string s = tele.str();
     if (shmPtr_) {
@@ -136,15 +159,6 @@ namespace lfc {
       std::memcpy(shmPtr_, s.data(), n);
       shmPtr_[n] = '\0';
     }
-  }
-
-  bool Engine::getTelemetry(std::string& out) const {
-    if (!shmPtr_) return false;
-    const char* p = shmPtr_;
-    std::size_t n = 0;
-    while (n < kShmSize && p[n] != '\0') ++n;
-    out.assign(p, n);
-    return true;
   }
 
 } // namespace lfc
