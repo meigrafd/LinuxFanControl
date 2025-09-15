@@ -16,10 +16,11 @@ Modernes, schnelles Fan Control mit GUI im Stil von **FanControl.Release** für 
 - `--pidfile PATH` default `/run/lfcd.pid` fallback `/tmp/lfcd.pid`
 - `--logfile PATH` default `/var/log/lfc/daemon.log` fallback `/tmp/daemon_lfc.log`
 - `--profiles PATH` default `~/.config/LinuxFanControl/profiles/`
+- `--activeProfil FILE` default `Default.json`
 - `--cmds [all|rpc|shm]`
 - `--host` for RPC server, default `127.0.0.1`
 - `--port` default `8777`
-- `--shm_path` default `/lfc_telemetry`
+- `--shm_path` default `/dev/shm/lfc_telemetry`
 - `--foreground`
 - `--debug`
 
@@ -99,11 +100,13 @@ sudo pacman -S --needed \
   fontconfig freetype2 icu
 ```
 
+## Compile
+
 Build:
 ```bash
-FRESH=1 ./build.sh
+./build.sh
 ```
-Release-Build GUI:
+Build GUI:
 ```bash
 dotnet publish -c Release -r linux-x64 --self-contained false
 # (für Portable-Binary: --self-contained true)

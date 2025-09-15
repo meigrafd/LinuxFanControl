@@ -1,46 +1,40 @@
 #pragma once
+// Dynamic JSON-RPC registry
+
+#include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
-#include <set>
-#include <mutex>
 
 namespace lfc {
 
-    /**
-     * Thread-safe registry for RPC and SHM command names.
-     * Intent: register right after you bind a handler, so introspection
-     * remains 100% accurate without manual lists.
-     */
-    class CommandRegistry {
-    public:
-        static CommandRegistry& instance();
-
-        void register_rpc(const std::string& name);
-        void register_shm(const std::string& name);
-
-        std::vector<std::string> list_rpc() const;
-        std::vector<std::string> list_shm() const;
-
-    private:
-        CommandRegistry() = default;
-        CommandRegistry(const CommandRegistry&) = delete;
-        CommandRegistry& operator=(const CommandRegistry&) = delete;
-
-        mutable std::mutex mtx_;
-        std::set<std::string> rpc_;
-        std::set<std::string> shm_;
+    struct RpcRequest {
+        std::string method;
+        std::string id;          // may be empty for notifications
+        std::string paramsJson;  // raw json (object or array)
     };
 
-    // Small helpers/macros to keep Daemon.cpp clean.
-    inline void RegisterRpc(const std::string& name) {
-        CommandRegistry::instance().register_rpc(name);
-    }
-    inline void RegisterShm(const std::string& name) {
-        CommandRegistry::instance().register_shm(name);
-    }
+    struct RpcResult {
+        bool ok{true};
+        std::string json; // already JSON (object/array/primitive)
+    };
 
-    // Use these one-liners right after you bind a handler:
-    #define LFC_REG_RPC(name_literal)  ::lfc::RegisterRpc(name_literal)
-    #define LFC_REG_SHM(name_literal)  ::lfc::RegisterShm(name_literal)
+    struct CommandInfo {
+        std::string name;
+        std::string help;
+    };
+
+    using RpcHandler = std::function<RpcResult(const RpcRequest&)>;
+
+    class CommandRegistry {
+    public:
+        void registerMethod(const std::string& name, const std::string& help, RpcHandler fn);
+        bool has(const std::string& name) const;
+        RpcResult call(const RpcRequest& req) const;
+        std::vector<CommandInfo> list() const;
+
+    private:
+        std::unordered_map<std::string, std::pair<std::string, RpcHandler>> map_;
+    };
 
 } // namespace lfc

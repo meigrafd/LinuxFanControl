@@ -1,47 +1,41 @@
 #pragma once
-/*
- * Daemon configuration (loads/saves JSON file, creates defaults if missing).
- * (c) 2025 LinuxFanControl contributors
- */
 #include <string>
-#include <cstdint>
+#include <cstddef>
 
-struct DaemonConfig {
-    // logging
-    std::string logfile        = "/var/log/lfc/daemon.log";
-    std::string pidfile        = "/run/lfcd.pid";
-    std::size_t log_size_bytes = 1 * 1024 * 1024; // 1 MiB
-    int         log_rotate     = 5;               // keep N rotated files
-    bool        debug          = false;
+namespace lfc {
 
-    // profiles
-    std::string profiles_dir   = "/var/lib/lfc/profiles";
-    std::string active_profile = "default";
-    bool        profiles_backup= true;
+    // Structured daemon configuration (no hardcoding – file driven).
+    struct DaemonConfig {
+        struct Log {
+            std::string file;       // /tmp/daemon_lfc.log
+            std::size_t maxBytes{5 * 1024 * 1024};
+            int         rotateCount{3};
+            bool        debug{false};
+        } log;
 
-    // JSON-RPC over TCP (no HTTP)
-    std::string rpc_host       = "127.0.0.1";
-    uint16_t    rpc_port       = 8777;
+        struct Rpc {
+            std::string host{"127.0.0.1"};
+            int         port{8777};
+        } rpc;
 
-    // POSIX SHM
-    std::string shm_path       = "/lfc_telemetry";
+        struct Shm {
+            std::string path{"/dev/shm/lfc_telemetry"};
+        } shm;
 
-    // config file path (filled by loader)
-    std::string _path;
-};
+        struct Profiles {
+            std::string dir{"/var/lib/lfc/profiles"};
+            std::string active{"Default.json"};
+            bool        backups{true};
+        } profiles;
 
-namespace cfg {
+        std::string pidFile{"/run/lfcd.pid"};
+    };
 
-    // Choose default config path (prefer /etc/lfc/daemon.json if writable else XDG)
-    std::string defaultConfigPath();
+    // Very small loader/saver (no external deps). If parsing fails -> false.
+    struct Config {
+        static DaemonConfig Defaults();
+        static bool Load(const std::string& path, DaemonConfig& out, std::string& err);
+        static bool Save(const std::string& path, const DaemonConfig& in, std::string& err);
+    };
 
-    // Load or create default if missing (also ensures dirs).
-    bool loadOrCreate(DaemonConfig& out, std::string customPath, std::string& err);
-
-    // Save to existing path (overwrites). Creates backup if profiles_backup==true.
-    bool save(const DaemonConfig& c, std::string& err);
-
-    // Ensure runtime dirs exist (/var/log/lfc, /run/lfc, profiles_dir).
-    bool ensureDirs(const DaemonConfig& c, std::string& err);
-
-} // namespace cfg
+} // namespace lfc

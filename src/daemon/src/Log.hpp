@@ -1,47 +1,67 @@
 #pragma once
-/*
- * Linux Fan Control - Simple logger
- * (c) 2025 LinuxFanControl contributors
- *
- * Thread-safe logger with file rotation. Designed to work on Linux.
- * No external dependencies.
- */
+// LinuxFanControl - Logger
+// - Thread-safe file logger
+// - Size-based rotation with max files
+// - Simple printf-like formatting via std::ostringstream
 
-#include <cstdint>
 #include <string>
+#include <mutex>
+#include <cstdio>
+#include <cstdarg>
 
-namespace Log {
+namespace lfc {
 
-    enum class Level : int { Debug = 0, Info = 1, Warn = 2, Error = 3 };
+    enum class LogLevel { Debug=0, Info=1, Warn=2, Error=3 };
 
-    /** Initialize logging. If file is empty, logs go only to stderr. */
-    void Init(const std::string& filePath,
-              std::uint64_t maxBytes = 5ull * 1024ull * 1024ull,
-              int rotateCount = 3,
-              bool alsoStderr = true);
+    class Logger {
+    public:
+        static Logger& instance();
 
-    /** Change minimum level (messages below are dropped). */
-    void SetLevel(Level lvl);
+        // Open/rotate policy
+        void configure(const std::string& filePath,
+                       std::size_t maxBytes,
+                       int maxFiles,
+                       bool debugEnabled);
 
-    /** Convenience: enable/disable debug (sets level to Debug / Info). */
-    void SetDebug(bool enable);
+        void setLevel(LogLevel lvl);
+        LogLevel level() const;
 
-    /** Current minimum level. */
-    Level GetLevel();
+        void write(LogLevel lvl, const std::string& msg);
+        void writef(LogLevel lvl, const char* fmt, ...);
 
-    /** Log formatted message (printf-style). */
-    void Write(Level lvl, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
+        // convenience
+        inline void debug(const std::string& m) { if (debugEnabled_) write(LogLevel::Debug, m); }
+        inline void info (const std::string& m) { write(LogLevel::Info, m); }
+        inline void warn (const std::string& m) { write(LogLevel::Warn, m); }
+        inline void error(const std::string& m) { write(LogLevel::Error, m); }
 
-    /** Flush file (and stderr if mirroring). */
-    void Flush();
+        // Expose for daemon unit tests / tools
+        const std::string& path() const { return path_; }
 
-    /** Close file handles. Safe to call multiple times. */
-    void Shutdown();
+    private:
+        Logger();
+        ~Logger();
+        Logger(const Logger&) = delete;
+        Logger& operator=(const Logger&) = delete;
 
-    /* ---- Convenience macros ---- */
-} // namespace Log
+        void ensureOpen();
+        void rotateIfNeeded(std::size_t addBytes);
+        static std::string nowStamp();
 
-#define LOG_DEBUG(fmt, ...) ::Log::Write(::Log::Level::Debug, fmt, ##__VA_ARGS__)
-#define LOG_INFO(fmt, ...)  ::Log::Write(::Log::Level::Info,  fmt, ##__VA_ARGS__)
-#define LOG_WARN(fmt, ...)  ::Log::Write(::Log::Level::Warn,  fmt, ##__VA_ARGS__)
-#define LOG_ERROR(fmt, ...) ::Log::Write(::Log::Level::Error, fmt, ##__VA_ARGS__)
+    private:
+        std::mutex mtx_;
+        std::string path_;
+        std::FILE* fp_{nullptr};
+        std::size_t maxBytes_{5*1024*1024};
+        int maxFiles_{3};
+        LogLevel level_{LogLevel::Info};
+        bool debugEnabled_{false};
+    };
+
+} // namespace lfc
+
+// Shorthand macros
+#define LFC_LOGD(...) ::lfc::Logger::instance().writef(::lfc::LogLevel::Debug, __VA_ARGS__)
+#define LFC_LOGI(...) ::lfc::Logger::instance().writef(::lfc::LogLevel::Info,  __VA_ARGS__)
+#define LFC_LOGW(...) ::lfc::Logger::instance().writef(::lfc::LogLevel::Warn,  __VA_ARGS__)
+#define LFC_LOGE(...) ::lfc::Logger::instance().writef(::lfc::LogLevel::Error, __VA_ARGS__)

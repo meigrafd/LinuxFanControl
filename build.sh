@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # LinuxFanControl - unified build helper for Daemon (C++) + GUI (.NET 9)
 # - Auto-detect libsensors (pkg-config or common paths)
-# - Fresh builds (--fresh)
+# - Fresh builds (--fresh or FRESH=1)
 # - Daemon options: --type, --ninja, --clang, --sanitize, -D...
 # - GUI options   : --gui-config, --rid, --publish, --self-contained
 # - Targets       : --daemon-only | --gui-only (default: build both)
 # - Creates a dist/ folder with daemon + GUI and a start script
 
-set -euo pipefail
+# --- Always re-exec under bash (fixes "ran under sh" issues) ---
+if [ -z "${BASH_VERSION:-}" ]; then exec /usr/bin/env bash "$0" "$@"; fi
+
+# --- Strict mode + helpful error line on failure ---
+#set -Eeuo pipefail
+trap 'echo "[x] build.sh failed at line $LINENO (last cmd: $BASH_COMMAND)"; exit 1' ERR
+
 
 # ---------- Pretty print ----------
 c_reset=$'\033[0m'; c_bold=$'\033[1m'
@@ -29,7 +35,7 @@ USE_CLANG=0
 SANITIZE=""       # address|undefined|thread|leak
 EXTRA_CMAKE=()
 
-# GUI
+# GUI (.NET/Avalonia)
 GUI_CFG="Debug"   # or Release
 RID_DEFAULT="linux-x64"
 GUI_RID="$RID_DEFAULT"
@@ -37,12 +43,12 @@ GUI_PUBLISH=0
 GUI_SELF_CONTAINED=0
 
 # Orchestration
-FRESH=0
+FRESH="${FRESH:-0}"   # <-- respect env var FRESH=1
 ONLY_DAEMON=0
 ONLY_GUI=0
 
-# Paths
-GUI_PROJ="${ROOT}/src/gui/gui.csproj"
+# Paths (GUI project will be auto-detected below)
+GUI_PROJ=""
 DAEMON_BIN=""
 
 # ---------- Usage ----------
@@ -135,7 +141,6 @@ detect_libsensors() {
 
 # ---------- find lfcd helper ----------
 find_daemon_bin() {
-  # Try common locations produced by CMake
   local candidates=(
     "${BUILD_DIR}/lfcd"
     "${BUILD_DIR}/src/daemon/lfcd"
@@ -144,10 +149,37 @@ find_daemon_bin() {
   for c in "${candidates[@]}"; do
     [[ -x "$c" ]] && { DAEMON_BIN="$c"; return; }
   done
-  # Fallback: search
   local found
   found="$(find "${BUILD_DIR}" -maxdepth 5 -type f -name lfcd 2>/dev/null | head -n1 || true)"
   [[ -n "$found" ]] && DAEMON_BIN="$found" || DAEMON_BIN=""
+}
+
+# ---------- copy helper (rsync fallback) ----------
+copy_tree() {
+  local src="$1" dst="$2"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete "${src}/" "${dst}/"
+  else
+    mkdir -p "${dst}"
+    ( cd "${src}" && find . -type d -exec mkdir -p "${dst}/{}" \; )
+    ( cd "${src}" && find . -type f -exec cp -f "{}" "${dst}/{}" \; )
+  fi
+}
+
+# ---------- GUI project autodetect ----------
+detect_gui_project() {
+  # preferred current layout
+  if [[ -f "${ROOT}/src/gui-avalonia/LinuxFanControl.Gui/LinuxFanControl.Gui.csproj" ]]; then
+    GUI_PROJ="${ROOT}/src/gui-avalonia/LinuxFanControl.Gui/LinuxFanControl.Gui.csproj"
+    return
+  fi
+  # legacy path
+  if [[ -f "${ROOT}/src/gui/gui.csproj" ]]; then
+    GUI_PROJ="${ROOT}/src/gui/gui.csproj"
+    return
+  fi
+  # fallback: first .csproj in tree (maxdepth limit to be safe)
+  GUI_PROJ="$(find "${ROOT}" -maxdepth 5 -type f -name "*.csproj" -print -quit || true)"
 }
 
 # ---------- Build Daemon ----------
@@ -211,7 +243,8 @@ need_dotnet() {
 }
 
 gui_output_dir() {
-  local base="${ROOT}/src/gui-avalonia/LinuxFanControl.Gui/bin/${GUI_CFG}/net9.0"
+  local proj_dir; proj_dir="$(dirname "${GUI_PROJ}")"
+  local base="${proj_dir}/bin/${GUI_CFG}/net9.0"
   if [[ $GUI_PUBLISH -eq 1 ]]; then
     echo "${base}/${GUI_RID}/publish"
   else
@@ -221,11 +254,13 @@ gui_output_dir() {
 
 build_gui() {
   need_dotnet
-  if [[ ! -f "${GUI_PROJ}" ]]; then
-    err "GUI project not found: ${GUI_PROJ}"
+  detect_gui_project
+  if [[ -z "${GUI_PROJ}" || ! -f "${GUI_PROJ}" ]]; then
+    err "GUI project not found. Expected: src/gui-avalonia/LinuxFanControl.Gui/LinuxFanControl.Gui.csproj"
     exit 5
   fi
 
+  log "GUI project     : ${GUI_PROJ#${ROOT}/}"
   log "GUI config      : ${GUI_CFG}"
   log "GUI RID         : ${GUI_RID}"
   log "GUI publish     : $([[ $GUI_PUBLISH -eq 1 ]] && echo yes || echo no)"
@@ -247,14 +282,14 @@ build_gui() {
   local out; out="$(gui_output_dir)"
   log "GUI output      : ${out}"
 
-  # Prepare dist/
+  # Prepare dist/ when publishing
   if [[ $GUI_PUBLISH -eq 1 ]]; then
     if [[ $FRESH -eq 1 ]]; then
       log "Fresh dist -> removing ${DIST_DIR}"
       rm -rf "${DIST_DIR}"
     fi
     mkdir -p "${DIST_DIR}"
-    rsync -a --delete "${out}/" "${DIST_DIR}/"
+    copy_tree "${out}" "${DIST_DIR}"
     # Copy daemon
     find_daemon_bin
     if [[ -x "${DAEMON_BIN}" ]]; then

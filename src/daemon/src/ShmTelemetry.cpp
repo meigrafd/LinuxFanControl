@@ -4,56 +4,59 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <cstring>
-#include <cerrno>
-#include <algorithm>
 
-ShmPublisher::~ShmPublisher() {
-    if (map_) { ::munmap(map_, mapLen_); map_ = nullptr; }
-    if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
-}
+using namespace lfc;
 
-bool ShmPublisher::openOrCreate(const std::string& name, uint32_t slotSize, uint32_t capacity, std::string& err) {
-    name_ = name;
-    fd_ = ::shm_open(name.c_str(), O_RDWR | O_CREAT, 0666);
-    if (fd_ < 0) { err = "shm_open failed"; return false; }
+ShmTelemetry::~ShmTelemetry() { close(); }
 
-    size_t hdr = sizeof(Header);
-    size_t slots = (size_t)slotSize * (size_t)capacity;
-    mapLen_ = hdr + slots;
+bool ShmTelemetry::openOrCreate(const std::string& shmPath, std::size_t capacityBytes) {
+    close();
+    std::string name = shmPath;
+    if (name.empty() || name[0] != '/') name = "/" + name;
+    fd_ = ::shm_open(name.c_str(), O_CREAT|O_RDWR, 0644);
+    if (fd_ < 0) return false;
 
-    struct stat st{};
-    if (fstat(fd_, &st) != 0) { err = "fstat failed"; return false; }
-    bool needInit = (size_t)st.st_size != mapLen_;
+    cap_ = sizeof(Header) + capacityBytes;
+    if (::ftruncate(fd_, cap_) < 0) { close(); return false; }
 
-    if (needInit) {
-        if (ftruncate(fd_, mapLen_) != 0) { err = "ftruncate failed"; return false; }
-    }
+    mem_ = ::mmap(nullptr, cap_, PROT_READ|PROT_WRITE, MAP_SHARED, fd_, 0);
+    if (mem_ == MAP_FAILED) { mem_=nullptr; close(); return false; }
 
-    map_ = ::mmap(nullptr, mapLen_, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, 0);
-    if (map_ == MAP_FAILED) { map_ = nullptr; err = "mmap failed"; return false; }
+    hdr_  = reinterpret_cast<Header*>(mem_);
+    data_ = reinterpret_cast<char*>(hdr_+1);
 
-    header_ = reinterpret_cast<Header*>(map_);
-    slots_  = reinterpret_cast<char*>(header_ + 1);
-
-    if (needInit || std::strncmp(header_->magic, "LFCshm", 6) != 0) {
-        std::memset(map_, 0, mapLen_);
-        std::memcpy(header_->magic, "LFCshm", 6);
-        header_->version = 1;
-        header_->capacity = capacity;
-        header_->slotSize = slotSize;
-        header_->writeIndex = 0;
+    if (hdr_->magic != 0x4C464331 /*'LFC1'*/) {
+        std::memset(mem_, 0, cap_);
+        hdr_->magic = 0x4C464331;
+        hdr_->writeOff = 0;
+        hdr_->size = static_cast<std::uint32_t>(capacityBytes);
     }
     return true;
 }
 
-void ShmPublisher::publish(const std::string& line) {
-    if (!header_) return;
-    uint32_t idx = __sync_fetch_and_add(&header_->writeIndex, 1);
-    uint32_t slot = header_->capacity ? (idx % header_->capacity) : 0;
-    char* dst = slots_ + (size_t)slot * (size_t)header_->slotSize;
+void ShmTelemetry::close() {
+    if (mem_) { ::msync(mem_, cap_, MS_SYNC); ::munmap(mem_, cap_); mem_ = nullptr; }
+    if (fd_>=0) { ::close(fd_); fd_=-1; }
+    hdr_=nullptr; data_=nullptr; cap_=0;
+}
 
-    size_t n = std::min((size_t)header_->slotSize - 1, line.size());
-    std::memcpy(dst, line.data(), n);
-    if (n < (size_t)header_->slotSize) dst[n++] = '\n';
-    if (n < (size_t)header_->slotSize) dst[n] = '\0';
+void ShmTelemetry::appendJsonLine(const std::string& line) {
+    if (!hdr_ || !data_ || hdr_->size==0) return;
+    std::string s = line; s.push_back('\n');
+    std::uint32_t n = (std::uint32_t)s.size();
+    auto cap = hdr_->size;
+    auto& w  = hdr_->writeOff;
+
+    // wrap if needed
+    if (w + n > cap) {
+        // write two parts
+        std::uint32_t first = cap - w;
+        std::memcpy(data_ + w, s.data(), first);
+        std::memcpy(data_, s.data()+first, n-first);
+        w = (n-first) % cap;
+    } else {
+        std::memcpy(data_ + w, s.data(), n);
+        w += n;
+        if (w >= cap) w %= cap;
+    }
 }

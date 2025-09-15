@@ -1,237 +1,91 @@
-/*
- * Linux Fan Control - Simple logger
- * (c) 2025 LinuxFanControl contributors
- */
-
 #include "Log.hpp"
-
-#include <atomic>
 #include <chrono>
-#include <cstdio>
-#include <cstdarg>
-#include <cstring>
-#include <filesystem>
-#include <mutex>
-#include <string>
-#include <thread>
-#include <vector>
-
-#if defined(__unix__) || defined(__APPLE__)
+#include <ctime>
+#include <sstream>
+#include <iomanip>
+#include <sys/stat.h>
 #include <unistd.h>
-#include <sys/types.h>
-#endif
 
-namespace {
+using namespace lfc;
 
-    struct Logger {
-        std::mutex      mtx;
-        std::string     path;
-        std::FILE*      fp            = nullptr;
-        std::uint64_t   maxBytes      = 5ull * 1024ull * 1024ull;
-        int             rotateCount   = 3;
-        bool            mirrorStderr  = true;
-        std::atomic<int> level        { static_cast<int>(Log::Level::Info) };
-        std::uint64_t   bytesWritten  = 0;     // approximate, used for rotation checks
+Logger& Logger::instance() {
+    static Logger g;
+    return g;
+}
 
-        void openIfNeeded() {
-            if (path.empty()) return; // stderr-only
-            if (fp) return;
-            try {
-                auto dir = std::filesystem::path(path).parent_path();
-                if (!dir.empty()) {
-                    std::error_code ec;
-                    std::filesystem::create_directories(dir, ec);
-                }
-            } catch (...) {}
-            fp = std::fopen(path.c_str(), "a");
-            if (fp) std::setvbuf(fp, nullptr, _IOLBF, 0); // line buffered
-            // Initialize bytesWritten from existing size (best effort)
-            if (fp) {
-                std::error_code ec;
-                auto sz = std::filesystem::file_size(path, ec);
-                if (!ec) bytesWritten = static_cast<std::uint64_t>(sz);
-            }
-        }
+Logger::Logger() = default;
+Logger::~Logger() {
+    std::lock_guard<std::mutex> lk(mtx_);
+    if (fp_) std::fclose(fp_);
+}
 
-        static std::string nowTs() {
-            using namespace std::chrono;
-            auto now = system_clock::now();
-            auto t   = system_clock::to_time_t(now);
-            std::tm tm {};
-            #if defined(_WIN32)
-            localtime_s(&tm, &t);
-            #else
-            localtime_r(&t, &tm);
-            #endif
-            char buf[64];
-            std::snprintf(buf, sizeof(buf),
-                          "%04d-%02d-%02d %02d:%02d:%02d",
-                          tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-                          tm.tm_hour, tm.tm_min, tm.tm_sec);
-            return std::string(buf);
-        }
+void Logger::configure(const std::string& filePath, std::size_t maxBytes, int maxFiles, bool debugEnabled) {
+    std::lock_guard<std::mutex> lk(mtx_);
+    if (fp_) { std::fclose(fp_); fp_ = nullptr; }
+    path_ = filePath;
+    maxBytes_ = maxBytes ? maxBytes : (5*1024*1024);
+    maxFiles_ = maxFiles > 0 ? maxFiles : 3;
+    debugEnabled_ = debugEnabled;
+    ensureOpen();
+}
 
-        static const char* lvlStr(Log::Level lvl) {
-            switch (lvl) {
-                case Log::Level::Debug: return "DEBUG";
-                case Log::Level::Info:  return "INFO";
-                case Log::Level::Warn:  return "WARN";
-                case Log::Level::Error: return "ERROR";
-            }
-            return "INFO";
-        }
+void Logger::setLevel(LogLevel lvl) { level_ = lvl; }
+LogLevel Logger::level() const { return level_; }
 
-        void rotateIfNeededUnlocked(std::size_t nextMsgBytes) {
-            if (!fp || path.empty() || maxBytes == 0) return;
-            if (bytesWritten + nextMsgBytes < maxBytes) return;
+void Logger::ensureOpen() {
+    if (path_.empty()) return;
+    ::umask(0022);
+    fp_ = std::fopen(path_.c_str(), "a");
+}
 
-            // Close current
-            std::fclose(fp);
-            fp = nullptr;
+void Logger::rotateIfNeeded(std::size_t addBytes) {
+    if (!fp_ || path_.empty()) return;
+    long cur = std::ftell(fp_);
+    if (cur < 0) return;
+    std::size_t next = static_cast<std::size_t>(cur) + addBytes;
+    if (next <= maxBytes_) return;
 
-            // Rotate: file, file.1, ..., file.N
-            try {
-                for (int i = rotateCount - 1; i >= 0; --i) {
-                    std::filesystem::path from = (i == 0) ? path
-                    : (std::filesystem::path(path).string() + "." + std::to_string(i));
-                    std::filesystem::path to   = std::filesystem::path(path).string() + "." + std::to_string(i + 1);
-                    std::error_code ec;
-                    if (std::filesystem::exists(from, ec)) {
-                        std::filesystem::rename(from, to, ec);
-                        // If rename fails across filesystems, try copy+remove
-                        if (ec) {
-                            std::filesystem::copy_file(from, to,
-                                                       std::filesystem::copy_options::overwrite_existing, ec);
-                            if (!ec) std::filesystem::remove(from, ec);
-                        }
-                    }
-                }
-            } catch (...) {
-                // Best effort; continue
-            }
-
-            // Reopen new file
-            openIfNeeded();
-            bytesWritten = 0;
-        }
-
-        void write(Log::Level lvl, const char* fmt, va_list ap) {
-            if (static_cast<int>(lvl) < level.load(std::memory_order_relaxed)) return;
-
-            char msgBuf[2048];
-            int n = std::vsnprintf(msgBuf, sizeof(msgBuf), fmt, ap);
-            if (n < 0) return;
-            std::size_t msgLen = (n < static_cast<int>(sizeof(msgBuf))) ? static_cast<std::size_t>(n)
-            : sizeof(msgBuf) - 1;
-
-            // Build final line: ts pid tid level msg\n
-            char lineBuf[2300];
-            const std::string ts = nowTs();
-            #if defined(__unix__) || defined(__APPLE__)
-            const int pid = static_cast<int>(::getpid());
-            #else
-            const int pid = 0;
-            #endif
-            auto tid = std::hash<std::thread::id>{}(std::this_thread::get_id());
-
-            int m = std::snprintf(lineBuf, sizeof(lineBuf),
-                                  "%s [%d:%zu] %-5s | %.*s\n",
-                                  ts.c_str(), pid, static_cast<size_t>(tid),
-                                  lvlStr(lvl), (int)msgLen, msgBuf);
-            if (m < 0) return;
-            std::size_t lineLen = (m < static_cast<int>(sizeof(lineBuf))) ? static_cast<std::size_t>(m)
-            : sizeof(lineBuf) - 1;
-
-            std::lock_guard<std::mutex> lk(mtx);
-
-            // Rotation if needed (approximate)
-            rotateIfNeededUnlocked(lineLen);
-
-            // File sink
-            if (!path.empty()) openIfNeeded();
-            if (fp) {
-                std::fwrite(lineBuf, 1, lineLen, fp);
-                std::fflush(fp);
-                bytesWritten += lineLen;
-            }
-
-            // Stderr mirror
-            if (mirrorStderr) {
-                std::fwrite(lineBuf, 1, lineLen, stderr);
-                std::fflush(stderr);
-            }
-        }
-
-        void flush() {
-            std::lock_guard<std::mutex> lk(mtx);
-            if (fp) std::fflush(fp);
-            std::fflush(stderr);
-        }
-
-        void close() {
-            std::lock_guard<std::mutex> lk(mtx);
-            if (fp) {
-                std::fflush(fp);
-                std::fclose(fp);
-                fp = nullptr;
-            }
-        }
-    };
-
-    Logger& logger() {
-        static Logger L;
-        return L;
+    std::fclose(fp_); fp_ = nullptr;
+    // rotate: file.log.N ... file.log.1
+    for (int i = maxFiles_-1; i >= 1; --i) {
+        std::ostringstream src, dst;
+        src << path_ << "." << i;
+        dst << path_ << "." << (i+1);
+        ::rename(src.str().c_str(), dst.str().c_str());
     }
+    std::string dst1 = path_ + ".1";
+    ::rename(path_.c_str(), dst1.c_str());
+    ensureOpen();
+}
 
-} // namespace
+std::string Logger::nowStamp() {
+    using namespace std::chrono;
+    auto t  = system_clock::to_time_t(system_clock::now());
+    std::tm tm{};
+    localtime_r(&t, &tm);
+    std::ostringstream os;
+    os<<std::put_time(&tm,"%Y-%m-%d %H:%M:%S");
+    return os.str();
+}
 
-// -----------------------------
-// Public API
-// -----------------------------
-namespace Log {
+void Logger::write(LogLevel lvl, const std::string& msg) {
+    if (!fp_) ensureOpen();
+    if (!fp_) return;
 
-    void Init(const std::string& filePath,
-              std::uint64_t maxBytes,
-              int rotateCount,
-              bool alsoStderr)
-    {
-        auto& L = logger();
-        std::lock_guard<std::mutex> lk(L.mtx);
-        L.path         = filePath;
-        L.maxBytes     = (maxBytes == 0) ? (5ull * 1024ull * 1024ull) : maxBytes;
-        L.rotateCount  = (rotateCount < 0) ? 0 : rotateCount;
-        L.mirrorStderr = alsoStderr;
+    const char* tag = (lvl==LogLevel::Debug?"DEBUG":
+    lvl==LogLevel::Info ?"INFO ":
+    lvl==LogLevel::Warn ?"WARN ":
+    "ERROR");
+    std::string line = nowStamp() + " [" + tag + "] " + msg + "\n";
+    rotateIfNeeded(line.size());
+    std::fwrite(line.data(), 1, line.size(), fp_);
+    std::fflush(fp_);
+}
 
-        if (!L.path.empty()) {
-            L.openIfNeeded();
-        }
-    }
-
-    void SetLevel(Level lvl) {
-        logger().level.store(static_cast<int>(lvl), std::memory_order_relaxed);
-    }
-
-    void SetDebug(bool enable) {
-        SetLevel(enable ? Level::Debug : Level::Info);
-    }
-
-    Level GetLevel() {
-        return static_cast<Level>(logger().level.load(std::memory_order_relaxed));
-    }
-
-    void Write(Level lvl, const char* fmt, ...) {
-        va_list ap;
-        va_start(ap, fmt);
-        logger().write(lvl, fmt, ap);
-        va_end(ap);
-    }
-
-    void Flush() {
-        logger().flush();
-    }
-
-    void Shutdown() {
-        logger().close();
-    }
-
-} // namespace Log
+void Logger::writef(LogLevel lvl, const char* fmt, ...) {
+    char buf[4096];
+    va_list ap; va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    write(lvl, std::string(buf));
+}

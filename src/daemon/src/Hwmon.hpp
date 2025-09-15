@@ -1,48 +1,51 @@
 #pragma once
-/*
- * /sys/class/hwmon scanner & helpers
- * (c) 2025 LinuxFanControl contributors
- */
+// Minimal /sys/class/hwmon access layer (no libsensors dependency)
+
 #include <string>
 #include <vector>
 #include <optional>
+#include <cstdint>
 
-struct HwmonSensor {
-  std::string id;        // e.g. "hwmon4:temp1"
-  std::string label;
-  std::string type;      // "temp" | "fan"
-  std::string path;      // full file path (temp*_input or fan*_input)
-};
+namespace lfc {
 
-struct HwmonPwm {
-  std::string id;          // e.g. "hwmon4:pwm1"
-  std::string label;       // name or chip+index
-  std::string pathPwm;     // pwmN
-  std::string pathEnable;  // pwmN_enable if present
-  int minDuty = 0;         // [0..255] raw
-  int maxDuty = 255;
-  bool writable = false;
-};
+  struct HwmonPwm {
+    std::string hwmon;      // e.g. /sys/class/hwmon/hwmon4
+    int index;              // pwmN
+    std::string path_pwm;   // .../pwmN
+    std::string path_en;    // .../pwmN_enable
+    std::string path_max;   // .../pwmN_max (optional)
+    int max_raw{255};       // fallback
+    bool writable{false};
+  };
 
-struct HwmonSnapshot {
-  std::vector<HwmonSensor> sensors;
-  std::vector<HwmonPwm>    pwms;
-};
+  struct HwmonFan {
+    std::string hwmon;
+    int index;              // fanN
+    std::string path_input; // .../fanN_input
+  };
 
-namespace hwmon {
+  struct HwmonTemp {
+    std::string hwmon;
+    int index;              // tempN
+    std::string path_input; // .../tempN_input
+  };
 
-  HwmonSnapshot scanSysfs(const std::string& root="/sys/class/hwmon");
+  struct HwmonSnapshot {
+    std::vector<HwmonPwm>  pwms;
+    std::vector<HwmonFan>  fans;
+    std::vector<HwmonTemp> temps;
+  };
 
-  // returns value in engineering units (temp °C, fan RPM)
-  std::optional<double> readValue(const HwmonSensor& s);
+  class Hwmon {
+  public:
+    static HwmonSnapshot scan();
+    static std::optional<int> readInt(const std::string& path);
+    static bool writeInt(const std::string& path, int v);
+    static bool setManual(const HwmonPwm& p);        // pwmN_enable -> 1
+    static bool setAuto(const HwmonPwm& p);          // pwmN_enable -> 2 (if supported)
+    static bool setPercent(const HwmonPwm& p, int pct); // 0..100 mapped to raw
+    static std::optional<int> readRpm(const HwmonFan& f);
+    static std::optional<int> readMilliC(const HwmonTemp& t);
+  };
 
-  // raw 0..255 write, returns false on error
-  bool writePwmRaw(const HwmonPwm& p, int value);
-
-  // try to switch to manual mode (pwmX_enable=1 or 2), returns whether manual is available
-  bool enableManual(const HwmonPwm& p);
-
-  // read current pwm raw 0..255 (if readable)
-  std::optional<int> readPwmRaw(const HwmonPwm& p);
-
-}
+} // namespace lfc

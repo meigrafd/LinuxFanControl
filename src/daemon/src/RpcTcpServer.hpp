@@ -1,36 +1,26 @@
 #pragma once
-/*
- * Minimal JSON-RPC 2.0 server over plain TCP.
- * Framing: newline-delimited JSON per request/response; batch allowed.
- * (c) 2025 LinuxFanControl contributors
- */
 #include <string>
-#include <thread>
-#include <atomic>
+#include <vector>
+#include <memory>
 
-class Daemon;
+namespace lfc {
 
-class RpcTcpServer {
-public:
-    RpcTcpServer(Daemon& d, const std::string& host, uint16_t port, bool debug);
-    ~RpcTcpServer();
+    class CommandRegistry;
+    class Daemon;
 
-    bool start(std::string& err);
-    void stop();
+    class RpcTcpServer {
+    public:
+        explicit RpcTcpServer(Daemon& d) : daemon_(d) {}
+        bool start(const std::string& host, int port, CommandRegistry* /*reg*/) {
+            (void)host; (void)port; /* Stub transport for now */ running_ = true; return true;
+        }
+        void stop() { running_ = false; }
+        void pumpOnce(int /*timeoutMs*/) { /* transport stub */ }
+        std::vector<std::string> listMethods() const { return {}; }
 
-private:
-    void runAcceptLoop();
-    void handleClient(int fd);
-    static bool readLine(int fd, std::string& out);
-    std::string handleJsonRpc(const std::string& json, bool& hasAnyResponse);
+    private:
+        Daemon& daemon_;
+        bool running_{false};
+    };
 
-private:
-    Daemon& daemon_;
-    std::string host_;
-    uint16_t port_;
-    bool debug_;
-
-    int listenfd_ = -1;
-    std::thread thr_;
-    std::atomic<bool> running_{false};
-};
+} // namespace lfc

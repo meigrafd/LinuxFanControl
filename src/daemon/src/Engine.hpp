@@ -1,40 +1,64 @@
 #pragma once
-#include "Curve.hpp"
-#include "Hwmon.hpp"
-#include <vector>
+// Control engine: channels, modes, curves, hysteresis, tick loop
+
 #include <string>
-#include <thread>
+#include <vector>
+#include <unordered_map>
 #include <atomic>
-#include <mutex>
-#include <map>
+#include <chrono>
+#include "Hwmon.hpp"
+#include "ShmTelemetry.hpp"
 
-struct Channel {
-  std::string name;
-  std::string sensor_path;
-  std::string output_label;
-  Curve curve;
-  SchmittSlew ss;
-  std::string mode="Auto";
-  double manual=0.0;
-};
+namespace lfc {
 
-class Engine {
-public:
-  void setSensors(std::vector<TempSensor> s){ std::lock_guard<std::mutex> lk(mx_); sensors_=std::move(s); }
-  void setOutputs(std::vector<PwmOutput> p){ std::lock_guard<std::mutex> lk(mx_); outputs_=std::move(p); }
-  const std::vector<TempSensor>& sensors() const { return sensors_; }
-  const std::vector<PwmOutput>& outputs() const { return outputs_; }
-  std::vector<Channel>& channels(){ return channels_; }
+  enum class ChannelMode { Manual=0, Curve=1 };
 
-  void start();
-  void stop();
-  bool running() const { return running_.load(); }
+  struct CurvePt { double x; double y; }; // x=temp(C), y=percent(0..100)
 
-private:
-  std::vector<TempSensor> sensors_;
-  std::vector<PwmOutput> outputs_;
-  std::vector<Channel> channels_;
-  std::thread th_;
-  std::atomic<bool> running_{false};
-  mutable std::mutex mx_;
-};
+  struct Channel {
+    int id{0};
+    std::string name;
+    ChannelMode mode{ChannelMode::Manual};
+    double manualPercent{30.0};
+    double hystTauSec{2.0}; // exponential smoothing tau
+    std::vector<CurvePt> curve; // must be sorted by x
+    HwmonPwm pwm; // target pwm node
+    double lastOut{0.0}; // smoothed output
+  };
+
+  class Engine {
+  public:
+    Engine() = default;
+
+    // lifecycle
+    bool initShm(const std::string& path);
+    void setSnapshot(const HwmonSnapshot& s);
+    void start();
+    void stop();
+    bool running() const { return running_; }
+    void tick(); // call periodically
+
+    // channels mgmt
+    std::vector<Channel> list() const;
+    int  create(const std::string& name, const HwmonPwm& pwm);
+    bool remove(int id);
+    bool setMode(int id, ChannelMode m);
+    bool setManual(int id, double pct);
+    bool setCurve(int id, std::vector<CurvePt> pts);
+    bool setHystTau(int id, double tau);
+
+    // detection
+    std::string detectAggressive(int level);
+
+  private:
+    std::unordered_map<int, Channel> ch_;
+    int nextId_{1};
+    HwmonSnapshot snap_;
+    std::atomic<bool> running_{false};
+    std::chrono::steady_clock::time_point lastTick_{};
+    ShmTelemetry shm_;
+
+    static double evalCurve(const std::vector<CurvePt>& c, double x);
+  };
+
+} // namespace lfc

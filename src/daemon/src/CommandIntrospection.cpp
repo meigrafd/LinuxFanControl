@@ -1,14 +1,17 @@
-#include "CommandIntrospection.h"
-#include "CommandRegistry.h"
+#include "include/CommandIntrospection.h"
+#include "include/CommandRegistry.h"
+#include <sstream>
+using namespace lfc;
 
-namespace lfc {
-
-    std::vector<std::string> rpc_commands() {
-        return CommandRegistry::instance().list_rpc();
+std::string BuildIntrospectionJson(const CommandRegistry& reg) {
+    auto list = reg.list();
+    std::ostringstream os; os << "{\"methods\":[";
+    for (size_t i=0;i<list.size();++i) {
+        if (i) os<<",";
+        os << "{\"name\":\"" << list[i].name << "\",\"help\":\"";
+        for (char ch: list[i].help) { if (ch=='"'||ch=='\\') os<<'\\'<<ch; else if (ch=='\n') os<<"\\n"; else os<<ch; }
+        os << "\"}";
     }
-
-    std::vector<std::string> shm_commands() {
-        return CommandRegistry::instance().list_shm();
-    }
-
-} // namespace lfc
+    os << "]}";
+    return os.str();
+}
