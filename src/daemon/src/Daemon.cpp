@@ -11,7 +11,6 @@
 #include "Hwmon.hpp"
 #include "Config.hpp"
 #include "include/CommandRegistry.h"
-#include "include/CommandIntrospection.h"
 #include "Log.hpp"
 
 #include <fstream>
@@ -82,12 +81,64 @@ void Daemon::runLoop() {
   while (running_) pumpOnce();
 }
 
-void Daemon::pumpOnce(int /*timeoutMs*/) {
-  engine_.tick();
+void Daemon::pumpOnce(int /*timeoutMs*/) { engine_.tick(); }
+
+static std::string jsonBool(bool b) { return b ? "true" : "false"; }
+static std::string jsonStr(const std::string& s) {
+  std::string out; out.reserve(s.size()+2); out.push_back('"');
+  for (char c : s) { if (c=='"'||c=='\\') out.push_back('\\'); out.push_back(c); }
+  out.push_back('"'); return out;
 }
 
 void Daemon::bindCommands(CommandRegistry& reg) {
-  (void)reg;
+  reg.add("lfc.ping", "Health check", [](const RpcRequest&) -> RpcResult {
+    return {true, "{\"ok\":true}"};
+  });
+
+  reg.add("lfc.cmds", "List available commands", [this](const RpcRequest&) -> RpcResult {
+    std::ostringstream ss;
+    ss << "{\"commands\":[";
+    auto list = this->listRpcCommands();
+    for (size_t i=0;i<list.size();++i) {
+      if (i) ss << ",";
+      ss << "{\"name\":" << jsonStr(list[i].name)
+      << ",\"help\":" << jsonStr(list[i].help) << "}";
+    }
+    ss << "]}";
+    return {true, ss.str()};
+  });
+
+  reg.add("engine.enable", "Enable/disable automatic control; params: {\"on\":bool}", [this](const RpcRequest& req) -> RpcResult {
+    bool on = (req.paramsJson.find("\"on\":true") != std::string::npos);
+    this->engine_.enableControl(on);
+    return {true, std::string("{\"control\":") + jsonBool(on) + "}"};
+  });
+
+  reg.add("engine.status", "Basic engine status", [this](const RpcRequest&) -> RpcResult {
+    std::ostringstream ss;
+    ss << "{\"control\":" << jsonBool(this->engine_.controlEnabled())
+    << ",\"pwms\":" << this->hwmon_.pwms.size()
+    << ",\"fans\":" << this->hwmon_.fans.size()
+    << ",\"temps\":" << this->hwmon_.temps.size()
+    << "}";
+    return {true, ss.str()};
+  });
+
+  reg.add("hwmon.snapshot", "Counts of discovered devices", [this](const RpcRequest&) -> RpcResult {
+    std::ostringstream ss;
+    ss << "{\"pwms\":" << this->hwmon_.pwms.size()
+    << ",\"fans\":" << this->hwmon_.fans.size()
+    << ",\"temps\":" << this->hwmon_.temps.size() << "}";
+    return {true, ss.str()};
+  });
+
+  reg.add("telemetry.json", "Return current SHM JSON blob", [this](const RpcRequest&) -> RpcResult {
+    std::string s;
+    if (!this->engine_.getTelemetry(s)) return {false, "{\"error\":{\"code\":-32001,\"message\":\"no telemetry\"}}"};
+    std::ostringstream ss;
+    ss << "{\"telemetry\":" << (s.empty() ? "null" : s) << "}";
+    return {true, ss.str()};
+  });
 }
 
 std::string Daemon::dispatch(const std::string& method, const std::string& paramsJson) {
