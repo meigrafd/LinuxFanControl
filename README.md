@@ -1,4 +1,4 @@
-Modernes, schnelles Fan Control mit GUI im Stil von **FanControl.Release** für Linux:
+Modernes, schnelles Fan Control mit GUI im Stil von [FanControl.Release](https://github.com/Rem0o/FanControl.Releases) für Linux:
 
 ## Funktionsumfang
 - Hintergrundprozess mit der Logik von GUI getrennt, damit die Lüftersteuerung auch ohne GUI läuft.
