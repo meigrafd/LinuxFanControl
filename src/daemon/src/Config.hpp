@@ -12,8 +12,8 @@ namespace lfc {
 
     struct DaemonConfig {
         struct Log {
-            std::string file;       // /tmp/daemon_lfc.log
-            std::size_t maxBytes{5 * 1024 * 1024};
+            std::string file{"/tmp/daemon_lfc.log"};
+            std::size_t maxBytes{5 * 1024 * 1024}; // 5 MB
             int         rotateCount{3};
             bool        debug{false};
         } log;
@@ -37,8 +37,13 @@ namespace lfc {
     };
 
     struct Config {
+        // Returns a DaemonConfig with all default values
         static DaemonConfig Defaults();
+
+        // Loads config from JSON file at 'path' into 'out'; returns false on error and sets 'err'
         static bool Load(const std::string& path, DaemonConfig& out, std::string& err);
+
+        // Saves config to JSON file at 'path'; returns false on error and sets 'err'
         static bool Save(const std::string& path, const DaemonConfig& in, std::string& err);
     };
 
