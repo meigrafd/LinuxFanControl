@@ -1,3 +1,8 @@
+/*
+ * Linux Fan Control — Config (implementation)
+ * - JSON load/save using lightweight helper
+ * (c) 2025 LinuxFanControl contributors
+ */
 #include "Config.hpp"
 #include "JsonLite.hpp"
 
@@ -73,38 +78,25 @@ namespace lfc {
         return true;
     }
 
-    static jsonlite::Value to_json(const DaemonConfig& in) {
-        using jsonlite::Value;
-        using jsonlite::Object;
-
-        Value root(Object{});
-        auto& o = root.mutObj();
-
-        Value jlog(Object{});
-        jlog.mutObj()["file"]        = Value(in.log.file);
-        jlog.mutObj()["maxBytes"]    = Value(static_cast<double>(in.log.maxBytes));
-        jlog.mutObj()["rotateCount"] = Value(static_cast<double>(in.log.rotateCount));
-        jlog.mutObj()["debug"]       = Value(in.log.debug);
-        o["log"] = jlog;
-
-        Value jr(Object{});
-        jr.mutObj()["host"] = Value(in.rpc.host);
-        jr.mutObj()["port"] = Value(static_cast<double>(in.rpc.port));
-        o["rpc"] = jr;
-
-        Value js(Object{});
-        js.mutObj()["path"] = Value(in.shm.path);
-        o["shm"] = js;
-
-        Value jp(Object{});
-        jp.mutObj()["dir"]     = Value(in.profiles.dir);
-        jp.mutObj()["active"]  = Value(in.profiles.active);
-        jp.mutObj()["backups"] = Value(in.profiles.backups);
-        o["profiles"] = jp;
-
-        o["pidFile"] = Value(in.pidFile);
-
-        return root;
+    // manual pretty JSON (4-space indent) from DaemonConfig
+    static inline void put_indent(std::ostream& os, int n) {
+        for (int i = 0; i < n; ++i) os.put(' ');
+    }
+    static std::string jstr(const std::string& s) {
+        std::string out; out.reserve(s.size() + 2);
+        out.push_back('"');
+        for (char c : s) {
+            switch (c) {
+                case '\\': out += "\\\\"; break;
+                case '\"': out += "\\\""; break;
+                case '\n': out += "\\n"; break;
+                case '\r': out += "\\r"; break;
+                case '\t': out += "\\t"; break;
+                default:   out.push_back(c); break;
+            }
+        }
+        out.push_back('"');
+        return out;
     }
 
     bool Config::Save(const string& path, const DaemonConfig& in, string& err) {
@@ -114,8 +106,50 @@ namespace lfc {
         std::ofstream f(path, std::ios::trunc);
         if (!f) { err = "open for write failed"; return false; }
 
-        auto root = to_json(in);
-        f << jsonlite::stringify(root) << "\n";
+        int i = 0;
+        f << "{\n";
+        i += 4;
+
+        // log
+        put_indent(f, i); f << "\"log\": {\n";
+        i += 4;
+        put_indent(f, i); f << "\"file\": "        << jstr(in.log.file) << ",\n";
+        put_indent(f, i); f << "\"maxBytes\": "    << static_cast<unsigned long long>(in.log.maxBytes) << ",\n";
+        put_indent(f, i); f << "\"rotateCount\": " << in.log.rotateCount << ",\n";
+        put_indent(f, i); f << "\"debug\": "       << (in.log.debug ? "true" : "false") << "\n";
+        i -= 4;
+        put_indent(f, i); f << "},\n";
+
+        // rpc
+        put_indent(f, i); f << "\"rpc\": {\n";
+        i += 4;
+        put_indent(f, i); f << "\"host\": " << jstr(in.rpc.host) << ",\n";
+        put_indent(f, i); f << "\"port\": " << in.rpc.port << "\n";
+        i -= 4;
+        put_indent(f, i); f << "},\n";
+
+        // shm
+        put_indent(f, i); f << "\"shm\": {\n";
+        i += 4;
+        put_indent(f, i); f << "\"path\": " << jstr(in.shm.path) << "\n";
+        i -= 4;
+        put_indent(f, i); f << "},\n";
+
+        // profiles
+        put_indent(f, i); f << "\"profiles\": {\n";
+        i += 4;
+        put_indent(f, i); f << "\"dir\": "     << jstr(in.profiles.dir) << ",\n";
+        put_indent(f, i); f << "\"active\": "  << jstr(in.profiles.active) << ",\n";
+        put_indent(f, i); f << "\"backups\": " << (in.profiles.backups ? "true" : "false") << "\n";
+        i -= 4;
+        put_indent(f, i); f << "},\n";
+
+        // pidFile
+        put_indent(f, i); f << "\"pidFile\": " << jstr(in.pidFile) << "\n";
+
+        i -= 4;
+        f << "}\n";
+
         return static_cast<bool>(f);
     }
 
