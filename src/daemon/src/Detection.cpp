@@ -17,6 +17,8 @@
 #include <filesystem>
 #include <cmath>
 #include <cctype>
+#include <cstring>     // std::strlen
+#include <vector>      // std::vector
 
 namespace lfc {
 
@@ -28,13 +30,17 @@ static int read_pwm_percent_from_sysfs(const std::string& path_pwm) {
         std::ifstream fm(pmax);
         if (fm) {
             int tmp = 0;
-            if (fm >> tmp && tmp > 0) maxv = tmp;
+            if (fm >> tmp && tmp > 0) {
+                maxv = tmp;
+            }
         }
     }
     int raw = 0;
     std::ifstream f(path_pwm);
     if (f && (f >> raw) && raw >= 0) {
-        if (maxv <= 0) maxv = 255;
+        if (maxv <= 0) {
+            maxv = 255;
+        }
         int pct = static_cast<int>(std::lround((100.0 * raw) / maxv));
         if (pct < 0) pct = 0;
         if (pct > 100) pct = 100;
@@ -46,11 +52,17 @@ static int read_pwm_percent_from_sysfs(const std::string& path_pwm) {
 static int filename_index_suffix(const std::string& name, const char* prefix) {
     // prefix "pwm" -> "pwm3" => 3
     size_t plen = std::strlen(prefix);
-    if (name.size() <= plen) return -1;
-    if (name.rfind(prefix, 0) != 0) return -1;
+    if (name.size() <= plen) {
+        return -1;
+    }
+    if (name.rfind(prefix, 0) != 0) {
+        return -1;
+    }
     int v = 0;
     for (size_t i = plen; i < name.size(); ++i) {
-        if (!std::isdigit(static_cast<unsigned char>(name[i]))) return -1;
+        if (!std::isdigit(static_cast<unsigned char>(name[i]))) {
+            return -1;
+        }
         v = v * 10 + (name[i] - '0');
     }
     return v > 0 ? v : -1;
@@ -122,23 +134,26 @@ void Detection::worker() {
         const std::string pwm_dir = parent_hwmon_dir(pwm.path_pwm);
         const int pwm_idx = filename_index_suffix(std::filesystem::path(pwm.path_pwm).filename().string(), "pwm");
 
-        // candidate fans: same hwmon dir, prefer matching fanN; if none, fall back to all fans in same hwmon
+        // candidate fans: same hwmon dir, prefer matching fanN; else all fans in same hwmon
         std::vector<const Hwmon::Fan*> cand;
         for (const auto& f : snap_.fans) {
             if (parent_hwmon_dir(f.path_input) == pwm_dir) {
                 if (pwm_idx > 0) {
                     int fi = filename_index_suffix(std::filesystem::path(f.path_input).filename().string(), "fan");
-                    if (fi == pwm_idx) cand.push_back(&f);
+                    if (fi == pwm_idx) {
+                        cand.push_back(&f);
+                    }
                 }
             }
         }
         if (cand.empty()) {
             for (const auto& f : snap_.fans) {
-                if (parent_hwmon_dir(f.path_input) == pwm_dir) cand.push_back(&f);
+                if (parent_hwmon_dir(f.path_input) == pwm_dir) {
+                    cand.push_back(&f);
+                }
             }
         }
 
-        // read baseline over candidates
         auto read_cand_max = [&]() -> int {
             int m = 0;
             for (const auto* pf : cand) {
@@ -146,6 +161,7 @@ void Detection::worker() {
             }
             return m;
         };
+
         int baseline = read_cand_max();
 
         // drive 100% manual
@@ -162,7 +178,9 @@ void Detection::worker() {
                 changed = true;
                 break;
             }
-            if (std::chrono::steady_clock::now() - t0 >= std::chrono::milliseconds(spinup_check_ms)) break;
+            if (std::chrono::steady_clock::now() - t0 >= std::chrono::milliseconds(spinup_check_ms)) {
+                break;
+            }
         }
 
         if (!changed) {
@@ -181,7 +199,9 @@ void Detection::worker() {
         while (!stop_.load() && std::chrono::steady_clock::now() < t_measure_end) {
             std::this_thread::sleep_for(std::chrono::milliseconds(spinup_poll_ms));
             int v = read_cand_max();
-            if (v > maxRpm) maxRpm = v;
+            if (v > maxRpm) {
+                maxRpm = v;
+            }
         }
         peakRpm_[i] = maxRpm;
         LFC_LOGI("detection: pwm[%zu] peak_rpm=%d", i, maxRpm);
