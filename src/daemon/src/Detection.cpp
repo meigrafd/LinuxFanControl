@@ -1,9 +1,9 @@
 /*
  * Linux Fan Control — Detection (implementation)
- * - Per-PWM mapping to candidate tach inputs (fanN in same hwmon)
- * - Spin-up check window (3s) before deciding to skip
- * - 10s total at 100% for measured PWMs, with peak RPM capture
- * - Restores original PWM duty on completion or abort
+ * - Per-PWM candidate tach mapping within same hwmon device
+ * - Spin-up check window (3s) before decide-to-skip
+ * - 10s at 100% per PWM, capture peak RPM
+ * - Restore original PWM duty on completion/abort
  * (c) 2025 LinuxFanControl contributors
  */
 #include "Detection.hpp"
@@ -17,8 +17,8 @@
 #include <filesystem>
 #include <cmath>
 #include <cctype>
-#include <cstring>     // std::strlen
-#include <vector>      // std::vector
+#include <cstring>
+#include <vector>
 
 namespace lfc {
 
@@ -50,7 +50,6 @@ static int read_pwm_percent_from_sysfs(const std::string& path_pwm) {
 }
 
 static int filename_index_suffix(const std::string& name, const char* prefix) {
-    // prefix "pwm" -> "pwm3" => 3
     size_t plen = std::strlen(prefix);
     if (name.size() <= plen) {
         return -1;
@@ -69,7 +68,6 @@ static int filename_index_suffix(const std::string& name, const char* prefix) {
 }
 
 static std::string parent_hwmon_dir(const std::string& any_sysfs_path) {
-    // e.g. /sys/class/hwmon/hwmon2/pwm1 -> /sys/class/hwmon/hwmon2
     return std::filesystem::path(any_sysfs_path).parent_path().string();
 }
 
@@ -115,13 +113,11 @@ std::vector<int> Detection::results() const {
 }
 
 void Detection::worker() {
-    // tunables
-    const int spinup_check_ms = 3000;        // window to detect RPM change before skip
-    const int spinup_poll_ms  = 100;         // poll interval during spinup window
-    const int measure_total_ms = 10000;      // total at 100% for measured PWMs
-    const int rpm_delta_thresh = 100;        // minimal RPM delta to consider "changed"
+    const int spinup_check_ms = 3000;
+    const int spinup_poll_ms  = 100;
+    const int measure_total_ms = 10000;
+    const int rpm_delta_thresh = 200;
 
-    // baseline saved duties
     for (size_t i = 0; i < snap_.pwms.size(); ++i) {
         savedDuty_[i] = read_pwm_percent_from_sysfs(snap_.pwms[i].path_pwm);
     }
@@ -134,41 +130,40 @@ void Detection::worker() {
         const std::string pwm_dir = parent_hwmon_dir(pwm.path_pwm);
         const int pwm_idx = filename_index_suffix(std::filesystem::path(pwm.path_pwm).filename().string(), "pwm");
 
-        // candidate fans: same hwmon dir, prefer matching fanN; else all fans in same hwmon
-        std::vector<const HwmonFan*> cand;
-        for (const auto& f : snap_.fans) {
+        std::vector<size_t> cand;  // store indices into snap_.fans
+        for (size_t k = 0; k < snap_.fans.size(); ++k) {
+            const auto& f = snap_.fans[k];
             if (parent_hwmon_dir(f.path_input) == pwm_dir) {
                 if (pwm_idx > 0) {
                     int fi = filename_index_suffix(std::filesystem::path(f.path_input).filename().string(), "fan");
                     if (fi == pwm_idx) {
-                        cand.push_back(&f);
+                        cand.push_back(k);
                     }
                 }
             }
         }
         if (cand.empty()) {
-            for (const auto& f : snap_.fans) {
+            for (size_t k = 0; k < snap_.fans.size(); ++k) {
+                const auto& f = snap_.fans[k];
                 if (parent_hwmon_dir(f.path_input) == pwm_dir) {
-                    cand.push_back(&f);
+                    cand.push_back(k);
                 }
             }
         }
 
         auto read_cand_max = [&]() -> int {
             int m = 0;
-            for (const auto* pf : cand) {
-                m = std::max(m, Hwmon::readRpm(*pf).value_or(0));
+            for (size_t idx : cand) {
+                m = std::max(m, Hwmon::readRpm(snap_.fans[idx]).value_or(0));
             }
             return m;
         };
 
         int baseline = read_cand_max();
 
-        // drive 100% manual
         Hwmon::setManual(pwm);
         Hwmon::setPercent(pwm, 100);
 
-        // spin-up window: wait up to spinup_check_ms for detectable RPM change on candidate fans
         bool changed = false;
         const auto t0 = std::chrono::steady_clock::now();
         while (!stop_.load()) {
@@ -184,7 +179,6 @@ void Detection::worker() {
         }
 
         if (!changed) {
-            // no observable tach response: restore quickly and skip this pwm
             int restore = savedDuty_[i] >= 0 ? savedDuty_[i] : 0;
             Hwmon::setPercent(pwm, restore);
             peakRpm_[i] = -1;
@@ -192,7 +186,6 @@ void Detection::worker() {
             continue;
         }
 
-        // measure window: keep 100% for remaining time to complete ~10s total
         phase_ = "measure";
         int maxRpm = read_cand_max();
         const auto t_measure_end = t0 + std::chrono::milliseconds(measure_total_ms);
@@ -206,13 +199,11 @@ void Detection::worker() {
         peakRpm_[i] = maxRpm;
         LFC_LOGI("detection: pwm[%zu] peak_rpm=%d", i, maxRpm);
 
-        // restore original duty
         phase_ = "restore";
         int restore = savedDuty_[i] >= 0 ? savedDuty_[i] : 0;
         Hwmon::setPercent(pwm, restore);
     }
 
-    // best-effort restore for any saved duties
     phase_ = "restore_all";
     for (size_t i = 0; i < snap_.pwms.size(); ++i) {
         if (savedDuty_[i] >= 0) {
