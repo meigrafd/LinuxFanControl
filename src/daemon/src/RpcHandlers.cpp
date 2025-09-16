@@ -2,6 +2,7 @@
  * Linux Fan Control — RPC handlers (implementation)
  * - Uniform responses: {"method":"...", "success":true/false, ...}
  * - Includes config.set for engine.deltaC / engine.forceTickMs
+ * - list.sensor returns detailed sensor info (path, label, value, unit)
  * (c) 2025 LinuxFanControl contributors
  */
 #include "RpcHandlers.hpp"
@@ -61,6 +62,7 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         json j;
         j["daemon"] = "lfcd";
         j["version"] = LFC_VERSION;
+        j["rpc"] = 1;
         return ok("version", j.dump());
     });
 
@@ -90,7 +92,6 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         out["profiles"]["active"] = tmp.profiles.active;
         out["profiles"]["backups"] = tmp.profiles.backups;
         out["pidFile"] = tmp.pidFile;
-        // runtime engine knobs are exposed here too
         out["engine"]["deltaC"] = self.engineDeltaC();
         out["engine"]["forceTickMs"] = self.engineForceTickMs();
         return ok("config.load", out.dump());
@@ -125,8 +126,6 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         if (jc.contains("pidFile")) {
             nc.pidFile = jc.value("pidFile", nc.pidFile);
         }
-
-        // runtime-only engine knobs (not persisted by Config::Save unless du speicherst sie dort explizit)
         if (jc.contains("engine") && jc["engine"].is_object()) {
             if (jc["engine"].contains("deltaC") && jc["engine"]["deltaC"].is_number()) {
                 self.setEngineDeltaC(jc["engine"]["deltaC"].get<double>());
@@ -337,24 +336,47 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         return ok("hwmon.snapshot", d.dump());
     });
 
-    reg.registerMethod("list.sensor", "List temperature sensors", [&](const RpcRequest&) -> RpcResult {
+    reg.registerMethod("list.sensor", "List temperature sensors with current values", [&](const RpcRequest&) -> RpcResult {
         const auto& hw = self.hwmon();
         json arr = json::array();
-        for (const auto& t : hw.temps) arr.push_back(t.label.empty() ? t.path_input : t.label);
+        for (const auto& t : hw.temps) {
+            json obj;
+            obj["path"] = t.path_input;
+            obj["label"] = t.label.empty() ? t.path_input : t.label;
+            auto v = Hwmon::readTempC(t);
+            if (v.has_value()) {
+                obj["value"] = *v;
+                obj["unit"] = "C";
+            } else {
+                obj["value"] = nullptr;
+                obj["unit"] = "C";
+            }
+            arr.push_back(obj);
+        }
         return ok("list.sensor", arr.dump());
     });
 
     reg.registerMethod("list.fan", "List fan tach inputs", [&](const RpcRequest&) -> RpcResult {
         const auto& hw = self.hwmon();
         json arr = json::array();
-        for (const auto& f : hw.fans) arr.push_back(f.path_input);
+        for (const auto& f : hw.fans) {
+            json obj;
+            obj["path"] = f.path_input;
+            obj["rpm"] = Hwmon::readRpm(f).value_or(0);
+            arr.push_back(obj);
+        }
         return ok("list.fan", arr.dump());
     });
 
     reg.registerMethod("list.pwm", "List PWM outputs", [&](const RpcRequest&) -> RpcResult {
         const auto& hw = self.hwmon();
         json arr = json::array();
-        for (const auto& p : hw.pwms) arr.push_back(p.path_pwm);
+        for (const auto& p : hw.pwms) {
+            json obj;
+            obj["path"] = p.path_pwm;
+            obj["percent"] = Hwmon::readPercent(p).value_or(-1);
+            arr.push_back(obj);
+        }
         return ok("list.pwm", arr.dump());
     });
 

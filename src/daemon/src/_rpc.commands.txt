@@ -1,28 +1,29 @@
-active.profile — Get active profile filename
-config.load — Load daemon config from disk
-config.save — Save daemon config to disk; params:{config:object}
-config.set — Set single key; params:{key:string, value:any}
-daemon.restart — Request daemon restart
-daemon.shutdown — Shutdown daemon gracefully
-daemon.update — Check/download latest release; params:{download?:bool,target?:string,repo?:"owner/repo"}
-detect.abort — Abort detection
-detect.results — Return detection peak RPMs per PWM
-detect.start — Start non-blocking detection
-detect.status — Detection status/progress
-engine.disable — Disable automatic control
-engine.enable — Enable automatic control
-engine.reset — Disable control and clear profile
-engine.status — Basic engine status
-hwmon.snapshot — Counts of discovered devices
-list.fan — List fan tach inputs
-list.profiles — List profiles in profiles dir
-list.pwm — List PWM outputs
-list.sensor — List temperature sensors
-ping — Health check
-profile.delete — Delete profile file; params:{name}
-profile.import — Import FanControl.Releases config; params:{path}
-profile.load — Load and apply profile by name; params:{name}
-profile.set — Write profile JSON; params:{name, profile}
-rpc.commands — List available RPC methods
-telemetry.json — Return current SHM JSON blob
-version — RPC and daemon version
+active.profile  —  Get active profile filename
+config.load  —  Load daemon config from disk
+config.save  —  Save daemon config to disk; params:{config:object}
+config.set  —  Set single key; params:{key:string, value:any}
+daemon.restart  —  Request daemon restart
+daemon.shutdown  —  Shutdown daemon gracefully
+daemon.update  —  Check/download latest release; params:{download?:bool,target?:string,repo?:"owner/repo"}
+detect.abort  —  Abort detection
+detect.results  —  Return detection peak RPMs per PWM
+detect.start  —  Start non-blocking detection
+detect.status  —  Detection status/progress
+engine.disable  —  Disable automatic control
+engine.enable  —  Enable automatic control
+engine.reset  —  Disable control and clear profile
+engine.status  —  Basic engine status
+hwmon.snapshot  —  Counts of discovered devices
+list.fan  —  List fan tach inputs
+list.profiles  —  List profiles in profiles dir
+list.pwm  —  List PWM outputs
+list.sensor  —  List temperature sensors
+ping  —  Health check
+profile.delete  —  Delete profile file; params:{name}
+profile.import  —  Import FanControl.Releases config; params:{path}
+profile.load  —  Load and apply profile by name; params:{name}
+profile.set  —  Write profile JSON; params:{name, profile}
+rpc.commands  —  List available RPC methods
+telemetry.json  —  Return current SHM JSON blob
+version  —  RPC and daemon version
+
