@@ -39,6 +39,8 @@ struct DaemonConfig {
 
     // Primary PID path; code falls back to /tmp and persists it if /run is not writable
     std::string pidFile{"/run/lfcd.pid"};
+
+    DetectionConfig detection;
 };
 
 struct Config {
