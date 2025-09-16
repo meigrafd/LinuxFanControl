@@ -79,7 +79,7 @@ Fedora:
 ```bash
 sudo dnf install \
   gcc-c++ cmake make pkgconfig git \
-  nlohmann-json-devel lm_sensors lm_sensors-devel \
+  nlohmann-json-devel lm_sensors lm_sensors-devel libcurl-devel \
   dotnet-sdk-9.0 \
   libX11 libXrandr libXcursor libXrender mesa-libgbm \
   fontconfig freetype libicu
@@ -88,7 +88,7 @@ Ubuntu/Debian:
 ```bash
 sudo apt install \
   build-essential cmake pkg-config git \
-  nlohmann-json3-dev libsensors-dev lm-sensors \
+  nlohmann-json3-dev libsensors-dev lm-sensors libcurl4-openssl-dev \
   dotnet-sdk-9.0 \
   libx11-6 libxrandr2 libxrender1 libxcursor1 libgbm1 \
   libfontconfig1 libfreetype6 libicu*
@@ -97,7 +97,7 @@ Arch:
 ```bash
 sudo pacman -S --needed \
   base-devel cmake git \
-  nlohmann-json lm_sensors \
+  nlohmann-json lm_sensors curl \
   dotnet-sdk \
   libx11 libxrandr libxrender libxcursor libgbm \
   fontconfig freetype2 icu

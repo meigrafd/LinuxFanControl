@@ -23,6 +23,9 @@ add_executable(lfcd
   ${SRC_DIR}/Config.cpp
   ${SRC_DIR}/CommandRegistry.cpp
   ${SRC_DIR}/CommandIntrospection.cpp
+  ${SRC_DIR}/Detection.cpp
+  ${SRC_DIR}/FanControlImport.cpp
+  ${SRC_DIR}/UpdateChecker.cpp
   ${SRC_DIR}/RpcTcpServer.cpp
   ${SRC_DIR}/Hwmon.cpp
   ${SRC_DIR}/ShmTelemetry.cpp
@@ -39,6 +42,17 @@ target_include_directories(lfcd PRIVATE
 find_library(LIBRT rt)
 if(LIBRT)
   target_link_libraries(lfcd PRIVATE ${LIBRT})
+endif()
+
+find_package(CURL REQUIRED)
+
+if(CURL_FOUND)
+  message(STATUS "libcurl include: ${CURL_INCLUDE_DIRS}")
+  message(STATUS "libcurl libs   : ${CURL_LIBRARIES}")
+  target_include_directories(lfcd PRIVATE ${CURL_INCLUDE_DIRS})
+  target_link_libraries(lfcd PRIVATE ${CURL_LIBRARIES})
+else()
+  message(FATAL_ERROR "libcurl not found — required for UpdateChecker")
 endif()
 
 # pthread (select/sleep/etc)

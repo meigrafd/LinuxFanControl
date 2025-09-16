@@ -1,6 +1,6 @@
 /*
  * Linux Fan Control — Update Checker (header)
- * - GitHub Releases check + optional download
+ * - GitHub releases check and asset download
  * (c) 2025 LinuxFanControl contributors
  */
 #pragma once
@@ -11,8 +11,8 @@ namespace lfc {
 
 struct ReleaseAsset {
     std::string name;
-    std::string url;     // browser_download_url
-    std::string type;    // content_type if known
+    std::string url;
+    std::string type;
     std::size_t size{0};
 };
 
@@ -25,19 +25,16 @@ struct ReleaseInfo {
 
 class UpdateChecker {
 public:
-    // owner: e.g. "LinuxFanControl", repo: e.g. "LinuxFanControl"
     static bool fetchLatest(const std::string& owner,
                             const std::string& repo,
                             ReleaseInfo& out,
                             std::string& err);
 
-    // Download URL to targetPath (overwrite). Returns true on success.
-    static bool downloadToFile(const std::string& url,
-                               const std::string& targetPath,
-                               std::string& err);
-
-    // Simple semver-ish compare: returns -1 if a<b, 0 if equal, +1 if a>b
     static int compareVersions(const std::string& a, const std::string& b);
+
+    static bool downloadToFile(const std::string& url,
+                               const std::string& target,
+                               std::string& err);
 };
 
 } // namespace lfc

@@ -28,11 +28,9 @@ public:
 
     void start();
     void abort();
-    bool running() const { return running_.load(); }
     void poll();
+    bool running() const { return running_.load(); }
     Status status() const;
-
-    // Results: peak RPM per PWM (same order as snapshot.pwms), -1 if skipped/unknown
     std::vector<int> results() const;
 
 private:

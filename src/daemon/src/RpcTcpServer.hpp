@@ -8,8 +8,7 @@
 #include <string>
 #include <thread>
 #include <atomic>
-#include <vector>
-#include <mutex>
+#include <unordered_map>
 
 namespace lfc {
 
@@ -25,10 +24,13 @@ public:
     void stop();
 
 private:
-    void threadMain();
+    void loop(); // renamed from threadMain to match .cpp
     bool handleLine(int fd, const std::string& line, std::string& outJson);
 
-private:
+    struct Client {
+        std::string acc; // accumulated input buffer
+    };
+
     Daemon& owner_;
     CommandRegistry* reg_{nullptr};
     std::string host_;
@@ -39,8 +41,7 @@ private:
     std::atomic<bool> running_{false};
     int listenFd_{-1};
 
-    std::mutex mu_;
-    std::vector<int> clients_;
+    std::unordered_map<int, Client> clients_;
 };
 
 } // namespace lfc

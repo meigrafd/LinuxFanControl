@@ -1,6 +1,6 @@
 /*
- * Linux Fan Control — FanControl.Releases import (implementation)
- * - Minimal mapping to internal Profile
+ * Linux Fan Control — FanControl.Releases Import (implementation)
+ * - Minimal loader placeholder: validates JSON file presence
  * (c) 2025 LinuxFanControl contributors
  */
 #include "FanControlImport.hpp"
@@ -8,47 +8,33 @@
 #include <fstream>
 #include <filesystem>
 
-namespace lfc {
-
 using nlohmann::json;
 
-static bool readAll(const std::string& p, std::string& out) {
-    std::ifstream f(p);
-    if (!f) return false;
-    out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
-    return true;
-}
+namespace lfc {
 
-bool FanControlImport::LoadAndMap(const std::string& path, const HwmonSnapshot& /*snap*/, Profile& out, std::string& err) {
-    std::string txt;
-    if (!readAll(path, txt)) { err = "open failed"; return false; }
-    json j;
+bool FanControlImport::LoadAndMap(const std::string& path,
+                                  const HwmonSnapshot& /*snap*/,
+                                  Profile& /*out*/,
+                                  std::string& err) {
+    err.clear();
+    if (!std::filesystem::exists(path)) {
+        err = "file not found";
+        return false;
+    }
+    std::ifstream f(path);
+    if (!f) {
+        err = "open failed";
+        return false;
+    }
     try {
-        j = json::parse(txt);
-    } catch (const std::exception& e) {
-        err = std::string("parse failed: ") + e.what();
+        json j;
+        f >> j;
+    } catch (...) {
+        err = "json parse failed";
         return false;
     }
 
-    out.name = std::filesystem::path(path).filename().string();
-    out.items.clear();
-
-    if (j.contains("Fans") && j["Fans"].is_array()) {
-        for (auto& it : j["Fans"]) {
-            Profile::Item pi;
-            pi.pwmHint = it.value("Name", "");
-            if (it.contains("Curve") && it["Curve"].is_array()) {
-                for (auto& p : it["Curve"]) {
-                    Profile::Point pt;
-                    pt.mC = p.value("X", 0);
-                    pt.percent = p.value("Y", 0);
-                    pi.curve.push_back(pt);
-                }
-            }
-            out.items.push_back(std::move(pi));
-        }
-    }
-
+    // Mapping in späterem Schritt ergänzen. Aktuell nur Format-/Existenzprüfung.
     return true;
 }
 
