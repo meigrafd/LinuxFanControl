@@ -83,7 +83,9 @@ static std::filesystem::path pwm_mode_path(const std::string& path_pwm) {
     return p.parent_path() / (p.filename().string() + "_mode");
 }
 
-Detection::Detection(const HwmonSnapshot& snap) : snap_(snap) {}
+Detection::Detection(const HwmonSnapshot& snap, const DetectionConfig& cfg)
+    : snap_(snap), cfg_(cfg) {}
+
 Detection::~Detection() {
     abort();
     if (thr_.joinable()) thr_.join();
@@ -123,11 +125,11 @@ std::vector<int> Detection::results() const {
 }
 
 void Detection::worker() {
-    const int settle_ms = 250;
-    const int spinup_check_ms = 7000;
-    const int spinup_poll_ms  = 100;
-    const int measure_total_ms = 10000;
-    const int rpm_delta_thresh = 30;
+    const int cfg_.settleMs = 250;
+    const int cfg_.spinupCheckMs = 7000;
+    const int cfg_.spinupPollMs  = 100;
+    const int cfg_.measureTotalMs = 10000;
+    const int cfg_.rpmDeltaThresh = 30;
 
     for (size_t i = 0; i < snap_.pwms.size(); ++i) {
         savedDuty_[i] = read_pwm_percent_from_sysfs(snap_.pwms[i].path_pwm);
@@ -191,22 +193,22 @@ void Detection::worker() {
         auto attempt = [&](int use_mode, int measure_ms, bool& detected, bool& via_global, size_t& global_idx, int& max_rpm_out) {
             detected = false; via_global = false; global_idx = static_cast<size_t>(-1); max_rpm_out = 0;
             if (use_mode >= 0) write_int_file(pwm_mode_path(pwm.path_pwm), use_mode);
-            std::this_thread::sleep_for(std::chrono::milliseconds(settle_ms));
-            Hwmon::setPercent(pwm, 50);
-            std::this_thread::sleep_for(std::chrono::milliseconds(settle_ms));
-            Hwmon::setPercent(pwm, 100);
-            std::this_thread::sleep_for(std::chrono::milliseconds(settle_ms));
+            std::this_thread::sleep_for(std::chrono::milliseconds(cfg_.settleMs));
+            Hwmon::setPercent(pwm, cfg_.rampStartPercent);
+            std::this_thread::sleep_for(std::chrono::milliseconds(cfg_.settleMs));
+            Hwmon::setPercent(pwm, cfg_.rampEndPercent);
+            std::this_thread::sleep_for(std::chrono::milliseconds(cfg_.settleMs));
 
             const auto t0 = std::chrono::steady_clock::now();
             while (!stop_.load()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(spinup_poll_ms));
+                std::this_thread::sleep_for(std::chrono::milliseconds(cfg_.spinupPollMs));
                 if (!cand.empty()) {
                     int cur = read_cand_max();
-                    if (cur >= baseline_cand + rpm_delta_thresh) { detected = true; break; }
+                    if (cur >= baseline_cand + cfg_.rpmDeltaThresh) { detected = true; break; }
                 }
                 auto gm = read_global_max(claimedFans_);
-                if (gm.first >= baseline_global + rpm_delta_thresh) { detected = true; via_global = true; global_idx = gm.second; break; }
-                if (std::chrono::steady_clock::now() - t0 >= std::chrono::milliseconds(spinup_check_ms)) break;
+                if (gm.first >= baseline_global + cfg_.rpmDeltaThresh) { detected = true; via_global = true; global_idx = gm.second; break; }
+                if (std::chrono::steady_clock::now() - t0 >= std::chrono::milliseconds(cfg_.spinupCheckMs)) break;
             }
             if (!detected) return;
 
@@ -214,7 +216,7 @@ void Detection::worker() {
             int maxRpm = 0;
             const auto t_end = t0 + std::chrono::milliseconds(measure_ms);
             while (!stop_.load() && std::chrono::steady_clock::now() < t_end) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(spinup_poll_ms));
+                std::this_thread::sleep_for(std::chrono::milliseconds(cfg_.spinupPollMs));
                 int v = 0;
                 if (!via_global && !cand.empty()) v = read_cand_max();
                 else if (via_global && global_idx != static_cast<size_t>(-1)) v = Hwmon::readRpm(snap_.fans[global_idx]).value_or(0);
@@ -231,10 +233,10 @@ void Detection::worker() {
         int curMode = -1; (void)read_int_file(pwm_mode_path(pwm.path_pwm), curMode);
         int altMode = (curMode == 0) ? 1 : 0;
 
-        attempt(curMode, measure_total_ms, det, via_global, gidx, measured_max);
+        attempt(curMode, cfg_.measureTotalMs, det, via_global, gidx, measured_max);
         if (!det) {
             LFC_LOGD("detection: pwm[%zu] no change in mode=%d, trying mode=%d", i, curMode, altMode);
-            attempt(altMode, measure_total_ms, det, via_global, gidx, measured_max);
+            attempt(altMode, cfg_.measureTotalMs, det, via_global, gidx, measured_max);
         }
 
         phase_ = "restore";

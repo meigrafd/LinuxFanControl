@@ -16,6 +16,16 @@
 
 namespace lfc {
 
+struct DetectionConfig {
+    int settleMs{250};
+    int spinupCheckMs{5000};
+    int spinupPollMs{100};
+    int measureTotalMs{10000};
+    int rpmDeltaThresh{30};
+    int rampStartPercent{50};
+    int rampEndPercent{100};
+};
+
 class Detection {
 public:
     struct Status {
@@ -25,7 +35,7 @@ public:
         std::string phase;
     };
 
-    explicit Detection(const HwmonSnapshot& snap);
+    Detection(const HwmonSnapshot& snap, const DetectionConfig& cfg);
     ~Detection();
 
     void start();
@@ -40,8 +50,8 @@ public:
 private:
     void worker();
 
-private:
     HwmonSnapshot snap_;
+    DetectionConfig cfg_;
 
     std::thread thr_;
     std::atomic<bool> running_{false};
@@ -60,6 +70,8 @@ private:
 
     // avoid matching same tach twice globally
     std::vector<bool> claimedFans_;
+
+    std::thread thr_;
 };
 
 } // namespace lfc
