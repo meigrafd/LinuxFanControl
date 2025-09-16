@@ -1,15 +1,17 @@
 /*
  * Linux Fan Control — Detection (header)
- * - Non-blocking fan detection worker
- * - Saves/restores original PWM state
- * - Collects peak RPMs per PWM
+ * - Non-blocking PWM-to-fan detection worker
+ * - Saves/restores pwmN_enable and duty
+ * - Captures peak RPM per PWM
  * (c) 2025 LinuxFanControl contributors
  */
 #pragma once
-#include <thread>
+
 #include <atomic>
 #include <string>
+#include <thread>
 #include <vector>
+
 #include "Hwmon.hpp"
 
 namespace lfc {
@@ -29,7 +31,7 @@ public:
     void start();
     void abort();
     void poll();
-    bool running() const { return running_.load(); }
+
     Status status() const;
     std::vector<int> results() const;
 
@@ -38,13 +40,23 @@ private:
 
 private:
     HwmonSnapshot snap_;
+
     std::thread thr_;
     std::atomic<bool> running_{false};
     std::atomic<bool> stop_{false};
+
     std::atomic<int> idx_{0};
     std::string phase_;
+
+    // saved state per PWM
     std::vector<int> savedDuty_;
+    std::vector<int> savedEnable_;      // <- added
+
+    // results
     std::vector<int> peakRpm_;
+
+    // global fan-claiming to avoid duplicate matches
+    std::vector<bool> claimedFans_;     // <- added
 };
 
 } // namespace lfc
