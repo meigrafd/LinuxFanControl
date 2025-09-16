@@ -135,7 +135,7 @@ void Detection::worker() {
         const int pwm_idx = filename_index_suffix(std::filesystem::path(pwm.path_pwm).filename().string(), "pwm");
 
         // candidate fans: same hwmon dir, prefer matching fanN; else all fans in same hwmon
-        std::vector<const Hwmon::Fan*> cand;
+        std::vector<const HwmonFan*> cand;
         for (const auto& f : snap_.fans) {
             if (parent_hwmon_dir(f.path_input) == pwm_dir) {
                 if (pwm_idx > 0) {
