@@ -19,6 +19,7 @@
 #include <thread>
 #include <cstdlib>
 #include <algorithm>    // std::clamp
+#include <unistd.h>     // getpid()
 
 namespace lfc {
 
@@ -70,6 +71,9 @@ bool Daemon::init(DaemonConfig& cfg, bool debugCli, const std::string& cfgPath, 
     try {
         if (!configPath_.empty()) std::filesystem::create_directories(std::filesystem::path(configPath_).parent_path());
         if (!cfg_.profilesDir.empty()) std::filesystem::create_directories(cfg_.profilesDir);
+        if (!cfg_.pidfile.empty()) {
+            std::filesystem::create_directories(std::filesystem::path(cfg_.pidfile).parent_path());
+        }
     } catch (...) {}
 
     {
@@ -92,6 +96,25 @@ bool Daemon::init(DaemonConfig& cfg, bool debugCli, const std::string& cfgPath, 
         const std::string host = cfg_.host.empty() ? std::string("127.0.0.1") : cfg_.host;
         const unsigned short port = static_cast<unsigned short>(cfg_.port > 0 ? cfg_.port : 8777);
         rpcServer_ = std::make_unique<RpcTcpServer>(*this, host, port, debug_);
+        if (!rpcServer_->start(rpcRegistry_.get())) {
+            LFC_LOGE("rpc: failed to start on %s:%u", host.c_str(), (unsigned)port);
+            return false;
+        }
+        LFC_LOGI("rpc: listening on %s:%u", host.c_str(), (unsigned)port);
+    }
+
+    // Write PID file (best-effort)
+    if (!cfg_.pidfile.empty()) {
+        try {
+            std::ofstream pf(cfg_.pidfile, std::ios::trunc);
+            if (pf) {
+                pf << getpid() << "\n";
+            } else {
+                LFC_LOGW("pidfile: cannot write %s", cfg_.pidfile.c_str());
+            }
+        } catch (...) {
+            LFC_LOGW("pidfile: exception while writing %s", cfg_.pidfile.c_str());
+        }
     }
 
     if (!cfg_.profilesDir.empty() && !cfg_.profileName.empty()) {
@@ -99,6 +122,8 @@ bool Daemon::init(DaemonConfig& cfg, bool debugCli, const std::string& cfgPath, 
         if (std::filesystem::exists(full)) {
             if (!applyProfileFile(full)) {
                 LFC_LOGW("profile: failed to load '%s' — waiting for detection/import", full.c_str());
+            } else {
+                LFC_LOGI("profile: loaded '%s'", full.c_str());
             }
         } else {
             LFC_LOGI("no profile present at %s — waiting for detection/import", full.c_str());
@@ -155,6 +180,12 @@ void Daemon::shutdown() {
     }
     if (rpcServer_) rpcServer_->stop();
     if (engine_) engine_->enable(false);
+
+    // Remove PID file
+    if (!cfg_.pidfile.empty()) {
+        std::error_code ec;
+        std::filesystem::remove(cfg_.pidfile, ec);
+    }
 }
 
 // ----------- telemetry / engine control -----------
