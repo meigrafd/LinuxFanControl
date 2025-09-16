@@ -12,7 +12,7 @@ Modernes, schnelles Fan Control mit GUI im Stil von [FanControl.Release](https:/
   - Hybrid Protokoll: JSON-RPC 2.0 für Config/Control. Telemetry läuft über POSIX Shared Memory (SHM) Ringbuffer - deutlich performanter, kein RPC-Polling.
 - Automatische Erkennung und Kalibrierung der verfügbaren Sensoren und Lüfter.
 - Steuerlogik: Mix, Trigger oder Graph.
-- FanControl.Release Config importierbar.
+- FanControl.Release Config [importierbar](docs/import.md).
 
 
 ### Daemon
