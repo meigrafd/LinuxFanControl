@@ -24,7 +24,7 @@ public:
     Daemon();
     ~Daemon();
 
-    bool init(DaemonConfig& cfg, bool debugCli, const std::string& cfgPath);
+    bool init(DaemonConfig& cfg, bool debugCli, const std::string& cfgPath, bool foreground);
     void runLoop();
     void shutdown();
     void pumpOnce(int timeoutMs = 0);
