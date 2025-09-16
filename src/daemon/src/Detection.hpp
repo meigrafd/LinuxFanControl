@@ -35,6 +35,9 @@ public:
     Status status() const;
     std::vector<int> results() const;
 
+    // Needed by Daemon.cpp (used in detectionStart())
+    bool running() const { return running_.load(); }
+
 private:
     void worker();
 
@@ -50,13 +53,13 @@ private:
 
     // saved state per PWM
     std::vector<int> savedDuty_;
-    std::vector<int> savedEnable_;      // <- added
+    std::vector<int> savedEnable_;
 
     // results
     std::vector<int> peakRpm_;
 
-    // global fan-claiming to avoid duplicate matches
-    std::vector<bool> claimedFans_;     // <- added
+    // avoid matching the same tach twice globally
+    std::vector<bool> claimedFans_;
 };
 
 } // namespace lfc
