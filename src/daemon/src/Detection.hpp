@@ -22,7 +22,7 @@ struct DetectionConfig {
     int spinupPollMs{100};
     int measureTotalMs{10000};
     int rpmDeltaThresh{30};
-    int rampStartPercent{50};
+    int rampStartPercent{30};
     int rampEndPercent{100};
 };
 

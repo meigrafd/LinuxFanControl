@@ -1,14 +1,17 @@
 /*
  * Linux Fan Control — Daemon (header)
- * - Lifecycle, RPC server, engine, detection
+ * - Lifecycle, RPC, engine, detection
  * (c) 2025 LinuxFanControl contributors
  */
 #pragma once
+
 #include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
+
+#include "Config.hpp"
 #include "Engine.hpp"
 #include "Hwmon.hpp"
 #include "include/CommandRegistry.h"
@@ -16,8 +19,6 @@
 #include "Detection.hpp"
 
 namespace lfc {
-
-class Detection;
 
 class Daemon {
 public:
@@ -29,7 +30,7 @@ public:
     void shutdown();
     void pumpOnce(int timeoutMs = 0);
 
-    // RPC dispatch entry
+    // RPC entry point used by RpcTcpServer
     RpcResult dispatch(const std::string& method, const std::string& paramsJson);
     std::vector<CommandInfo> listRpcCommands() const;
 
@@ -40,12 +41,13 @@ public:
     void setCfg(const DaemonConfig& c) { cfg_ = c; }
 
     HwmonSnapshot& hwmon() { return hwmon_; }
+    const HwmonSnapshot& hwmon() const { return hwmon_; }
     Engine& engine() { return engine_; }
     bool telemetryGet(std::string& out) { return engine_.getTelemetry(out); }
+    bool engineControlEnabled() const { return engine_.controlEnabled(); }
 
     bool applyProfileFile(const std::string& path) { return applyProfileIfValid(path); }
     void engineEnable(bool on) { engine_.enableControl(on); }
-    bool engineControlEnabled() const { return engine_.controlEnabled(); }
 
     // detection proxies (thread-safe)
     bool detectionStart();
@@ -75,10 +77,10 @@ private:
     std::atomic<bool> running_{false};
     std::string pidFile_;
     std::string configPath_;
-    DaemonConfig cfg_;
+    DaemonConfig cfg_{};
 
-    HwmonSnapshot hwmon_;
-    Engine engine_;
+    HwmonSnapshot hwmon_{};
+    Engine engine_{};
 
     std::unique_ptr<CommandRegistry> reg_;
     std::unique_ptr<RpcTcpServer> rpc_;

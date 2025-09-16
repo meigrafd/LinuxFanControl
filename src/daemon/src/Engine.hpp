@@ -1,19 +1,18 @@
 /*
  * Linux Fan Control — Engine (header)
- * - Periodic sensor readout and telemetry
- * - Profile application (FanControl.Releases compatible)
- * - Curve / Mix / Trigger evaluation per control
- * - SHM telemetry via ShmTelemetry
+ * - Periodic control loop and telemetry
+ * - Profile-driven curve/mix/trigger evaluation
  * (c) 2025 LinuxFanControl contributors
  */
 #pragma once
+
+#include "Hwmon.hpp"
+#include "ShmTelemetry.hpp"
+#include "Profile.hpp"
 #include <string>
-#include <chrono>
 #include <vector>
 #include <unordered_map>
-#include "Hwmon.hpp"
-#include "Config.hpp"
-#include "ShmTelemetry.hpp"
+#include <chrono>
 
 namespace lfc {
 
@@ -24,73 +23,77 @@ public:
 
     void setSnapshot(const HwmonSnapshot& snap);
     bool initShm(const std::string& path);
+
     void start();
     void stop();
-    void tick();
 
     void enableControl(bool on);
     bool controlEnabled() const { return controlEnabled_; }
 
+    // Returns the last telemetry JSON line
     bool getTelemetry(std::string& out) const;
 
     void applyProfile(const Profile& p);
+    void tick();
 
 private:
     struct CurveEval {
         std::string name;
-        std::vector<std::pair<int,int>> pts_mC_pct;   // (mC, percent), sorted by mC
         std::string tempId;
-        int maxTempC{120};
-        int minTempC{20};
+        int maxTempC{100};
+        int minTempC{0};
         int maxCmd{100};
+        std::vector<std::pair<int,int>> pts_mC_pct;  // (milliC, percent)
     };
+
     struct MixEval {
-        int func{0};                                  // 0=max, 1=min, 2=avg
-        std::vector<std::string> refNames;            // names of referenced curves
+        int func{0};                       // 0=max, 1=min, 2=avg
+        std::vector<std::string> refNames; // referenced curve names
     };
+
     struct TriggerEval {
-        std::string tempId;
-        int loadPct{80};
-        int loadTempC{65};
-        int idlePct{30};
-        int idleTempC{50};
+        std::string tempId;                // temperature source id
+        int idleTempC{40};                 // °C
+        int loadTempC{80};                 // °C
+        int idlePct{20};                   // %
+        int loadPct{100};                  // %
     };
+
     struct Binding {
-        int pwmIndex{-1};
-        int mode{0};                                  // 0=curve, 1=mix, 2=trigger
-        std::string curveName;                        // for curve or mix/trigger name
-        MixEval mix;
-        TriggerEval trig;
-        int minPercent{0};
+        int pwmIndex{-1};                  // index into snapshot.pwms
+        int minPercent{0};                 // minimum applied command
+        int mode{0};                       // 0=curve, 1=mix, 2=trigger
+        std::string curveName;             // for mode==0
+        MixEval mix;                       // for mode==1
+        TriggerEval trig;                  // for mode==2
     };
 
 private:
-    int evalCurve(const CurveEval& c, int mC) const;
-    int evalCurveByName(const std::string& name, int mC) const;
-    int evalMix(const MixEval& m, int mC) const;
-    int evalTrigger(const TriggerEval& t, int mC) const;
-
-    int tempMilliCForId(const std::string& id,
-                        const std::vector<std::pair<std::string,int>>& temps_mC,
-                        int fallbackMax) const;
-
     void buildBindingsFromProfile();
 
+    int evalCurve(const CurveEval& c, int mC) const;
+    int evalCurveByName(const std::string& name, int mC) const;
+
+    int evalMixAtOwnSources(const MixEval& m,
+                            const std::unordered_map<std::string, CurveEval>& curves,
+                            const std::vector<std::pair<std::string,int>>& temps_mC,
+                            int fallbackMilliC) const;
+
+    int evalTrigger(const TriggerEval& t, int mC) const;
+
 private:
-    HwmonSnapshot snap_;
+    HwmonSnapshot snap_{};
+    Profile profile_{};
 
     bool running_{false};
+    bool controlEnabled_{true};
     std::chrono::steady_clock::time_point lastTick_{};
 
-    bool controlEnabled_{false};
-
-    Profile profile_;
     std::unordered_map<std::string, CurveEval> curves_;
     std::vector<Binding> bindings_;
 
-    // SHM telemetry
     ShmTelemetry shm_;
-    mutable std::string lastTelemetry_; // for RPC readback
+    std::string lastTelemetry_;
 };
 
 } // namespace lfc

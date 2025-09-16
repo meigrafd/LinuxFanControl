@@ -1,347 +1,243 @@
 /*
- * Linux Fan Control — Config (implementation)
- * - Daemon config (nlohmann/json)
- * - Profile I/O compatible with FanControl.Releases schema
+ * Linux Fan Control — Daemon Config (implementation)
+ * - Daemon/runtime configuration (no profiles here)
+ * - Env override via LFCD_* variables
+ * - JSON save with atomic write
  * (c) 2025 LinuxFanControl contributors
  */
 #include "Config.hpp"
-#include "Hwmon.hpp"
 
-#include <nlohmann/json.hpp>
+#include <cstdlib>
+#include <cctype>
 #include <fstream>
 #include <sstream>
+#include <system_error>
 #include <filesystem>
+#include <nlohmann/json.hpp>
 
+namespace fs = std::filesystem;
 using nlohmann::json;
 
 namespace lfc {
 
-// ---------- Daemon config ----------
-
-DaemonConfig Config::Defaults() {
-    return DaemonConfig{};
+static const char* getenv_c(const char* k) {
+    const char* v = std::getenv(k);
+    return v && *v ? v : nullptr;
 }
 
-static bool read_file(const std::string& path, std::string& out, std::string& err) {
-    if (!std::filesystem::exists(path)) { err = "config not found"; return false; }
+static std::string getenv_or(const char* k, const std::string& def) {
+    if (auto* v = getenv_c(k)) return std::string(v);
+    return def;
+}
+
+static int getenv_or_int(const char* k, int def) {
+    if (auto* v = getenv_c(k)) {
+        try { return std::stoi(v); } catch (...) {}
+    }
+    return def;
+}
+
+bool parseBool(const std::string& s) {
+    std::string t;
+    t.reserve(s.size());
+    for (char c : s) t.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    return (t == "1" || t == "true" || t == "yes" || t == "on");
+}
+
+std::string expandUserPath(const std::string& p) {
+    if (p.size() >= 2 && p[0] == '~' && p[1] == '/') {
+        const char* home = getenv_c("HOME");
+        if (home && *home) {
+            std::string out = home;
+            if (!out.empty() && out.back() != '/') out.push_back('/');
+            out.append(p.begin() + 2, p.end());
+            return out;
+        }
+    }
+    return p;
+}
+
+static std::string readFile(const fs::path& path) {
     std::ifstream f(path);
-    if (!f) { err = "open failed"; return false; }
-    std::ostringstream ss; ss << f.rdbuf();
-    out = ss.str();
-    return true;
+    std::ostringstream oss;
+    oss << f.rdbuf();
+    return oss.str();
 }
 
-bool Config::Load(const std::string& path, DaemonConfig& out, std::string& err) {
-    std::string txt;
-    if (!read_file(path, txt, err)) return false;
+static void json_to_cfg(const json& j, DaemonConfig& c) {
+    if (j.contains("logLevel"))     c.logLevel   = j.value("logLevel", c.logLevel);
+    if (j.contains("debug"))        c.debug      = j.value("debug", c.debug);
+    if (j.contains("foreground"))   c.foreground = j.value("foreground", c.foreground);
+    if (j.contains("cmds"))         c.cmds       = j.value("cmds", c.cmds);
 
+    if (j.contains("host"))         c.host       = j.value("host", c.host);
+    if (j.contains("port"))         c.port       = j.value("port", c.port);
+
+    if (j.contains("pidfile"))      c.pidfile    = j.value("pidfile", c.pidfile);
+    if (j.contains("logfile"))      c.logfile    = j.value("logfile", c.logfile);
+    if (j.contains("shm"))          c.shmPath    = j.value("shm", c.shmPath);
+
+    if (j.contains("sysfsRoot"))    c.sysfsRoot      = j.value("sysfsRoot", c.sysfsRoot);
+    if (j.contains("sensorsBackend")) c.sensorsBackend = j.value("sensorsBackend", c.sensorsBackend);
+
+    if (j.contains("profilesDir"))  c.profilesDir = j.value("profilesDir", c.profilesDir);
+    if (j.contains("profile"))      c.profileName = j.value("profile", c.profileName);
+}
+
+static json cfg_to_json(const DaemonConfig& c) {
     json j;
-    try { j = json::parse(txt); }
-    catch (const std::exception& e) { err = std::string("parse failed: ") + e.what(); return false; }
+    j["logLevel"]       = c.logLevel;
+    j["debug"]          = c.debug;
+    j["foreground"]     = c.foreground;
+    j["cmds"]           = c.cmds;
 
-    DaemonConfig cfg = Defaults();
+    j["host"]           = c.host;
+    j["port"]           = c.port;
 
-    if (j.contains("log") && j["log"].is_object()) {
-        const auto& jl = j["log"];
-        cfg.log.file        = jl.value("file",        cfg.log.file);
-        cfg.log.maxBytes    = static_cast<std::size_t>(jl.value("maxBytes",   static_cast<std::uint64_t>(cfg.log.maxBytes)));
-        cfg.log.rotateCount = jl.value("rotateCount", cfg.log.rotateCount);
-        cfg.log.debug       = jl.value("debug",       cfg.log.debug);
-    }
+    j["pidfile"]        = c.pidfile;
+    j["logfile"]        = c.logfile;
+    j["shm"]            = c.shmPath;
 
-    if (j.contains("rpc") && j["rpc"].is_object()) {
-        const auto& jr = j["rpc"];
-        cfg.rpc.host = jr.value("host", cfg.rpc.host);
-        cfg.rpc.port = jr.value("port", cfg.rpc.port);
-    }
+    j["sysfsRoot"]      = c.sysfsRoot;
+    j["sensorsBackend"] = c.sensorsBackend;
 
-    if (j.contains("shm") && j["shm"].is_object()) {
-        const auto& js = j["shm"];
-        cfg.shm.path = js.value("path", cfg.shm.path);
-    }
+    j["profilesDir"]    = c.profilesDir;
+    j["profile"]        = c.profileName;
 
-    if (j.contains("profiles") && j["profiles"].is_object()) {
-        const auto& jp = j["profiles"];
-        cfg.profiles.dir     = jp.value("dir",     cfg.profiles.dir);
-        cfg.profiles.active  = jp.value("active",  cfg.profiles.active);
-        cfg.profiles.backups = jp.value("backups", cfg.profiles.backups);
-    }
-
-    cfg.pidFile = j.value("pidFile", cfg.pidFile);
-
-    out = cfg;
-    return true;
+    return j;
 }
 
-bool Config::Save(const std::string& path, const DaemonConfig& in, std::string& err) {
-    std::error_code ec;
-    std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+static void apply_env_overrides(DaemonConfig& c) {
+    if (auto* v = getenv_c("LFCD_LOG_LEVEL"))    c.logLevel   = v;
+    if (auto* v = getenv_c("LFCD_DEBUG"))        c.debug      = parseBool(v);
+    if (auto* v = getenv_c("LFCD_FOREGROUND"))   c.foreground = parseBool(v);
+    if (auto* v = getenv_c("LFCD_CMDS"))         c.cmds       = parseBool(v);
 
-    json j;
-    j["log"] = {
-        {"file",        in.log.file},
-        {"maxBytes",    static_cast<std::uint64_t>(in.log.maxBytes)},
-        {"rotateCount", in.log.rotateCount},
-        {"debug",       in.log.debug}
-    };
-    j["rpc"] = { {"host", in.rpc.host}, {"port", in.rpc.port} };
-    j["shm"] = { {"path", in.shm.path} };
-    j["profiles"] = {
-        {"dir",     in.profiles.dir},
-        {"active",  in.profiles.active},
-        {"backups", in.profiles.backups}
-    };
-    j["pidFile"] = in.pidFile;
+    if (auto* v = getenv_c("LFCD_HOST"))         c.host       = v;
+    c.port = getenv_or_int("LFCD_PORT", c.port);
 
-    std::ofstream f(path, std::ios::trunc);
-    if (!f) { err = "open for write failed"; return false; }
-    f << j.dump(4) << '\n';
-    return static_cast<bool>(f);
+    if (auto* v = getenv_c("LFCD_PIDFILE"))      c.pidfile    = v;
+    if (auto* v = getenv_c("LFCD_LOGFILE"))      c.logfile    = v;
+    if (auto* v = getenv_c("LFCD_SHM"))          c.shmPath    = v;
+
+    if (auto* v = getenv_c("LFCD_SYSFS_ROOT"))       c.sysfsRoot      = v;
+    if (auto* v = getenv_c("LFCD_SENSORS_BACKEND"))  c.sensorsBackend = v;
+
+    if (auto* v = getenv_c("LFCD_PROFILES_DIR")) c.profilesDir = v;
+    if (auto* v = getenv_c("LFCD_PROFILE"))      c.profileName = v;
 }
 
-// ---------- Profile I/O (FanControl.Releases compatible) ----------
+DaemonConfig loadDaemonConfig(const std::string& configPath, std::string* err) {
+    DaemonConfig cfg;
 
-static json profile_to_json(const Profile& p) {
-    json main;
-
-    // Controls
-    main["Controls"] = json::array();
-    for (const auto& c : p.Controls) {
-        json jc;
-        jc["Name"] = c.Name;
-        jc["NickName"] = c.NickName;
-        jc["Identifier"] = c.Identifier;
-        jc["IsHidden"] = c.IsHidden;
-        jc["Enable"] = c.Enable;
-        if (!c.SelectedFanCurve.Name.empty())
-            jc["SelectedFanCurve"] = json{ {"Name", c.SelectedFanCurve.Name} };
-        else
-            jc["SelectedFanCurve"] = nullptr;
-        jc["SelectedOffset"] = c.SelectedOffset;
-        if (!c.PairedFanSensor.empty()) jc["PairedFanSensor"] = c.PairedFanSensor; else jc["PairedFanSensor"] = nullptr;
-        jc["SelectedStart"] = c.SelectedStart;
-        jc["SelectedStop"] = c.SelectedStop;
-        jc["MinimumPercent"] = c.MinimumPercent;
-        jc["SelectedCommandStepUp"] = c.SelectedCommandStepUp;
-        jc["SelectedCommandStepDown"] = c.SelectedCommandStepDown;
-        jc["ManualControlValue"] = c.ManualControlValue;
-        jc["ManualControl"] = c.ManualControl;
-        jc["ForceApply"] = c.ForceApply;
-        if (!c.Calibration.empty()) jc["Calibration"] = c.Calibration; else jc["Calibration"] = nullptr;
-        main["Controls"].push_back(std::move(jc));
-    }
-
-    // FanCurves
-    main["FanCurves"] = json::array();
-    for (const auto& fc : p.FanCurves) {
-        json jf;
-        jf["CommandMode"] = fc.CommandMode;
-        jf["Name"] = fc.Name;
-        jf["IsHidden"] = fc.IsHidden;
-
-        if (fc.CommandMode == 0) {
-            jf["Points"] = fc.Points;
-            if (!fc.SelectedTempSource.Identifier.empty())
-                jf["SelectedTempSource"] = json{ {"Identifier", fc.SelectedTempSource.Identifier} };
-            jf["MaximumTemperature"] = fc.MaximumTemperature;
-            jf["MinimumTemperature"] = fc.MinimumTemperature;
-            jf["MaximumCommand"] = fc.MaximumCommand;
-            jf["HysteresisConfig"] = {
-                {"ResponseTimeUp",     fc.HysteresisConfig.ResponseTimeUp},
-                {"ResponseTimeDown",   fc.HysteresisConfig.ResponseTimeDown},
-                {"HysteresisValueUp",  fc.HysteresisConfig.HysteresisValueUp},
-                {"HysteresisValueDown",fc.HysteresisConfig.HysteresisValueDown},
-                {"IgnoreHysteresisAtLimits", fc.HysteresisConfig.IgnoreHysteresisAtLimits}
-            };
-        } else {
-            if (!fc.SelectedFanCurves.empty()) {
-                jf["SelectedFanCurves"] = json::array();
-                for (const auto& r : fc.SelectedFanCurves) jf["SelectedFanCurves"].push_back(json{{"Name", r.Name}});
+    if (!configPath.empty()) {
+        try {
+            fs::path p = expandUserPath(configPath);
+            if (fs::exists(p)) {
+                auto s = readFile(p);
+                auto j = json::parse(s);
+                json_to_cfg(j, cfg);
+                cfg.configFile = p.string();
+            } else if (err) {
+                *err = "config file not found: " + p.string();
             }
-            jf["SelectedMixFunction"] = fc.SelectedMixFunction;
-
-            if (!fc.TriggerTempSource.Identifier.empty())
-                jf["SelectedTempSource"] = json{ {"Identifier", fc.TriggerTempSource.Identifier} };
-            jf["LoadFanSpeed"]  = fc.LoadFanSpeed;
-            jf["LoadTemperature"] = fc.LoadTemperature;
-            jf["IdleFanSpeed"]  = fc.IdleFanSpeed;
-            jf["IdleTemperature"] = fc.IdleTemperature;
-            jf["ResponseTimeConfig"] = {
-                {"ResponseTimeUp",   fc.ResponseTimeConfig.ResponseTimeUp},
-                {"ResponseTimeDown", fc.ResponseTimeConfig.ResponseTimeDown}
-            };
-        }
-
-        main["FanCurves"].push_back(std::move(jf));
-    }
-
-    // FanSensors (optional)
-    if (!p.FanSensors.empty()) {
-        main["FanSensors"] = json::array();
-        for (const auto& fs : p.FanSensors) {
-            main["FanSensors"].push_back({
-                {"Identifier", fs.Identifier},
-                {"IsHidden", fs.IsHidden},
-                {"Name", fs.Name},
-                {"NickName", fs.NickName}
-            });
-        }
-    } else {
-        main["FanSensors"] = json::array();
-    }
-
-    main["CustomSensors"] = json::array();
-    main["Fahrenheit"] = p.Fahrenheit;
-    main["HideCalibration"] = p.HideCalibration;
-    main["HideFanSpeedCards"] = p.HideFanSpeedCards;
-    main["HorizontalUIOrientation"] = p.HorizontalUIOrientation;
-
-    json root;
-    root["__VERSION__"] = p.Version;
-    root["Main"] = std::move(main);
-    root["Sensors"] = json::object(); // left minimal; can be expanded later
-    return root;
-}
-
-static bool profile_from_json(const json& root, Profile& out) {
-    if (!root.is_object() || !root.contains("Main")) return false;
-    const auto& jmain = root.at("Main");
-    Profile p;
-
-    p.Version = root.value<std::string>("__VERSION__", p.Version);
-
-    // Controls
-    if (jmain.contains("Controls") && jmain["Controls"].is_array()) {
-        for (const auto& jc : jmain["Controls"]) {
-            Profile::Control c;
-            c.Name = jc.value("Name", "");
-            c.NickName = jc.value("NickName", "");
-            c.Identifier = jc.value("Identifier", "");
-            c.IsHidden = jc.value("IsHidden", false);
-            c.Enable = jc.value("Enable", true);
-            if (jc.contains("SelectedFanCurve") && jc["SelectedFanCurve"].is_object()) {
-                c.SelectedFanCurve.Name = jc["SelectedFanCurve"].value("Name", "");
-            }
-            c.SelectedOffset = jc.value("SelectedOffset", 0);
-            if (jc.contains("PairedFanSensor")) {
-                if (jc["PairedFanSensor"].is_string()) c.PairedFanSensor = jc["PairedFanSensor"].get<std::string>();
-            }
-            c.SelectedStart = jc.value("SelectedStart", 0);
-            c.SelectedStop  = jc.value("SelectedStop", 0);
-            c.MinimumPercent = jc.value("MinimumPercent", 0);
-            c.SelectedCommandStepUp = jc.value("SelectedCommandStepUp", 8);
-            c.SelectedCommandStepDown = jc.value("SelectedCommandStepDown", 8);
-            c.ManualControlValue = jc.value("ManualControlValue", 0);
-            c.ManualControl = jc.value("ManualControl", false);
-            c.ForceApply = jc.value("ForceApply", false);
-            if (jc.contains("Calibration") && jc["Calibration"].is_string()) c.Calibration = jc["Calibration"].get<std::string>();
-            p.Controls.push_back(std::move(c));
+        } catch (const std::exception& ex) {
+            if (err) *err = std::string("failed to load config: ") + ex.what();
         }
     }
 
-    // FanCurves
-    if (jmain.contains("FanCurves") && jmain["FanCurves"].is_array()) {
-        for (const auto& jf : jmain["FanCurves"]) {
-            Profile::Curve fc;
-            fc.CommandMode = jf.value("CommandMode", 0);
-            fc.Name = jf.value("Name", "");
-            fc.IsHidden = jf.value("IsHidden", false);
+    apply_env_overrides(cfg);
 
-            if (fc.CommandMode == 0) {
-                if (jf.contains("Points") && jf["Points"].is_array()) {
-                    for (const auto& s : jf["Points"]) {
-                        if (s.is_string()) fc.Points.push_back(s.get<std::string>());
-                    }
-                }
-                if (jf.contains("SelectedTempSource") && jf["SelectedTempSource"].is_object()) {
-                    fc.SelectedTempSource.Identifier = jf["SelectedTempSource"].value("Identifier", "");
-                }
-                fc.MaximumTemperature = jf.value("MaximumTemperature", 120);
-                fc.MinimumTemperature = jf.value("MinimumTemperature", 20);
-                fc.MaximumCommand = jf.value("MaximumCommand", 100);
-                if (jf.contains("HysteresisConfig") && jf["HysteresisConfig"].is_object()) {
-                    const auto& h = jf["HysteresisConfig"];
-                    fc.HysteresisConfig.ResponseTimeUp = h.value("ResponseTimeUp", 3);
-                    fc.HysteresisConfig.ResponseTimeDown = h.value("ResponseTimeDown", 3);
-                    fc.HysteresisConfig.HysteresisValueUp = h.value("HysteresisValueUp", 2);
-                    fc.HysteresisConfig.HysteresisValueDown = h.value("HysteresisValueDown", 2);
-                    fc.HysteresisConfig.IgnoreHysteresisAtLimits = h.value("IgnoreHysteresisAtLimits", true);
-                }
+    cfg.pidfile     = expandUserPath(cfg.pidfile);
+    cfg.logfile     = expandUserPath(cfg.logfile);
+    cfg.shmPath     = expandUserPath(cfg.shmPath);
+    cfg.profilesDir = expandUserPath(cfg.profilesDir);
+
+    if (cfg.port <= 0 || cfg.port > 65535) cfg.port = 8777;
+    if (cfg.logLevel.empty()) cfg.logLevel = "info";
+    if (cfg.sensorsBackend != "auto" && cfg.sensorsBackend != "sysfs" && cfg.sensorsBackend != "libsensors") {
+        cfg.sensorsBackend = "auto";
+    }
+
+    return cfg;
+}
+
+DaemonConfig loadDaemonConfig(std::string* err) {
+    std::string path = getenv_or("LFCD_CONFIG", "");
+    if (path.empty()) {
+        const char* home = getenv_c("HOME");
+        if (home && *home) {
+            path = std::string(home) + "/.config/LinuxFanControl/daemon.json";
+        }
+    }
+    return loadDaemonConfig(path, err);
+}
+
+static bool atomic_write(const fs::path& target, const std::string& data, std::string* err) {
+    try {
+        fs::path dir = target.parent_path();
+        if (!dir.empty()) {
+            fs::create_directories(dir);
+        }
+        fs::path tmp = target;
+        tmp += ".tmp";
+
+        {
+            std::ofstream of(tmp, std::ios::binary | std::ios::trunc);
+            if (!of) {
+                if (err) *err = "open temp for write failed: " + tmp.string();
+                return false;
+            }
+            of.write(data.data(), static_cast<std::streamsize>(data.size()));
+            if (!of) {
+                if (err) *err = "write failed: " + tmp.string();
+                return false;
+            }
+            of.flush();
+            if (!of) {
+                if (err) *err = "flush failed: " + tmp.string();
+                return false;
+            }
+        }
+
+        std::error_code ec;
+        fs::permissions(tmp, fs::perms::owner_read | fs::perms::owner_write,
+                        fs::perm_options::replace, ec);
+
+        fs::rename(tmp, target, ec);
+        if (ec) {
+            if (err) *err = "rename failed: " + ec.message();
+            return false;
+        }
+        return true;
+    } catch (const std::exception& ex) {
+        if (err) *err = ex.what();
+        return false;
+    }
+}
+
+bool saveDaemonConfig(const DaemonConfig& cfg, const std::string& path, std::string* err) {
+    fs::path p = expandUserPath(path);
+    json j = cfg_to_json(cfg);
+    std::string payload = j.dump(2);
+    return atomic_write(p, payload, err);
+}
+
+bool saveDaemonConfig(const DaemonConfig& cfg, std::string* err) {
+    std::string path = cfg.configFile;
+    if (path.empty()) {
+        path = getenv_or("LFCD_CONFIG", "");
+        if (path.empty()) {
+            const char* home = getenv_c("HOME");
+            if (home && *home) {
+                path = std::string(home) + "/.config/LinuxFanControl/daemon.json";
             } else {
-                if (jf.contains("SelectedFanCurves") && jf["SelectedFanCurves"].is_array()) {
-                    for (const auto& r : jf["SelectedFanCurves"]) {
-                        Profile::MixRef mr; mr.Name = r.value("Name", "");
-                        fc.SelectedFanCurves.push_back(std::move(mr));
-                    }
-                }
-                fc.SelectedMixFunction = jf.value("SelectedMixFunction", 0);
-
-                if (jf.contains("SelectedTempSource") && jf["SelectedTempSource"].is_object()) {
-                    fc.TriggerTempSource.Identifier = jf["SelectedTempSource"].value("Identifier", "");
-                }
-                fc.LoadFanSpeed  = jf.value("LoadFanSpeed", 80);
-                fc.LoadTemperature = jf.value("LoadTemperature", 65);
-                fc.IdleFanSpeed  = jf.value("IdleFanSpeed", 30);
-                fc.IdleTemperature = jf.value("IdleTemperature", 50);
-                if (jf.contains("ResponseTimeConfig") && jf["ResponseTimeConfig"].is_object()) {
-                    const auto& r = jf["ResponseTimeConfig"];
-                    fc.ResponseTimeConfig.ResponseTimeUp = r.value("ResponseTimeUp", 5);
-                    fc.ResponseTimeConfig.ResponseTimeDown = r.value("ResponseTimeDown", 5);
-                }
+                if (err) *err = "cannot resolve HOME for default config path";
+                return false;
             }
-
-            p.FanCurves.push_back(std::move(fc));
         }
     }
-
-    // FanSensors (optional)
-    if (jmain.contains("FanSensors") && jmain["FanSensors"].is_array()) {
-        for (const auto& js : jmain["FanSensors"]) {
-            Profile::FanSensorDesc d;
-            d.Identifier = js.value("Identifier", "");
-            d.IsHidden   = js.value("IsHidden", false);
-            d.Name       = js.value("Name", "");
-            d.NickName   = js.value("NickName", "");
-            p.FanSensors.push_back(std::move(d));
-        }
-    }
-
-    p.Fahrenheit = jmain.value("Fahrenheit", false);
-    p.HideCalibration = jmain.value("HideCalibration", false);
-    p.HideFanSpeedCards = jmain.value("HideFanSpeedCards", false);
-    p.HorizontalUIOrientation = jmain.value("HorizontalUIOrientation", false);
-
-    out = std::move(p);
-    return true;
-}
-
-bool ProfileIO::Load(const std::string& path, Profile& out, std::string& err) {
-    if (!std::filesystem::exists(path)) { err = "profile not found"; return false; }
-    std::ifstream f(path);
-    if (!f) { err = "open failed"; return false; }
-    json j;
-    try { f >> j; }
-    catch (const std::exception& e) { err = e.what(); return false; }
-    return profile_from_json(j, out);
-}
-
-bool ProfileIO::Save(const std::string& path, const Profile& p, std::string& err) {
-    std::error_code ec;
-    std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
-    std::ofstream f(path, std::ios::trunc);
-    if (!f) { err = "open for write failed"; return false; }
-    f << profile_to_json(p).dump(4) << '\n';
-    return static_cast<bool>(f);
-}
-
-bool ProfileIO::Validate(const Profile& p, const HwmonSnapshot& /*snap*/, std::string& err) {
-    if (p.Controls.empty()) { err = "no controls"; return false; }
-    for (const auto& c : p.Controls) {
-        if (c.Enable && c.SelectedFanCurve.Name.empty() && !c.ManualControl) {
-            err = "control without curve"; return false;
-        }
-    }
-    return true;
+    return saveDaemonConfig(cfg, path, err);
 }
 
 } // namespace lfc

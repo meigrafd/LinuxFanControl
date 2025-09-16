@@ -36,27 +36,6 @@ static void write_int_file(const std::filesystem::path& p, int v) {
     f << v << "\n";
 }
 
-static int read_pwm_percent_from_sysfs(const std::string& path_pwm) {
-    std::filesystem::path p(path_pwm);
-    int maxv = 255;
-    {
-        std::filesystem::path pmax = p.parent_path() / (p.filename().string() + "_max");
-        int tmp = 0;
-        if (read_int_file(pmax, tmp) && tmp > 0) {
-            maxv = tmp;
-        }
-    }
-    int raw = 0;
-    if (read_int_file(p, raw) && raw >= 0) {
-        if (maxv <= 0) maxv = 255;
-        int pct = static_cast<int>(std::lround((100.0 * raw) / maxv));
-        if (pct < 0) pct = 0;
-        if (pct > 100) pct = 100;
-        return pct;
-    }
-    return -1;
-}
-
 static int filename_index_suffix(const std::string& name, const char* prefix) {
     size_t plen = std::strlen(prefix);
     if (name.size() <= plen) return -1;
@@ -125,8 +104,10 @@ std::vector<int> Detection::results() const {
 }
 
 void Detection::worker() {
+    // Save current duty/enable/mode per PWM
     for (size_t i = 0; i < snap_.pwms.size(); ++i) {
-        savedDuty_[i] = read_pwm_percent_from_sysfs(snap_.pwms[i].path_pwm);
+        // Use central helper instead of local sysfs math
+        savedDuty_[i] = Hwmon::readPercent(snap_.pwms[i]).value_or(-1);
         int en = -1; read_int_file(pwm_enable_path(snap_.pwms[i].path_pwm), en);
         int mo = -1; read_int_file(pwm_mode_path(snap_.pwms[i].path_pwm), mo);
         savedEnable_[i] = en;
@@ -152,6 +133,7 @@ void Detection::worker() {
         const std::string pwm_dir = parent_hwmon_dir(pwm.path_pwm);
         const int pwm_idx = filename_index_suffix(std::filesystem::path(pwm.path_pwm).filename().string(), "pwm");
 
+        // Candidate fan list (same hwmon dir; prefer matching index)
         std::vector<size_t> cand;
         for (size_t k = 0; k < snap_.fans.size(); ++k) {
             if (parent_hwmon_dir(snap_.fans[k].path_input) == pwm_dir) {

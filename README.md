@@ -1,13 +1,15 @@
 Modernes, schnelles Fan Control mit GUI im Stil von [FanControl.Release](https://github.com/Rem0o/FanControl.Releases) für Linux:
 
-09.2025: **GUI Funktioniert noch nicht!**
+
+> **Status (09/2025):** Die **GUI** ist noch **work-in-progress**. Der **Daemon (`lfcd`)** läuft bereits unabhängig und stellt RPC + SHM-Telemetry bereit.
+
 
 ## Funktionsumfang
 - Hintergrundprozess mit der Logik von GUI getrennt, damit die Lüftersteuerung auch ohne GUI läuft.
   - Einbindung von libsensors + /sys/class/hwmon um möglichst alle Lüfter und Sensoren zu erkennen.
   - Hybrid Protokoll: JSON-RPC 2.0 für Config/Control. Telemetry läuft über POSIX Shared Memory (SHM) Ringbuffer - deutlich performanter, kein RPC-Polling.
 - Automatische Erkennung und Kalibrierung der verfügbaren Sensoren und Lüfter.
-- Steuerung über Mix, Trigger oder Graph.
+- Steuerlogik: Mix, Trigger oder Graph.
 - FanControl.Release Config importierbar.
 
 ### Daemon
@@ -19,12 +21,8 @@ Modernes, schnelles Fan Control mit GUI im Stil von [FanControl.Release](https:/
 - `--host` for RPC server, default `127.0.0.1`
 - `--port` default `8777`
 - `--shm PATH` default `/dev/shm/lfc_telemetry`
-- `--foreground`
-- `--debug`
-- `--cmds`
-- `--check-update`
-- `--update`
-- `--update-target PATH`
+- `--foreground`, `--debug`, `--cmds`
+- `--check-update`, `--update`, `--update-target PATH`
 - `--download-update --target <file> [--repo <owner/name>]`
 
 ## Install
@@ -109,15 +107,15 @@ newgrp lfc
 
 ##  CPU-Load Optimization:
 Diese besonderen ENV Einstellungen sind auch in der Konfigurationsdatei `daemon.json` enthalten und können auch zur Laufzeit über `config.set engine.deltaC / engine.forceTickMs` geändert werden.
-- LFC_TICK_MS
+- LFCD_TICK_MS
   - Standard: 25
   - Bereich: 5..1000 (ms)
   - Takt des Mainloops (Engine tick()-Frequenz). Höher = weniger CPU-Last, träger; niedriger = reaktiver.
-- LFC_DELTA_C
+- LFCD_DELTA_C
   - Standard: 0.5 (°C)
   - Bereich: 0.0..10.0
   - Temperatur-Schwellwert für Regel-Ticks: engine.tick() läuft nur, wenn mind. ein Sensor sich um ≥ Delta geändert hat (Detection ausgenommen). Senkt Leerlauf-CPU-Last.
-- LFC_FORCE_TICK_MS
+- LFCD_FORCE_TICK_MS
   - Standard: 1000
   - Bereich: 100..10000 (ms)
   - Sicherheits-Intervall: Spätestens alle forceTickMs wird ein Tick erzwungen, auch ohne Temperaturänderung.
@@ -127,7 +125,7 @@ Test JSON-RPC
 ```bash
 curl -s -X POST http://127.0.0.1:8777/rpc \
      -H 'Content-Type: application/json' \
-     -d '{"jsonrpc":"2.0","id":1,"method":"rpc.commands"}'
+     -d '{"jsonrpc":"2.0","id":1,"method":"rpc.commands"}' | jq
 ```
 Batch
 ```bash
@@ -145,11 +143,11 @@ curl -s http://127.0.0.1:8777/rpc \
 ```
 JSON-RPC Test per netcat (eine Zeile pro Request):
 ```bash
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"version"}' | nc 127.0.0.1 8777
-printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"telemetry.json"}'   | nc 127.0.0.1 8777
-printf '%s\n' '[{"jsonrpc":"2.0","id":"a","method":"rpc.commands"},{"jsonrpc":"2.0","method":"engine.start"}]' | nc 127.0.0.1 8777
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"config.set","params":{"key":"engine.deltaC","value":0.7}}' | nc 127.0.0.1 8777
-printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"config.set","params":{"key":"engine.forceTickMs","value":1500}}' | nc 127.0.0.1 8777
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"version"}' | nc 127.0.0.1 8777 | jq
+printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"telemetry.json"}'   | nc 127.0.0.1 8777 | jq
+printf '%s\n' '[{"jsonrpc":"2.0","id":"a","method":"rpc.commands"},{"jsonrpc":"2.0","method":"engine.start"}]' | nc 127.0.0.1 8777 | jq
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"config.set","params":{"key":"engine.deltaC","value":0.7}}' | nc 127.0.0.1 8777 | jq
+printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"config.set","params":{"key":"engine.forceTickMs","value":1500}}' | nc 127.0.0.1 8777 | jq
 ```
 SHM lesen (einfacher Dumper):
 ```bash
