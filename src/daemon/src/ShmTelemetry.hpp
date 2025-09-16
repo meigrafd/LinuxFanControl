@@ -1,35 +1,37 @@
+/*
+ * Linux Fan Control — SHM Telemetry (header)
+ * - Simple mmap-backed JSON line buffer
+ * (c) 2025 LinuxFanControl contributors
+ */
 #pragma once
-// Simple POSIX SHM ringbuffer writing JSON lines
-
 #include <string>
 #include <cstddef>
-#include <cstdint>
 
 namespace lfc {
 
-    class ShmTelemetry {
-    public:
-        ShmTelemetry() = default;
-        ~ShmTelemetry();
+class ShmTelemetry {
+public:
+    ShmTelemetry() = default;
+    ~ShmTelemetry();
 
-        bool openOrCreate(const std::string& shmPath, std::size_t capacityBytes = 1<<20); // 1MB
-        void close();
+    // Uses a regular file mmap (works with /dev/shm/* and any tmpfs/dir)
+    bool openOrCreate(const std::string& path, std::size_t bytes);
+    void close();
 
-        // Append a JSON line (adds '\n')
-        void appendJsonLine(const std::string& jsonLine);
+    // Writes one JSON line, replaces previous contents
+    bool appendJsonLine(const std::string& jsonLine);
 
-    private:
-        int fd_{-1};
-        void* mem_{nullptr};
-        std::size_t cap_{0};
+    // Optional readback (latest full buffer content)
+    bool readAll(std::string& out) const;
 
-        struct Header {
-            std::uint32_t magic;     // 'LFC1'
-            std::uint32_t writeOff;  // ring write offset
-            std::uint32_t size;      // capacity of data region
-        };
-        Header* hdr_{nullptr};
-        char*   data_{nullptr};
-    };
+private:
+    bool mapFile(const std::string& path, std::size_t bytes);
+
+private:
+    std::string path_;
+    int fd_{-1};
+    char* ptr_{nullptr};
+    std::size_t cap_{0};
+};
 
 } // namespace lfc

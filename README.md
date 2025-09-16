@@ -15,14 +15,17 @@ Modernes, schnelles Fan Control mit GUI im Stil von [FanControl.Release](https:/
 - `--config PATH` default `~/.config/LinuxFanControl/daemon.json`
 - `--pidfile PATH` default `/run/lfcd.pid` fallback `/tmp/lfcd.pid`
 - `--logfile PATH` default `/var/log/lfc/daemon.log` fallback `/tmp/daemon_lfc.log`
-- `--profiles PATH` default `~/.config/LinuxFanControl/profiles/`
-- `--activeProfil FILE` default `Default.json`
+- `--profiles DIR` default `~/.config/LinuxFanControl/profiles/`
+- `--profile NAME` default `Default.json`
 - `--cmds [all|rpc|shm]`
 - `--host` for RPC server, default `127.0.0.1`
 - `--port` default `8777`
 - `--shm_path` default `/dev/shm/lfc_telemetry`
 - `--foreground`
 - `--debug`
+- `--check-update`
+- `--update`
+- `--update-target PATH`
 
 Test JSON-RPC
 ```bash

@@ -1,49 +1,46 @@
 /*
  * Linux Fan Control — RPC TCP Server (header)
- * - Pure JSON-RPC over plain TCP (no HTTP)
- * - Accept loop + per-client handling thread
- * - Integrated command registry forwarding
- * - Minimal surface; daemon owns lifecycle
+ * - Minimal JSON-RPC 2.0 over TCP (newline-delimited)
+ * - Non-blocking accept + client handling
  * (c) 2025 LinuxFanControl contributors
  */
 #pragma once
 #include <string>
-#include <vector>
-#include <atomic>
 #include <thread>
-#include <cstdint>
+#include <atomic>
+#include <vector>
+#include <mutex>
 
 namespace lfc {
 
-    class CommandRegistry;
-    class Daemon;
+class Daemon;
+class CommandRegistry;
 
-    class RpcTcpServer {
-    public:
-        RpcTcpServer(Daemon& d, const std::string& host, std::uint16_t port, bool debug);
-        ~RpcTcpServer();
+class RpcTcpServer {
+public:
+    RpcTcpServer(Daemon& owner, const std::string& host, unsigned short port, bool verbose);
+    ~RpcTcpServer();
 
-        bool start(CommandRegistry* reg);
-        void stop();
-        void pumpOnce(int /*timeoutMs*/);
+    bool start(CommandRegistry* reg);
+    void stop();
 
-        std::vector<std::string> listMethods() const;
+private:
+    void threadMain();
+    bool handleLine(int fd, const std::string& line, std::string& outJson);
 
-    private:
-        bool readLine(int fd, std::string& out);
-        void handleClient(int fd);
-        void runAcceptLoop();
-        std::string handleJsonRpc(const std::string& json, bool& hasAnyResponse);
+private:
+    Daemon& owner_;
+    CommandRegistry* reg_{nullptr};
+    std::string host_;
+    unsigned short port_{0};
+    bool verbose_{false};
 
-    private:
-        Daemon& daemon_;
-        std::string host_;
-        std::uint16_t port_{0};
-        int listenfd_{-1};
-        std::atomic<bool> running_{false};
-        std::thread thr_;
-        CommandRegistry* reg_{nullptr};
-        bool debug_{false};
-    };
+    std::thread thr_;
+    std::atomic<bool> running_{false};
+    int listenFd_{-1};
+
+    std::mutex mu_;
+    std::vector<int> clients_;
+};
 
 } // namespace lfc

@@ -1,8 +1,9 @@
 /*
  * Linux Fan Control — Daemon (header)
  * - JSON-RPC (TCP) server + SHM telemetry
- * - PID file handling with /run primary, /tmp fallback
- * - Command registry wiring
+ * - PID file handling (/run primary, /tmp fallback persisted)
+ * - Config/profile bootstrap and import mapping
+ * - Non-blocking detection worker
  * (c) 2025 LinuxFanControl contributors
  */
 #pragma once
@@ -10,20 +11,21 @@
 #include <vector>
 #include <memory>
 #include <atomic>
+#include <mutex>
 #include "Config.hpp"
 #include "Engine.hpp"
-#include "include/CommandRegistry.h"
+#include "Detection.hpp"
+#include "CommandRegistry.hpp"
 
 namespace lfc {
 
-  class RpcTcpServer;
+class RpcTcpServer;
 
-  class Daemon {
-  public:
+class Daemon {
+public:
     Daemon();
     ~Daemon();
 
-    // cfg is updated in-place (pidFile may change on fallback)
     bool init(DaemonConfig& cfg, bool debugCli, const std::string& cfgPath);
     void runLoop();
     void pumpOnce(int timeoutMs = 200);
@@ -34,10 +36,13 @@ namespace lfc {
 
     void bindCommands(CommandRegistry& reg);
 
-    std::string dispatch(const std::string& method, const std::string& paramsJson);
+    RpcResult dispatch(const std::string& method, const std::string& paramsJson);
     std::vector<CommandInfo> listRpcCommands() const;
 
-  private:
+private:
+    bool applyProfileIfValid(const std::string& profilePath);
+
+private:
     std::unique_ptr<RpcTcpServer> rpc_;
     std::unique_ptr<CommandRegistry> reg_;
     std::string pidFile_;
@@ -45,9 +50,13 @@ namespace lfc {
     int rpcTimeoutMs_{200};
 
     std::string configPath_;
+    DaemonConfig cfg_;
 
     Engine engine_;
     HwmonSnapshot hwmon_;
-  };
+
+    std::mutex detMu_;
+    std::unique_ptr<Detection> detection_;
+};
 
 } // namespace lfc

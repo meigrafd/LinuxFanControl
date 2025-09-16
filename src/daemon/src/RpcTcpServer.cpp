@@ -1,30 +1,34 @@
 /*
  * Linux Fan Control — RPC TCP Server (implementation)
- * - Plain TCP accept loop, per-connection handler
- * - Line-based framing with naive JSON routing
+ * - Minimal JSON-RPC 2.0 over TCP (newline-delimited)
+ * - Uses select() to multiplex clients
  * (c) 2025 LinuxFanControl contributors
  */
 #include "RpcTcpServer.hpp"
+#include "CommandRegistry.hpp"
 #include "Daemon.hpp"
+#include "Log.hpp"
 
-#include <thread>
-#include <atomic>
-#include <string>
-#include <vector>
-#include <optional>
-#include <cstring>
-
-#include <sys/types.h>
 #include <sys/socket.h>
-#include <arpa/inet.h>
 #include <netinet/in.h>
-#include <unistd.h>
+#include <arpa/inet.h>
 #include <fcntl.h>
+#include <unistd.h>
+#include <cstring>
+#include <cerrno>
+#include <algorithm>
+#include <string>
+#include <sstream>
 
 namespace lfc {
 
-RpcTcpServer::RpcTcpServer(Daemon& d, const std::string& host, std::uint16_t port, bool debug)
-: daemon_(d), host_(host), port_(port), debug_(debug) {}
+static int set_nonblock(int fd) {
+    int fl = fcntl(fd, F_GETFL, 0);
+    return fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+}
+
+RpcTcpServer::RpcTcpServer(Daemon& owner, const std::string& host, unsigned short port, bool verbose)
+    : owner_(owner), host_(host), port_(port), verbose_(verbose) {}
 
 RpcTcpServer::~RpcTcpServer() {
     stop();
@@ -32,123 +36,173 @@ RpcTcpServer::~RpcTcpServer() {
 
 bool RpcTcpServer::start(CommandRegistry* reg) {
     reg_ = reg;
+    listenFd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (listenFd_ < 0) return false;
 
-    listenfd_ = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (listenfd_ < 0) return false;
-
-    int one = 1;
-    ::setsockopt(listenfd_, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    int yes = 1;
+    setsockopt(listenFd_, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port_);
-    if (::inet_pton(AF_INET, host_.c_str(), &addr.sin_addr) != 1) {
-        ::close(listenfd_); listenfd_ = -1; return false;
+    addr.sin_addr.s_addr = inet_addr(host_.c_str());
+    if (::bind(listenFd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        ::close(listenFd_);
+        listenFd_ = -1;
+        return false;
     }
-    if (::bind(listenfd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-        ::close(listenfd_); listenfd_ = -1; return false;
+    if (::listen(listenFd_, 16) != 0) {
+        ::close(listenFd_);
+        listenFd_ = -1;
+        return false;
     }
-    if (::listen(listenfd_, 16) != 0) {
-        ::close(listenfd_); listenfd_ = -1; return false;
-    }
+    set_nonblock(listenFd_);
 
     running_.store(true);
-    thr_ = std::thread([this] { runAcceptLoop(); });
+    thr_ = std::thread(&RpcTcpServer::threadMain, this);
     return true;
 }
 
 void RpcTcpServer::stop() {
-    if (running_.exchange(false)) {
-        if (listenfd_ >= 0) {
-            ::shutdown(listenfd_, SHUT_RDWR);
-            ::close(listenfd_);
-            listenfd_ = -1;
-        }
-        if (thr_.joinable()) thr_.join();
+    if (!running_.exchange(false)) return;
+    if (listenFd_ >= 0) ::close(listenFd_);
+    listenFd_ = -1;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        for (int fd : clients_) ::close(fd);
+        clients_.clear();
     }
+    if (thr_.joinable()) thr_.join();
 }
 
-void RpcTcpServer::pumpOnce(int /*timeoutMs*/) {
-    // no-op; server uses its own thread
+bool RpcTcpServer::handleLine(int fd, const std::string& line, std::string& outJson) {
+    // Expect JSON-RPC 2.0: {"jsonrpc":"2.0","id":...,"method":"...","params":...}
+    auto findStr = [&](const char* key) -> std::string {
+        std::string k = std::string("\"") + key + "\"";
+        auto p = line.find(k);
+        if (p == std::string::npos) return {};
+        p = line.find(':', p);
+        if (p == std::string::npos) return {};
+        auto q = line.find('"', p + 1);
+        if (q == std::string::npos) return {};
+        auto r = line.find('"', q + 1);
+        if (r == std::string::npos) return {};
+        return line.substr(q + 1, r - q - 1);
+    };
+    auto method = findStr("method");
+    std::string id = findStr("id"); // handles string ids; numeric ids will be echoed as-is below
+
+    // params extraction (raw json object/array or omitted)
+    std::string params = "{}";
+    auto pp = line.find("\"params\"");
+    if (pp != std::string::npos) {
+        auto colon = line.find(':', pp);
+        if (colon != std::string::npos) {
+            // naive: take substring from colon+1 to end and trim trailing }
+            params = line.substr(colon + 1);
+            // strip trailing spaces/newlines
+            while (!params.empty() && (params.back() == '\r' || params.back() == '\n' || params.back() == ' ')) params.pop_back();
+            // if ends with } or ] followed by }, keep only inner json
+            if (!params.empty() && params.front() == '{') {
+                int depth = 0; size_t i = 0;
+                for (; i < params.size(); ++i) {
+                    if (params[i] == '{') depth++;
+                    else if (params[i] == '}') { depth--; if (depth == 0) { ++i; break; } }
+                }
+                params = params.substr(0, i);
+            } else if (!params.empty() && params.front() == '[') {
+                int depth = 0; size_t i = 0;
+                for (; i < params.size(); ++i) {
+                    if (params[i] == '[') depth++;
+                    else if (params[i] == ']') { depth--; if (depth == 0) { ++i; break; } }
+                }
+                params = params.substr(0, i);
+            }
+        }
+    }
+
+    if (method.empty()) {
+        outJson = "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32600,\"message\":\"invalid request\"}}\n";
+        return true;
+    }
+
+    // Dispatch
+    RpcRequest req{method, id, params};
+    auto res = owner_.dispatch(req.method, req.paramsJson);
+
+    std::ostringstream ss;
+    ss << "{\"jsonrpc\":\"2.0\",\"id\":";
+    if (id.empty()) ss << "null";
+    else ss << "\"" << id << "\"";
+    ss << ",";
+    if (res.ok) {
+        ss << "\"result\":" << (res.json.empty() ? "null" : res.json);
+    } else {
+        ss << "\"error\":" << (res.json.empty() ? "{\"code\":-32000,\"message\":\"error\"}" : res.json);
+    }
+    ss << "}\n";
+    outJson = ss.str();
+    (void)fd;
+    return true;
 }
 
-void RpcTcpServer::runAcceptLoop() {
+void RpcTcpServer::threadMain() {
     while (running_.load()) {
-        int cfd = ::accept(listenfd_, nullptr, nullptr);
-        if (cfd < 0) {
-            if (!running_.load()) break;
-            continue;
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        int maxfd = -1;
+
+        if (listenFd_ >= 0) { FD_SET(listenFd_, &rfds); if (listenFd_ > maxfd) maxfd = listenFd_; }
+
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            for (int fd : clients_) {
+                FD_SET(fd, &rfds);
+                if (fd > maxfd) maxfd = fd;
+            }
         }
-        std::thread(&RpcTcpServer::handleClient, this, cfd).detach();
-    }
-}
 
-bool RpcTcpServer::readLine(int fd, std::string& out) {
-    out.clear();
-    char buf[512];
-    while (true) {
-        ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
-        if (n <= 0) return false;
-        for (ssize_t i = 0; i < n; ++i) {
-            char ch = buf[i];
-            if (ch == '\n') return true;
-            out.push_back(ch);
+        timeval tv{0, 200000}; // 200ms
+        int rc = select(maxfd + 1, &rfds, nullptr, nullptr, &tv);
+        if (rc <= 0) continue;
+
+        if (listenFd_ >= 0 && FD_ISSET(listenFd_, &rfds)) {
+            sockaddr_in cli{}; socklen_t clen = sizeof(cli);
+            int cfd = ::accept(listenFd_, reinterpret_cast<sockaddr*>(&cli), &clen);
+            if (cfd >= 0) {
+                set_nonblock(cfd);
+                std::lock_guard<std::mutex> lk(mu_);
+                clients_.push_back(cfd);
+            }
         }
-        if (out.size() > 1<<20) return false;
-    }
-}
 
-void RpcTcpServer::handleClient(int fd) {
-    std::string line;
-    while (readLine(fd, line)) {
-        bool hasAny = false;
-        std::string out = handleJsonRpc(line, hasAny);
-        if (hasAny) {
-            out.push_back('\n');
-            ::send(fd, out.data(), out.size(), MSG_NOSIGNAL);
+        std::lock_guard<std::mutex> lk(mu_);
+        for (size_t i = 0; i < clients_.size();) {
+            int fd = clients_[i];
+            if (!FD_ISSET(fd, &rfds)) { ++i; continue; }
+
+            char buf[2048];
+            ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
+            if (n <= 0) {
+                ::close(fd);
+                clients_.erase(clients_.begin() + i);
+                continue;
+            }
+            std::string in(buf, buf + n);
+            size_t pos = 0;
+            while (true) {
+                auto nl = in.find('\n', pos);
+                if (nl == std::string::npos) break;
+                std::string line = in.substr(pos, nl - pos);
+                pos = nl + 1;
+                std::string out;
+                if (handleLine(fd, line, out)) {
+                    ::send(fd, out.data(), out.size(), 0);
+                }
+            }
+            ++i;
         }
     }
-    ::shutdown(fd, SHUT_RDWR);
-    ::close(fd);
-}
-
-static std::optional<std::string> extractField(const std::string& json, const char* key) {
-    std::string pat = std::string("\"") + key + "\":";
-    auto p = json.find(pat);
-    if (p == std::string::npos) return std::nullopt;
-    p += pat.size();
-    while (p < json.size() && (json[p] == ' ' || json[p] == '\"')) {
-        if (json[p] == '\"') { // string value
-            std::size_t q = json.find('\"', p + 1);
-            if (q == std::string::npos) return std::nullopt;
-            return json.substr(p + 1, q - (p + 1));
-        }
-        ++p;
-    }
-    // fallback: assume raw JSON value
-    std::size_t q = json.find_first_of(",}", p);
-    if (q == std::string::npos) return std::nullopt;
-    return json.substr(p, q - p);
-}
-
-std::string RpcTcpServer::handleJsonRpc(const std::string& json, bool& hasAnyResponse) {
-    hasAnyResponse = false;
-    auto m = extractField(json, "method");
-    if (!m) return "{\"error\":{\"code\":-32600,\"message\":\"invalid request\"}}";
-    auto p = extractField(json, "params");
-    std::string params = p.value_or("null");
-    std::string res = daemon_.dispatch(*m, params);
-    hasAnyResponse = true;
-    return res;
-}
-
-std::vector<std::string> RpcTcpServer::listMethods() const {
-    std::vector<std::string> v;
-    if (!reg_) return v;
-    auto list = reg_->list();
-    v.reserve(list.size());
-    for (auto& ci : list) v.push_back(ci.name);
-    return v;
 }
 
 } // namespace lfc
