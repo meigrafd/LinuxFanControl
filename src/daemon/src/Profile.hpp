@@ -1,7 +1,8 @@
 /*
- * Linux Fan Control — Profile model & loader
- * - FanControl.Releases compatible subset
- * - JSON loader using nlohmann::json
+ * Linux Fan Control — Profile model
+ * - Rules combine one PWM target with one or more temperature source-curves
+ * - Mix function aggregates multiple source curve percents (Max/Avg)
+ * - JSON (de)serialization compatible with RPC and profile files
  * (c) 2025 LinuxFanControl contributors
  */
 #pragma once
@@ -11,45 +12,46 @@
 
 namespace lfc {
 
+enum class MixFunction {
+    Max = 0,
+    Avg = 1
+};
+
+struct CurvePoint {
+    double tempC {0.0};
+    int    percent {0}; // 0..100
+};
+
+struct SourceSettings {
+    int  minPercent   {20};   // clamp lower bound
+    int  maxPercent   {100};  // clamp upper bound
+    bool stopBelowMin {false};
+    double hysteresisC {0.0}; // simple temp hysteresis guard (°C)
+    int  spinupPercent {0};   // optional spin-up duty
+    int  spinupMs      {0};   // optional spin-up duration
+};
+
+struct SourceCurve {
+    std::vector<std::string> tempPaths; // hwmon temp*_input absolute paths
+    std::vector<CurvePoint>   points;    // piecewise linear curve
+    SourceSettings            settings;
+};
+
+struct Rule {
+    std::string              pwmPath;  // hwmon pwm path
+    std::vector<SourceCurve> sources;  // one-or-many sources feeding this PWM
+    MixFunction              mixFn {MixFunction::Max}; // aggregation across sources
+};
+
 struct Profile {
-    struct StringRef { std::string Name; };
-    struct TempSource { std::string Identifier; };
+    std::string       name;   // optional human-readable name
+    std::vector<Rule> rules;
 
-    struct Curve {
-        std::string Name;
-        int CommandMode{0};                         // 0=Curve, 1=Mix, 2=Trigger
+    bool empty() const { return rules.empty(); }
 
-        // Curve mode (0)
-        TempSource SelectedTempSource;
-        int MaximumTemperature{100};                // °C
-        int MinimumTemperature{0};                  // °C
-        int MaximumCommand{100};                    // %
-        std::vector<std::string> Points;            // "X,Y" with X=°C, Y=%
-
-        // Mix mode (1)
-        int SelectedMixFunction{0};                 // 0=max, 1=min, 2=avg
-        std::vector<StringRef> SelectedFanCurves;   // referenced curve names
-
-        // Trigger mode (2)
-        TempSource TriggerTempSource;
-        int LoadFanSpeed{100};                      // %
-        int LoadTemperature{80};                    // °C
-        int IdleFanSpeed{20};                       // %
-        int IdleTemperature{40};                    // °C
-    };
-
-    struct Control {
-        bool Enable{true};
-        int MinimumPercent{0};
-        std::string Identifier;                     // PWM identifier (substring match)
-        StringRef SelectedFanCurve;                 // curve/mix/trigger to use
-    };
-
-    std::vector<Control> Controls;
-    std::vector<Curve>   FanCurves;
-
+    // JSON I/O implemented in Profile.cpp
     bool loadFromFile(const std::string& path, std::string* err = nullptr);
-    bool loadFromJson(const std::string& jsonText, std::string* err = nullptr);
+    bool saveToFile(const std::string& path, std::string* err = nullptr) const;
 };
 
 } // namespace lfc

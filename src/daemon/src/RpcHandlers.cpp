@@ -266,7 +266,18 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         std::string e;
         Profile prof;
         if (!FanControlImport::LoadAndMap(path, self.hwmon(), prof, e)) return err("profile.import", -32010, e);
+
         self.engine().applyProfile(prof);
+        // Option: engine.enable sofort, falls gewünscht:
+        // self.engineEnable(true);
+
+        // Speichere als aktives Profil: "Imported" (Name-only) ohne Datei
+        DaemonConfig nc = self.cfg();
+        nc.profileName = prof.name.empty() ? std::string("Imported") : prof.name;
+        std::string serr;
+        (void)saveDaemonConfig(nc, self.configPath(), &serr);
+        self.setCfg(nc);
+
         return ok("profile.import", "{}");
     });
 

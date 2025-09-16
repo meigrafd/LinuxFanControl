@@ -1,112 +1,74 @@
 /*
- * Linux Fan Control — Engine (header)
- * - Periodic control loop and telemetry
- * - Profile-driven curve/mix/trigger evaluation
+ * Linux Fan Control — Engine (applies Profile to hardware)
+ * - Drives PWMs based on active Profile and sensor readings
+ * - Builds telemetry JSON (with 2-decimal temperatures) and can write via ShmTelemetry
  * (c) 2025 LinuxFanControl contributors
  */
 #pragma once
-
-#include "Hwmon.hpp"
-#include "ShmTelemetry.hpp"
 #include "Profile.hpp"
-#include <string>
+#include "Hwmon.hpp"        // HwmonTemp/HwmonFan/HwmonPwm + namespace helpers
 #include <vector>
-#include <unordered_map>
 #include <chrono>
+#include <string>
 
 namespace lfc {
 
+class ShmTelemetry;
+
 class Engine {
 public:
-    Engine();
-    ~Engine();
+    Engine() = default;
 
-    void setSnapshot(const HwmonSnapshot& snap);
-    bool initShm(const std::string& path);
-
-    void start();
-    void stop();
-
-    void enableControl(bool on);
-    bool controlEnabled() const { return controlEnabled_; }
-
-    // Telemetry (last JSON line)
-    bool getTelemetry(std::string& out) const;
+    // Bind current hwmon vectors (must remain valid or be rebound after rescan).
+    void setHwmonView(const std::vector<HwmonTemp>& temps,
+                      const std::vector<HwmonFan>& fans,
+                      const std::vector<HwmonPwm>& pwms);
 
     void applyProfile(const Profile& p);
+    Profile currentProfile() const { return profile_; }
 
-    // Gating parameters (runtime only; config lives in Config.hpp)
-    void setGating(double deltaC, int forceTickMs);
+    void enable(bool en) { enabled_ = en; }
+    bool enabled() const { return enabled_; }
 
-    // Called by daemon each loop tick; may skip heavy work if gating says so
-    void tick();
+    // Returns true if at least one PWM was updated.
+    bool tick(double deltaC);
 
-private:
-    struct CurveEval {
-        std::string name;
-        std::string tempId;
-        int maxTempC{100};
-        int minTempC{0};
-        int maxCmd{100};
-        std::vector<std::pair<int,int>> pts_mC_pct;  // (milliC, percent)
-    };
+    // Optional: attach SHM writer for telemetry updates after ticks.
+    void attachTelemetry(ShmTelemetry* w) { telemetry_ = w; }
 
-    struct MixEval {
-        int func{0};                       // 0=max, 1=min, 2=avg
-        std::vector<std::string> refNames; // referenced curve names
-    };
-
-    struct TriggerEval {
-        std::string tempId;
-        int idleTempC{40};
-        int loadTempC{80};
-        int idlePct{20};
-        int loadPct{100};
-    };
-
-    struct Binding {
-        int pwmIndex{-1};
-        int minPercent{0};
-        int mode{0};                       // 0=curve, 1=mix, 2=trigger
-        std::string curveName;
-        MixEval mix;
-        TriggerEval trig;
-    };
+    // Build telemetry JSON snapshot (temps/fans/pwms + basic engine state).
+    // Temperatures are strings with 2 decimals.
+    std::string telemetryJson() const;
 
 private:
-    void buildBindingsFromProfile();
+    // Views to discovered hardware (not owned)
+    const std::vector<HwmonTemp>* temps_{nullptr};
+    const std::vector<HwmonFan>*  fans_{nullptr};
+    const std::vector<HwmonPwm>*  pwms_{nullptr};
 
-    int evalCurve(const CurveEval& c, int mC) const;
-    int evalCurveByName(const std::string& name, int mC) const;
-    int evalMixAtOwnSources(const MixEval& m,
-                            const std::unordered_map<std::string, CurveEval>& curves,
-                            const std::vector<std::pair<std::string,int>>& temps_mC,
-                            int fallbackMilliC) const;
-    int evalTrigger(const TriggerEval& t, int mC) const;
+    Profile profile_;
+    bool enabled_{false};
 
-    bool gatingAllowsWork(const std::vector<std::pair<std::string,int>>& temps_mC,
-                          std::chrono::steady_clock::time_point now);
+    // Per-rule state for hysteresis/spin-up
+    std::vector<double> lastTemps_;     // last max temp per rule
+    std::vector<int> lastDuty_;         // last applied duty per rule
+    std::vector<std::chrono::steady_clock::time_point> spinUntil_;
 
-private:
-    HwmonSnapshot snap_{};
-    Profile profile_{};
+    // Optional SHM writer (owned by caller)
+    ShmTelemetry* telemetry_{nullptr};
 
-    bool running_{false};
-    bool controlEnabled_{true};
+    // Curve evaluation
+    static int lerpPoints(const std::vector<CurvePoint>& pts, double tC);
+    static int evalCurvePercent(const SourceCurve& sc, double tC);
+    static int clampDuty(const SourceCurve& sc, int duty);
+    static int aggregatePercents(const std::vector<int>& percs, MixFunction fn);
 
-    // Runtime gating (NOT config; config lives in Config.hpp / Daemon)
-    double gateDeltaC_{0.5};                        // °C
-    int    gateForceTickMs_{2000};                  // ms
-    std::chrono::steady_clock::time_point lastWork_{};
-    std::vector<std::pair<std::string,int>> lastTemps_mC_;
+    // Lookup helpers (path -> Hwmon object)
+    const HwmonTemp* findTempByPath(const std::string& path) const;
+    const HwmonPwm*  findPwmByPath(const std::string& path) const;
 
-    std::chrono::steady_clock::time_point lastTick_{};
-
-    std::unordered_map<std::string, CurveEval> curves_;
-    std::vector<Binding> bindings_;
-
-    ShmTelemetry shm_;
-    std::string lastTelemetry_;
+    // Telemetry helpers
+    static std::string fmt2(double v);
 };
 
 } // namespace lfc

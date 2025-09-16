@@ -1,99 +1,122 @@
 /*
  * Linux Fan Control — Daemon (header)
- * - Lifecycle, RPC, engine, detection
+ * - Orchestrates hwmon scan, engine, detection, RPC, and telemetry
+ * - Matches Engine API (enable(), enabled(), telemetryJson(), attachTelemetry(), setHwmonView())
+ * - init takes DaemonConfig& (non-const) to allow default/bootstrap adjustments
  * (c) 2025 LinuxFanControl contributors
  */
 #pragma once
 
 #include <atomic>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <vector>
 
-#include "Config.hpp"
-#include "Engine.hpp"
-#include "Hwmon.hpp"
+#include "Config.hpp"         // provides DaemonConfig (cfg_ is by value)
+#include "Hwmon.hpp"          // HwmonSnapshot by value
+#include "Engine.hpp"         // Engine API
+#include "ShmTelemetry.hpp"   // SHM writer
+#include "RpcTcpServer.hpp"   // RPC server
 #include "include/CommandRegistry.h"
-#include "RpcTcpServer.hpp"
-#include "Detection.hpp"
+#include "Profile.hpp"        // Profile apply/load
 
 namespace lfc {
+
+// Forward decl only for pointer member
+class Detection;
 
 class Daemon {
 public:
     Daemon();
     ~Daemon();
 
+    // Bootstrap and lifecycle
     bool init(DaemonConfig& cfg, bool debugCli, const std::string& cfgPath, bool foreground);
     void runLoop();
     void shutdown();
-    void pumpOnce();
+    void requestStop() { running_.store(false, std::memory_order_relaxed); }
 
-    // RPC entry point used by RpcTcpServer
-    RpcResult dispatch(const std::string& method, const std::string& paramsJson);
-    std::vector<CommandInfo> listRpcCommands() const;
-
-    // Accessors for handlers
+    // Config file path and active config snapshot
     const std::string& configPath() const { return configPath_; }
-    DaemonConfig& cfg() { return cfg_; }
     const DaemonConfig& cfg() const { return cfg_; }
     void setCfg(const DaemonConfig& c) { cfg_ = c; }
 
-    HwmonSnapshot& hwmon() { return hwmon_; }
-    const HwmonSnapshot& hwmon() const { return hwmon_; }
-    Engine& engine() { return engine_; }
-    bool telemetryGet(std::string& out) { return engine_.getTelemetry(out); }
-    bool engineControlEnabled() const { return engine_.controlEnabled(); }
+    // Telemetry and engine control
+    bool telemetryGet(std::string& out) const;
+    bool engineControlEnabled() const;
+    void engineEnable(bool on);
 
-    bool applyProfileFile(const std::string& path) { return applyProfileIfValid(path); }
-    void engineEnable(bool on) { engine_.enableControl(on); }
+    // Engine gating knobs (applied in runLoop)
+    double engineDeltaC() const { return deltaC_; }
+    void setEngineDeltaC(double v);
+    int engineForceTickMs() const { return forceTickMs_; }
+    void setEngineForceTickMs(int v);
+    int engineTickMs() const { return tickMs_; }
+    void setEngineTickMs(int v);
 
-    // detection proxies (thread-safe)
+    // Profile handling
+    bool applyProfileFile(const std::string& path);
+    bool applyProfile(const Profile& p);
+    Profile currentProfile() const;
+
+    // Detection worker
     bool detectionStart();
     void detectionAbort();
-    Detection::Status detectionStatus() const;
+    struct DetectionStatus {
+        bool running{false};
+        int currentIndex{0};
+        int total{0};
+        std::string phase;
+    };
+    DetectionStatus detectionStatus() const;
     std::vector<int> detectionResults() const;
 
-    // loop tuning accessors
-    double engineDeltaC() const { return deltaC_; }
-    int engineForceTickMs() const { return forceTickMs_; }
-    int engineTickMs() const { return tickMs_; }
-    void setEngineDeltaC(double v) { if (v >= 0.0 && v <= 10.0) { deltaC_ = v; engine_.setGating(deltaC_, forceTickMs_); } }
-    void setEngineForceTickMs(int v) { if (v >= 100 && v <= 10000) { forceTickMs_ = v; engine_.setGating(deltaC_, forceTickMs_); } }
-    void setEngineTickMs(int v) { if (v >= 5 && v <= 1000) tickMs_ = v; }
+    // RPC helpers
+    std::vector<CommandInfo> listRpcCommands() const;
 
-    // lifecycle
-    void requestStop() { running_.store(false); }
-
-    friend void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg);
+    // Accessors used by RPC handlers
+    Engine& engine() { return *engine_; }
+    const Engine& engine() const { return *engine_; }
+    HwmonSnapshot& hwmon() { return hwmon_; }
+    const HwmonSnapshot& hwmon() const { return hwmon_; }
 
 private:
-    static bool ensureDir(const std::string& path);
-    bool writePidFile(const std::string& path);
-    void removePidFile();
+    // Internal helpers (declared here; defined in Daemon.cpp)
+    static std::string ensure_profile_filename(const std::string& name);
+    static int getenv_int(const char* key, int def);
+    static double getenv_double(const char* key, double def);
     bool applyProfileIfValid(const std::string& profilePath);
 
 private:
-    std::atomic<bool> running_{false};
-    std::string pidFile_;
-    std::string configPath_;
+    // Runtime configuration (by value -> needs Config.hpp)
     DaemonConfig cfg_{};
+    std::string configPath_;
+    bool debug_{false};
+    bool foreground_{false};
 
-    HwmonSnapshot hwmon_{};
-    Engine engine_{};
+    // Engine + telemetry
+    std::unique_ptr<Engine> engine_;
+    ShmTelemetry telemetry_;
 
-    std::unique_ptr<CommandRegistry> reg_;
-    std::unique_ptr<RpcTcpServer> rpc_;
+    // Discovered hwmon devices
+    HwmonSnapshot hwmon_;
 
-    // detection
-    mutable std::mutex detMu_;
+    // Detection worker
     std::unique_ptr<Detection> detection_;
+    std::vector<int> detectionPeakRpm_;
 
-    // loop timing/gating
-    int tickMs_{25};
-    double deltaC_{0.5};
-    int forceTickMs_{1000};
+    // RPC
+    std::unique_ptr<CommandRegistry> rpcRegistry_;
+    std::unique_ptr<RpcTcpServer> rpcServer_;
+
+    // Main loop state
+    std::atomic<bool> running_{false};
+    std::atomic<bool> stop_{false};
+
+    // Gating/timing (overridable by env LFCD_* and config)
+    int tickMs_{25};          // LFCD_TICK_MS (5..1000)
+    double deltaC_{0.5};      // LFCD_DELTA_C  (0.0..10.0)
+    int forceTickMs_{1000};   // LFCD_FORCE_TICK_MS (100..10000)
 };
 
 } // namespace lfc

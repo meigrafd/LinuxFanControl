@@ -1,3 +1,9 @@
+/*
+ * Linux Fan Control — RPC TCP Server (implementation)
+ * - Minimal JSON-RPC 2.0 over TCP (newline-delimited)
+ * - Non-blocking accept + client handling
+ * (c) 2025 LinuxFanControl contributors
+ */
 #include "RpcTcpServer.hpp"
 #include "Daemon.hpp"
 #include "include/CommandRegistry.h"
@@ -47,82 +53,77 @@ bool RpcTcpServer::start(CommandRegistry* reg) {
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(port_);
+    addr.sin_port   = htons(port_);
     addr.sin_addr.s_addr = inet_addr(host_.c_str());
-    if (addr.sin_addr.s_addr == INADDR_NONE) {
+    if (bind(listenFd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+        ::close(listenFd_);
+        listenFd_ = -1;
+        return false;
+    }
+    if (listen(listenFd_, 8) < 0) {
+        ::close(listenFd_);
+        listenFd_ = -1;
+        return false;
+    }
+    if (set_nonblock(listenFd_) != 0) {
         ::close(listenFd_);
         listenFd_ = -1;
         return false;
     }
 
-    if (::bind(listenFd_, (sockaddr*)&addr, sizeof(addr)) != 0) {
-        ::close(listenFd_);
-        listenFd_ = -1;
-        return false;
-    }
-    if (::listen(listenFd_, 16) != 0) {
-        ::close(listenFd_);
-        listenFd_ = -1;
-        return false;
-    }
-
-    set_nonblock(listenFd_);
-    running_ = true;
-    thr_ = std::thread(&RpcTcpServer::loop, this);
+    running_.store(true);
+    thr_ = std::thread([this]{ loop(); });
     return true;
 }
 
 void RpcTcpServer::stop() {
-    if (!running_) return;
-    running_ = false;
-
-    if (thr_.joinable()) thr_.join();
-
-    for (auto& kv : clients_) {
-        ::close(kv.first);
-    }
-    clients_.clear();
-
-    if (listenFd_ != -1) {
+    running_.store(false);
+    if (listenFd_ >= 0) {
+        ::shutdown(listenFd_, SHUT_RDWR);
         ::close(listenFd_);
         listenFd_ = -1;
     }
+    if (thr_.joinable()) thr_.join();
+
+    for (auto& kv : clients_) {
+        ::shutdown(kv.first, SHUT_RDWR);
+        ::close(kv.first);
+    }
+    clients_.clear();
 }
 
 void RpcTcpServer::loop() {
-    while (running_) {
-        fd_set rfds;
-        FD_ZERO(&rfds);
+    while (running_.load()) {
+        fd_set rfds; FD_ZERO(&rfds);
         int maxfd = -1;
 
-        if (listenFd_ != -1) {
+        if (listenFd_ >= 0) {
             FD_SET(listenFd_, &rfds);
-            maxfd = listenFd_;
+            maxfd = std::max(maxfd, listenFd_);
         }
 
-        for (auto& kv : clients_) {
-            int fd = kv.first;
-            FD_SET(fd, &rfds);
-            if (fd > maxfd) maxfd = fd;
+        for (const auto& kv : clients_) {
+            FD_SET(kv.first, &rfds);
+            maxfd = std::max(maxfd, kv.first);
         }
 
-        timeval tv{0, 200 * 1000}; // 200ms
-        int rc = ::select(maxfd + 1, &rfds, nullptr, nullptr, &tv);
+        timeval tv{0, 200000}; // 200ms
+        int rc = select(maxfd + 1, &rfds, nullptr, nullptr, &tv);
         if (rc < 0) {
             if (errno == EINTR) continue;
             break;
         }
 
-        if (listenFd_ != -1 && FD_ISSET(listenFd_, &rfds)) {
-            sockaddr_in cli{};
-            socklen_t sl = sizeof(cli);
-            int cfd = ::accept(listenFd_, (sockaddr*)&cli, &sl);
+        // Accept
+        if (listenFd_ >= 0 && FD_ISSET(listenFd_, &rfds)) {
+            int cfd = accept(listenFd_, nullptr, nullptr);
             if (cfd >= 0) {
                 set_nonblock(cfd);
-                clients_[cfd] = Client{};
+                clients_.emplace(cfd, Client{});
             }
         }
 
+        // Read
         std::vector<int> toClose;
         for (auto& kv : clients_) {
             int fd = kv.first;
@@ -130,31 +131,23 @@ void RpcTcpServer::loop() {
 
             char buf[4096];
             ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
-            if (n <= 0) {
-                if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {
-                    toClose.push_back(fd);
-                }
-                continue;
-            }
+            if (n <= 0) { toClose.push_back(fd); continue; }
 
-            std::string& acc = kv.second.acc;
-            acc.append(buf, buf + n);
-
-            for (;;) {
-                auto p = acc.find('\n');
-                if (p == std::string::npos) break;
-                std::string line = acc.substr(0, p);
-                acc.erase(0, p + 1);
+            kv.second.acc.append(buf, static_cast<size_t>(n));
+            size_t pos;
+            while ((pos = kv.second.acc.find('\n')) != std::string::npos) {
+                std::string line = kv.second.acc.substr(0, pos);
+                kv.second.acc.erase(0, pos + 1);
 
                 std::string reply;
                 if (handleLine(fd, line, reply)) {
                     reply.push_back('\n');
-                    ::send(fd, reply.data(), reply.size(), 0);
+                    (void)::send(fd, reply.data(), reply.size(), MSG_NOSIGNAL);
                 }
             }
         }
-
         for (int fd : toClose) {
+            ::shutdown(fd, SHUT_RDWR);
             ::close(fd);
             clients_.erase(fd);
         }
@@ -162,10 +155,9 @@ void RpcTcpServer::loop() {
 }
 
 bool RpcTcpServer::handleLine(int /*fd*/, const std::string& line, std::string& outReply) {
-    std::string method;
-    std::string id;
-    std::string paramsJson;
+    std::string method, id, paramsJson;
 
+    // Parse JSON-RPC or plain "method"
     try {
         if (!line.empty() && (line[0] == '{' || line[0] == '[')) {
             json j = json::parse(line);
@@ -194,7 +186,14 @@ bool RpcTcpServer::handleLine(int /*fd*/, const std::string& line, std::string& 
         paramsJson = "{}";
     }
 
-    auto res = owner_.dispatch(method, paramsJson);
+    // DISPATCH via CommandRegistry (Daemon has no dispatch() member)
+    RpcResult res;
+    if (reg_) {
+        RpcRequest req{method, id, paramsJson};
+        res = reg_->call(req);
+    } else {
+        res = RpcResult{false, "{\"error\":\"no registry\"}"};
+    }
 
     if (!id.empty()) {
         try {

@@ -1,184 +1,263 @@
 /*
  * Linux Fan Control — Daemon (implementation)
+ * - Initializes logging, telemetry, hwmon backend and RPC
+ * - Applies LFCD_* env overrides (tick/deltaC/force)
+ * - Drives the main control loop and optional detection
  * (c) 2025 LinuxFanControl contributors
  */
+
 #include "Daemon.hpp"
-#include "RpcHandlers.hpp"
-#include "Hwmon.hpp"
-#include "Log.hpp"
 #include "Config.hpp"
+#include "RpcHandlers.hpp"
+#include "FanControlImport.hpp"
+#include "Detection.hpp"
+#include "Log.hpp"
+#include "Version.hpp"
 
 #include <filesystem>
+#include <fstream>
 #include <thread>
-#include <chrono>
-#include <cstdio>
-#include <sys/stat.h>
-#include <unistd.h>
-
-using namespace std::chrono_literals;
-namespace fs = std::filesystem;
+#include <cstdlib>
+#include <algorithm>    // std::clamp
 
 namespace lfc {
 
+// ----------- helpers -----------
+
+int Daemon::getenv_int(const char* key, int def) {
+    if (const char* s = std::getenv(key)) {
+        try { return std::stoi(s); } catch (...) {}
+    }
+    return def;
+}
+
+double Daemon::getenv_double(const char* key, double def) {
+    if (const char* s = std::getenv(key)) {
+        try { return std::stod(s); } catch (...) {}
+    }
+    return def;
+}
+
+std::string Daemon::ensure_profile_filename(const std::string& name) {
+    if (name.empty()) return name;
+    if (name.size() >= 5 && name.substr(name.size() - 5) == ".json") return name;
+    return name + ".json";
+}
+
+// ----------- lifecycle -----------
+
 Daemon::Daemon() = default;
-Daemon::~Daemon() {
-    shutdown();
-}
+Daemon::~Daemon() = default;
 
-static bool file_parent_dir(const std::string& p, std::string& outDir) {
-    try {
-        fs::path path(p);
-        outDir = path.parent_path().string();
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Daemon::ensureDir(const std::string& path) {
-    std::error_code ec;
-    fs::create_directories(path, ec);
-    return !ec;
-}
-
-bool Daemon::writePidFile(const std::string& path) {
-    pidFile_ = path;
-    std::FILE* f = std::fopen(path.c_str(), "w");
-    if (!f) return false;
-    std::fprintf(f, "%d\n", (int)getpid());
-    std::fclose(f);
-    return true;
-}
-
-void Daemon::removePidFile() {
-    if (!pidFile_.empty()) {
-        std::error_code ec;
-        fs::remove(pidFile_, ec);
-        pidFile_.clear();
-    }
-}
-
-static HwBackend parse_backend(const std::string& s) {
-    if (s == "sysfs") return HwBackend::Sysfs;
-    if (s == "libsensors") return HwBackend::Libsensors;
-    return HwBackend::Auto;
-}
-
-bool Daemon::init(DaemonConfig& cfg, bool /*debugCli*/, const std::string& cfgPath, bool /*foreground*/) {
+bool Daemon::init(DaemonConfig& cfg, bool debugCli, const std::string& cfgPath, bool foreground) {
     cfg_ = cfg;
+    debug_ = debugCli || cfg.debug;
     configPath_ = cfgPath;
+    foreground_ = foreground;
 
-    // apply loop tuning from config
-    setEngineTickMs(cfg_.tickMs);
-    setEngineDeltaC(cfg_.deltaC);
-    setEngineForceTickMs(cfg_.forceTickMs);
+    if (cfg_.tickMs <= 0) cfg_.tickMs = 25;
+    if (cfg_.deltaC < 0.0) cfg_.deltaC = 0.5;
+    if (cfg_.forceTickMs <= 0) cfg_.forceTickMs = 1000;
 
-    // hwmon scan (backend from config)
-    hwmon_ = Hwmon::scan(parse_backend(cfg_.sensorsBackend));
+    tickMs_      = std::clamp(getenv_int("LFCD_TICK_MS",       cfg_.tickMs),      5,   1000);
+    deltaC_      = std::clamp(getenv_double("LFCD_DELTA_C",    cfg_.deltaC),      0.0, 10.0);
+    forceTickMs_ = std::clamp(getenv_int("LFCD_FORCE_TICK_MS", cfg_.forceTickMs), 100, 10000);
 
-    // shm init
-    if (!engine_.initShm(cfg_.shmPath)) {
-        LFC_LOGW("SHM init failed at %s", cfg_.shmPath.c_str());
+    const std::string logPath = cfg_.logfile.empty() ? std::string("/tmp/daemon_lfc.log") : cfg_.logfile;
+    Logger::instance().configure(logPath, 0, 0, debug_);
+    LFC_LOGI("lfcd v%s starting", LFCD_VERSION);
+
+    try {
+        if (!configPath_.empty()) std::filesystem::create_directories(std::filesystem::path(configPath_).parent_path());
+        if (!cfg_.profilesDir.empty()) std::filesystem::create_directories(cfg_.profilesDir);
+    } catch (...) {}
+
+    {
+        const std::string shm = cfg_.shmPath.empty() ? std::string("/dev/shm/lfc_telemetry") : cfg_.shmPath;
+        if (!telemetry_.init(shm)) {
+            LFC_LOGW("telemetry: init failed: %s", shm.c_str());
+        }
     }
 
-    engine_.setSnapshot(hwmon_);
-    engine_.enableControl(true);
-    engine_.start();
+    hwmon_ = Hwmon::scan();
 
-    // RPC registry + TCP server
-    reg_ = std::make_unique<CommandRegistry>();
-    BindDaemonRpcCommands(*this, *reg_);
+    engine_ = std::make_unique<Engine>();
+    engine_->setHwmonView(hwmon_.temps, hwmon_.fans, hwmon_.pwms);
+    engine_->attachTelemetry(&telemetry_);
 
-    rpc_ = std::make_unique<RpcTcpServer>(*this, cfg_.host, static_cast<unsigned short>(cfg_.port), cfg_.debug);
-    (void)rpc_->start(reg_.get());
+    rpcRegistry_ = std::make_unique<CommandRegistry>();
+    BindDaemonRpcCommands(*this, *rpcRegistry_);
 
-    // optional pidfile
-    if (!cfg_.pidfile.empty()) {
-        std::string dir;
-        if (file_parent_dir(cfg_.pidfile, dir)) ensureDir(dir);
-        (void)writePidFile(cfg_.pidfile);
+    {
+        const std::string host = cfg_.host.empty() ? std::string("127.0.0.1") : cfg_.host;
+        const unsigned short port = static_cast<unsigned short>(cfg_.port > 0 ? cfg_.port : 8777);
+        rpcServer_ = std::make_unique<RpcTcpServer>(*this, host, port, debug_);
     }
 
+    if (!cfg_.profilesDir.empty() && !cfg_.profileName.empty()) {
+        const auto full = (std::filesystem::path(cfg_.profilesDir) / ensure_profile_filename(cfg_.profileName)).string();
+        if (std::filesystem::exists(full)) {
+            if (!applyProfileFile(full)) {
+                LFC_LOGW("profile: failed to load '%s' — waiting for detection/import", full.c_str());
+            }
+        } else {
+            LFC_LOGI("no profile present at %s — waiting for detection/import", full.c_str());
+        }
+    } else {
+        LFC_LOGI("no profile configured — waiting for detection/import");
+    }
+
+    {
+        const std::string tj = engine_->telemetryJson();
+        (void)telemetry_.update(tj);
+    }
+
+    running_.store(true, std::memory_order_relaxed);
+    stop_.store(false, std::memory_order_relaxed);
     return true;
 }
 
 void Daemon::runLoop() {
-    running_.store(true);
-    while (running_.load()) {
-        auto t0 = std::chrono::steady_clock::now();
-        pumpOnce();
-        auto t1 = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
-        int sleepMs = tickMs_ - static_cast<int>(elapsed);
-        if (sleepMs < 0) sleepMs = 0;
-        std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
+    using clock = std::chrono::steady_clock;
+
+    auto lastForce = clock::now();
+    auto nextTick  = clock::now();
+
+    while (running_.load(std::memory_order_relaxed) && !stop_.load(std::memory_order_relaxed)) {
+        const int tickMs  = tickMs_;
+        const int forceMs = forceTickMs_;
+        const double dC   = deltaC_;
+
+        auto now = clock::now();
+        bool force = (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastForce).count() >= forceMs);
+
+        if (force || now >= nextTick) {
+            (void)engine_->tick(dC);
+            if (force) lastForce = now;
+            nextTick = now + std::chrono::milliseconds(tickMs);
+        }
+
+        if (detection_ && detection_->running()) {
+            detection_->poll();
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    shutdown();
 }
 
 void Daemon::shutdown() {
-    if (rpc_) {
-        rpc_->stop();
-        rpc_.reset();
+    stop_.store(true, std::memory_order_relaxed);
+    running_.store(false, std::memory_order_relaxed);
+
+    if (detection_) {
+        detection_->abort();
+        detection_.reset();
     }
-    engine_.stop();
-    removePidFile();
+    if (rpcServer_) rpcServer_->stop();
+    if (engine_) engine_->enable(false);
 }
 
-void Daemon::pumpOnce() {
-    engine_.tick();
-    std::lock_guard<std::mutex> lk(detMu_);
-    if (detection_) detection_->poll();
+// ----------- telemetry / engine control -----------
+
+bool Daemon::telemetryGet(std::string& out) const {
+    return telemetry_.get(out);
 }
 
-RpcResult Daemon::dispatch(const std::string& method, const std::string& paramsJson) {
-    if (!reg_) return {false, "{\"ok\":false,\"code\":-32601,\"error\":\"no registry\"}"};
-    RpcRequest req{method, "", paramsJson};
-    return reg_->call(req);
+bool Daemon::engineControlEnabled() const {
+    return engine_ ? engine_->enabled() : false;
 }
 
-std::vector<CommandInfo> Daemon::listRpcCommands() const {
-    if (!reg_) return {};
-    return reg_->list();
+void Daemon::engineEnable(bool on) {
+    if (engine_) engine_->enable(on);
 }
 
-bool Daemon::applyProfileIfValid(const std::string& profilePath) {
-    Profile p;
-    std::string err;
-    if (!p.loadFromFile(profilePath, &err)) {
-        LFC_LOGE("Profile load failed: %s (%s)", profilePath.c_str(), err.c_str());
-        return false;
-    }
-    engine_.applyProfile(p);
-    LFC_LOGI("Applied profile: %s", profilePath.c_str());
-    return true;
+void Daemon::setEngineDeltaC(double v) {
+    deltaC_ = std::clamp(v, 0.0, 10.0);
 }
 
-// detection proxies
+void Daemon::setEngineForceTickMs(int v) {
+    forceTickMs_ = std::clamp(v, 100, 10000);
+}
+
+void Daemon::setEngineTickMs(int v) {
+    tickMs_ = std::clamp(v, 5, 1000);
+}
+
+// ----------- detection passthrough -----------
+
 bool Daemon::detectionStart() {
-    std::lock_guard<std::mutex> lk(detMu_);
     if (detection_ && detection_->running()) return false;
-    DetectionConfig dc; // defaults
-    detection_ = std::make_unique<Detection>(hwmon_, dc);
+    hwmon_ = Hwmon::scan();
+    if (engine_) engine_->setHwmonView(hwmon_.temps, hwmon_.fans, hwmon_.pwms);
+
+    DetectionConfig dcfg;
+    detection_ = std::make_unique<Detection>(hwmon_, dcfg);
     detection_->start();
     return true;
 }
 
 void Daemon::detectionAbort() {
-    std::lock_guard<std::mutex> lk(detMu_);
     if (detection_) detection_->abort();
 }
 
-Detection::Status Daemon::detectionStatus() const {
-    std::lock_guard<std::mutex> lk(detMu_);
-    if (!detection_) return Detection::Status{};
-    return detection_->status();
+Daemon::DetectionStatus Daemon::detectionStatus() const {
+    DetectionStatus s{};
+    if (!detection_) return s;
+    auto st = detection_->status();
+    s.running = st.running;
+    s.currentIndex = st.currentIndex;
+    s.total = st.total;
+    s.phase = st.phase;
+    return s;
 }
 
 std::vector<int> Daemon::detectionResults() const {
-    std::lock_guard<std::mutex> lk(detMu_);
     if (!detection_) return {};
     return detection_->results();
+}
+
+// ----------- profiles -----------
+
+bool Daemon::applyProfile(const Profile& p) {
+    if (!engine_) return false;
+    engine_->applyProfile(p);
+    return true;
+}
+
+bool Daemon::applyProfileIfValid(const std::string& path) {
+    Profile p;
+    std::string perr;
+    if (p.loadFromFile(path, &perr)) {
+        engine_->applyProfile(p);
+        LFC_LOGI("profile: applied '%s' (native)", path.c_str());
+        return true;
+    }
+    return false;
+}
+
+bool Daemon::applyProfileFile(const std::string& path) {
+    if (applyProfileIfValid(path)) return true;
+
+    Profile p;
+    std::string ierr;
+    if (FanControlImport::LoadAndMap(path, hwmon_.temps, hwmon_.pwms, p, ierr)) {
+        engine_->applyProfile(p);
+        LFC_LOGI("profile: imported & applied '%s' (FanControl.Releases)", path.c_str());
+        return true;
+    }
+    LFC_LOGW("profile: import failed for '%s': %s", path.c_str(), ierr.c_str());
+    return false;
+}
+
+// ----------- RPC registry -----------
+
+std::vector<CommandInfo> Daemon::listRpcCommands() const {
+    if (!rpcRegistry_) return {};
+    return rpcRegistry_->list();
+}
+
+Profile Daemon::currentProfile() const {
+    return engine_ ? engine_->currentProfile() : Profile{};
 }
 
 } // namespace lfc
