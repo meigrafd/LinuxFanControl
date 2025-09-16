@@ -61,6 +61,27 @@ namespace lfc {
     return std::nullopt;
   }
 
+  std::optional<int> Hwmon::readPercent(const HwmonPwm& p) {
+      std::ifstream f(p.path_pwm);
+      if (!f) return std::nullopt;
+      int raw = 0;
+      f >> raw;
+      if (!f) return std::nullopt;
+
+      // Optional: max value
+      int maxv = 255;
+      std::string maxPath = p.path_pwm + "_max";
+      std::ifstream fmax(maxPath);
+      if (fmax) {
+          int tmp = 0;
+          fmax >> tmp;
+          if (tmp > 0) maxv = tmp;
+      }
+
+      int pct = static_cast<int>(std::lround((100.0 * raw) / maxv));
+      return std::clamp(pct, 0, 100);
+  }
+
   void Hwmon::setManual(const HwmonPwm& p) {
     // 1 = manual on most kernels; if different, your engine can adapt
     (void)writeInt(p.path_enable, 1);

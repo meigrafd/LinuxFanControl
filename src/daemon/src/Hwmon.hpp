@@ -50,6 +50,7 @@ namespace lfc {
     static std::optional<int> readMilliC(const TempSensor& t);
     static std::optional<int> readTempC(const TempSensor& t);
     static std::optional<int> readRpm(const HwmonFan& f);
+    static std::optional<int> readPercent(const HwmonPwm& p);
 
     static void setManual(const HwmonPwm& p);
     static void setPercent(const HwmonPwm& p, int percent); // 0..100
