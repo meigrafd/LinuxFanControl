@@ -48,6 +48,7 @@ namespace lfc {
     static bool writeInt(const std::string& path, int value);
 
     static std::optional<int> readMilliC(const TempSensor& t);
+    static std::optional<int> readTempC(const TempSensor& t);
     static std::optional<int> readRpm(const HwmonFan& f);
 
     static void setManual(const HwmonPwm& p);
