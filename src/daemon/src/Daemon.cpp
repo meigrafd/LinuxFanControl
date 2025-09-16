@@ -1,6 +1,5 @@
 /*
  * Linux Fan Control — Daemon (implementation)
- * - Uses Config.cpp for all config helpers (no duplicates here)
  * (c) 2025 LinuxFanControl contributors
  */
 #include "Daemon.hpp"
@@ -59,6 +58,12 @@ void Daemon::removePidFile() {
     }
 }
 
+static HwBackend parse_backend(const std::string& s) {
+    if (s == "sysfs") return HwBackend::Sysfs;
+    if (s == "libsensors") return HwBackend::Libsensors;
+    return HwBackend::Auto;
+}
+
 bool Daemon::init(DaemonConfig& cfg, bool /*debugCli*/, const std::string& cfgPath, bool /*foreground*/) {
     cfg_ = cfg;
     configPath_ = cfgPath;
@@ -68,8 +73,8 @@ bool Daemon::init(DaemonConfig& cfg, bool /*debugCli*/, const std::string& cfgPa
     setEngineDeltaC(cfg_.deltaC);
     setEngineForceTickMs(cfg_.forceTickMs);
 
-    // hwmon scan
-    hwmon_ = Hwmon::scan();
+    // hwmon scan (backend from config)
+    hwmon_ = Hwmon::scan(parse_backend(cfg_.sensorsBackend));
 
     // shm init
     if (!engine_.initShm(cfg_.shmPath)) {
