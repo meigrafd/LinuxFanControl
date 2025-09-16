@@ -1,9 +1,8 @@
 /*
  * Linux Fan Control — Detection (implementation)
  * - Save/restore pwmN_enable, pwmN_mode and duty
- * - Per-PWM candidate fans (same hwmon), with global fallback
- * - Spin-up window 7s, 30 RPM delta threshold, ramp 50%→100%
- * - 10s total at 100% per PWM, capture peak RPM
+ * - Per-PWM candidate fans (same hwmon) with global fallback
+ * - Spin-up 7s, 30 RPM delta, ramp 50%→100%, 10s measure
  * (c) 2025 LinuxFanControl contributors
  */
 #include "Detection.hpp"
@@ -85,18 +84,13 @@ static std::filesystem::path pwm_mode_path(const std::string& path_pwm) {
 }
 
 Detection::Detection(const HwmonSnapshot& snap) : snap_(snap) {}
-
 Detection::~Detection() {
     abort();
-    if (thr_.joinable()) {
-        thr_.join();
-    }
+    if (thr_.joinable()) thr_.join();
 }
 
 void Detection::start() {
-    if (running_.exchange(true)) {
-        return;
-    }
+    if (running_.exchange(true)) return;
     stop_.store(false);
     idx_.store(0);
     phase_.clear();
@@ -129,14 +123,12 @@ std::vector<int> Detection::results() const {
 }
 
 void Detection::worker() {
-    // tunables
-    const int settle_ms = 250;               // settle after changing duty/mode
-    const int spinup_check_ms = 7000;        // allow slow spin-up
+    const int settle_ms = 250;
+    const int spinup_check_ms = 7000;
     const int spinup_poll_ms  = 100;
-    const int measure_total_ms = 10000;      // 10s total at 100%
-    const int rpm_delta_thresh = 30;         // minimal RPM delta
+    const int measure_total_ms = 10000;
+    const int rpm_delta_thresh = 30;
 
-    // snapshot saved state
     for (size_t i = 0; i < snap_.pwms.size(); ++i) {
         savedDuty_[i] = read_pwm_percent_from_sysfs(snap_.pwms[i].path_pwm);
         int en = -1; read_int_file(pwm_enable_path(snap_.pwms[i].path_pwm), en);
@@ -164,7 +156,6 @@ void Detection::worker() {
         const std::string pwm_dir = parent_hwmon_dir(pwm.path_pwm);
         const int pwm_idx = filename_index_suffix(std::filesystem::path(pwm.path_pwm).filename().string(), "pwm");
 
-        // candidates in same hwmon
         std::vector<size_t> cand;
         for (size_t k = 0; k < snap_.fans.size(); ++k) {
             if (parent_hwmon_dir(snap_.fans[k].path_input) == pwm_dir) {
@@ -186,11 +177,9 @@ void Detection::worker() {
             return m;
         };
 
-        // baselines
         int baseline_cand = cand.empty() ? 0 : read_cand_max();
         int baseline_global = read_global_max(claimedFans_).first;
 
-        // force manual enable=1; remember current mode, then try both modes if needed
         int prevEn = -1, prevMode = -1;
         (void)read_int_file(pwm_enable_path(pwm.path_pwm), prevEn);
         (void)read_int_file(pwm_mode_path(pwm.path_pwm), prevMode);
@@ -199,13 +188,10 @@ void Detection::worker() {
 
         write_int_file(pwm_enable_path(pwm.path_pwm), 1);
 
-        auto attempt_spinup = [&](int use_mode, bool& detected, bool& via_global, size_t& global_idx, int& max_rpm_out) {
+        auto attempt = [&](int use_mode, bool& detected, bool& via_global, size_t& global_idx, int& max_rpm_out) {
             detected = false; via_global = false; global_idx = static_cast<size_t>(-1); max_rpm_out = 0;
-
             if (use_mode >= 0) write_int_file(pwm_mode_path(pwm.path_pwm), use_mode);
             std::this_thread::sleep_for(std::chrono::milliseconds(settle_ms));
-
-            // ramp 50% -> 100%
             Hwmon::setPercent(pwm, 50);
             std::this_thread::sleep_for(std::chrono::milliseconds(settle_ms));
             Hwmon::setPercent(pwm, 100);
@@ -214,32 +200,19 @@ void Detection::worker() {
             const auto t0 = std::chrono::steady_clock::now();
             while (!stop_.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(spinup_poll_ms));
-
                 if (!cand.empty()) {
                     int cur = read_cand_max();
-                    if (cur >= baseline_cand + rpm_delta_thresh) {
-                        detected = true;
-                        break;
-                    }
+                    if (cur >= baseline_cand + rpm_delta_thresh) { detected = true; break; }
                 }
-
                 auto gm = read_global_max(claimedFans_);
-                if (gm.first >= baseline_global + rpm_delta_thresh) {
-                    detected = true;
-                    via_global = true;
-                    global_idx = gm.second;
-                    break;
-                }
-
+                if (gm.first >= baseline_global + rpm_delta_thresh) { detected = true; via_global = true; global_idx = gm.second; break; }
                 if (std::chrono::steady_clock::now() - t0 >= std::chrono::milliseconds(spinup_check_ms)) break;
             }
-
             if (!detected) return;
 
-            // measure remaining time to reach ~10s total since t0
             phase_ = "measure";
             int maxRpm = 0;
-            const auto t_end = std::chrono::steady_clock::now() + std::chrono::milliseconds(measure_total_ms);
+            const auto t_end = t0 + std::chrono::milliseconds(measure_total_ms);
             while (!stop_.load() && std::chrono::steady_clock::now() < t_end) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(spinup_poll_ms));
                 int v = 0;
@@ -255,17 +228,15 @@ void Detection::worker() {
         size_t gidx = static_cast<size_t>(-1);
         int measured_max = 0;
 
-        // try current mode first, then the alternate (0↔1) if no change
         int curMode = -1; (void)read_int_file(pwm_mode_path(pwm.path_pwm), curMode);
         int altMode = (curMode == 0) ? 1 : 0;
 
-        attempt_spinup(curMode, det, via_global, gidx, measured_max);
+        attempt(curMode, det, via_global, gidx, measured_max);
         if (!det) {
             LFC_LOGD("detection: pwm[%zu] no change in mode=%d, trying mode=%d", i, curMode, altMode);
-            attempt_spinup(altMode, det, via_global, gidx, measured_max);
+            attempt(altMode, det, via_global, gidx, measured_max);
         }
 
-        // restore duty/mode/enable
         phase_ = "restore";
         int restoreDuty = savedDuty_[i] >= 0 ? savedDuty_[i] : 0;
         Hwmon::setPercent(pwm, restoreDuty);
@@ -283,7 +254,6 @@ void Detection::worker() {
         LFC_LOGI("detection: pwm[%zu] peak_rpm=%d (mode tried: %d/%d)", i, measured_max, curMode, altMode);
     }
 
-    // final best-effort restore (in case of abort mid-loop)
     phase_ = "restore_all";
     for (size_t i = 0; i < snap_.pwms.size(); ++i) {
         if (savedDuty_[i] >= 0) Hwmon::setPercent(snap_.pwms[i], savedDuty_[i]);
