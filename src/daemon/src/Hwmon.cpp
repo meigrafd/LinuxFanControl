@@ -51,7 +51,7 @@ namespace lfc {
 
   std::optional<int> Hwmon::readTempC(const TempSensor& t) {
     int val = 0;
-    if (!read_int_file(t.path_input, val)) return std::nullopt;
+    if (!readInt(t.path_input, val)) return std::nullopt;
     return val / 1000; // assuming millidegree Celsius
   }
 
