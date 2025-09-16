@@ -1,122 +1,28 @@
-{
-  "id": "1",
-  "jsonrpc": "2.0",
-  "result": {
-    "data": [
-      {
-        "help": "Get active profile filename",
-        "name": "active.profile"
-      },
-      {
-        "help": "Load daemon config from disk",
-        "name": "config.load"
-      },
-      {
-        "help": "Save daemon config to disk; params:{config:object}",
-        "name": "config.save"
-      },
-      {
-        "help": "Set config keys; params:{key:..., value:...}",
-        "name": "config.set"
-      },
-      {
-        "help": "Request daemon restart",
-        "name": "daemon.restart"
-      },
-      {
-        "help": "Shutdown daemon gracefully",
-        "name": "daemon.shutdown"
-      },
-      {
-        "help": "Check/download latest release; params:{download:bool,target:string,repo?:\"owner/repo\"}",
-        "name": "daemon.update"
-      },
-      {
-        "help": "Abort detection",
-        "name": "detect.abort"
-      },
-      {
-        "help": "Return detection peak RPMs per PWM",
-        "name": "detect.results"
-      },
-      {
-        "help": "Start non-blocking detection",
-        "name": "detect.start"
-      },
-      {
-        "help": "Detection status/progress",
-        "name": "detect.status"
-      },
-      {
-        "help": "Disable automatic control",
-        "name": "engine.disable"
-      },
-      {
-        "help": "Enable automatic control",
-        "name": "engine.enable"
-      },
-      {
-        "help": "Disable control and clear profile",
-        "name": "engine.reset"
-      },
-      {
-        "help": "Basic engine status",
-        "name": "engine.status"
-      },
-      {
-        "help": "Counts of discovered devices",
-        "name": "hwmon.snapshot"
-      },
-      {
-        "help": "List fan tach inputs",
-        "name": "list.fan"
-      },
-      {
-        "help": "List profiles in profiles dir",
-        "name": "list.profiles"
-      },
-      {
-        "help": "List PWM outputs",
-        "name": "list.pwm"
-      },
-      {
-        "help": "List temperature sensors",
-        "name": "list.sensor"
-      },
-      {
-        "help": "Health check",
-        "name": "ping"
-      },
-      {
-        "help": "Delete profile file; params:{\"name\":\"...\"}",
-        "name": "profile.delete"
-      },
-      {
-        "help": "Import FanControl.Releases config; params:{\"path\":\"...\"}",
-        "name": "profile.import"
-      },
-      {
-        "help": "Load and apply profile by name; params:{\"name\":\"...\"}",
-        "name": "profile.load"
-      },
-      {
-        "help": "Write profile JSON; params:{\"name\":\"...\",\"profile\":{...}}",
-        "name": "profile.set"
-      },
-      {
-        "help": "List available RPC methods",
-        "name": "rpc.commands"
-      },
-      {
-        "help": "Return current SHM JSON blob",
-        "name": "telemetry.json"
-      },
-      {
-        "help": "RPC and daemon version",
-        "name": "version"
-      }
-    ],
-    "method": "rpc.commands",
-    "success": true
-  }
-}
+active.profile — Get active profile filename
+config.load — Load daemon config from disk
+config.save — Save daemon config to disk; params:{config:object}
+config.set — Set single key; params:{key:string, value:any}
+daemon.restart — Request daemon restart
+daemon.shutdown — Shutdown daemon gracefully
+daemon.update — Check/download latest release; params:{download?:bool,target?:string,repo?:"owner/repo"}
+detect.abort — Abort detection
+detect.results — Return detection peak RPMs per PWM
+detect.start — Start non-blocking detection
+detect.status — Detection status/progress
+engine.disable — Disable automatic control
+engine.enable — Enable automatic control
+engine.reset — Disable control and clear profile
+engine.status — Basic engine status
+hwmon.snapshot — Counts of discovered devices
+list.fan — List fan tach inputs
+list.profiles — List profiles in profiles dir
+list.pwm — List PWM outputs
+list.sensor — List temperature sensors
+ping — Health check
+profile.delete — Delete profile file; params:{name}
+profile.import — Import FanControl.Releases config; params:{path}
+profile.load — Load and apply profile by name; params:{name}
+profile.set — Write profile JSON; params:{name, profile}
+rpc.commands — List available RPC methods
+telemetry.json — Return current SHM JSON blob
+version — RPC and daemon version

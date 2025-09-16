@@ -15,6 +15,8 @@
 
 #include "Config.hpp"
 #include "Daemon.hpp"
+#include "RpcHandlers.hpp"
+#include "include/CommandRegistry.h"
 #include "UpdateChecker.hpp"
 #include "Version.hpp"
 
@@ -188,6 +190,17 @@ int main(int argc, char** argv) {
 
     if (cli.checkUpdate || cli.doUpdate) {
         return run_update_flow(cli);
+    }
+
+    if (cli.listCommands) {
+        auto reg = std::make_unique<lfc::CommandRegistry>();
+        lfc::Daemon dummy;
+        lfc::BindDaemonRpcCommands(dummy, *reg);
+
+        for (const auto& cmd : reg->list()) {
+            std::cout << cmd.name << "  —  " << cmd.help << "\n";
+        }
+        return 0;
     }
 
     ensure_dirs(cli.configPath, cli.profilesDir);

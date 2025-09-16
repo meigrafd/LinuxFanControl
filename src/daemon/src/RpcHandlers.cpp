@@ -1,6 +1,7 @@
 /*
  * Linux Fan Control — RPC handlers (implementation)
  * - Uniform responses: {"method":"...", "success":true/false, ...}
+ * - Includes config.set for engine.deltaC / engine.forceTickMs
  * (c) 2025 LinuxFanControl contributors
  */
 #include "RpcHandlers.hpp"
@@ -24,9 +25,15 @@ using nlohmann::json;
 namespace lfc {
 
 static inline std::string jstr(const std::string& s) {
-    std::string out; out.reserve(s.size() + 2); out.push_back('"');
-    for (char c : s) { if (c == '"' || c == '\\') out.push_back('\\'); out.push_back(c); }
-    out.push_back('"'); return out;
+    std::string out;
+    out.reserve(s.size() + 2);
+    out.push_back('"');
+    for (char c : s) {
+        if (c == '"' || c == '\\') out.push_back('\\');
+        out.push_back(c);
+    }
+    out.push_back('"');
+    return out;
 }
 
 static inline RpcResult ok(const char* method, const std::string& dataJson) {
@@ -51,14 +58,18 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
     });
 
     reg.registerMethod("version", "RPC and daemon version", [&](const RpcRequest&) -> RpcResult {
-        json j; j["daemon"] = "lfcd"; j["version"] = LFC_VERSION; j["rpc"] = 1;
+        json j;
+        j["daemon"] = "lfcd";
+        j["version"] = LFC_VERSION;
         return ok("version", j.dump());
     });
 
     reg.registerMethod("rpc.commands", "List available RPC methods", [&](const RpcRequest&) -> RpcResult {
         auto list = self.listRpcCommands();
         json arr = json::array();
-        for (const auto& c : list) arr.push_back({{"name", c.name}, {"help", c.help}});
+        for (const auto& c : list) {
+            arr.push_back({{"name", c.name}, {"help", c.help}});
+        }
         return ok("rpc.commands", arr.dump());
     });
 
@@ -79,6 +90,7 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         out["profiles"]["active"] = tmp.profiles.active;
         out["profiles"]["backups"] = tmp.profiles.backups;
         out["pidFile"] = tmp.pidFile;
+        // runtime engine knobs are exposed here too
         out["engine"]["deltaC"] = self.engineDeltaC();
         out["engine"]["forceTickMs"] = self.engineForceTickMs();
         return ok("config.load", out.dump());
@@ -89,6 +101,7 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         try { p = json::parse(rq.params.empty() ? "{}" : rq.params); }
         catch (...) { return err("config.save", -32602, "bad params"); }
         if (!p.contains("config") || !p["config"].is_object()) return err("config.save", -32602, "missing config");
+
         DaemonConfig nc = self.cfg();
         auto& jc = p["config"];
         if (jc.contains("log")) {
@@ -109,11 +122,18 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
             nc.profiles.active = jc["profiles"].value("active", nc.profiles.active);
             nc.profiles.backups = jc["profiles"].value("backups", nc.profiles.backups);
         }
-        if (jc.contains("pidFile")) nc.pidFile = jc.value("pidFile", nc.pidFile);
+        if (jc.contains("pidFile")) {
+            nc.pidFile = jc.value("pidFile", nc.pidFile);
+        }
 
+        // runtime-only engine knobs (not persisted by Config::Save unless du speicherst sie dort explizit)
         if (jc.contains("engine") && jc["engine"].is_object()) {
-            if (jc["engine"].contains("deltaC")) self.setEngineDeltaC(jc["engine"]["deltaC"].get<double>());
-            if (jc["engine"].contains("forceTickMs")) self.setEngineForceTickMs(jc["engine"]["forceTickMs"].get<int>());
+            if (jc["engine"].contains("deltaC") && jc["engine"]["deltaC"].is_number()) {
+                self.setEngineDeltaC(jc["engine"]["deltaC"].get<double>());
+            }
+            if (jc["engine"].contains("forceTickMs") && jc["engine"]["forceTickMs"].is_number_integer()) {
+                self.setEngineForceTickMs(jc["engine"]["forceTickMs"].get<int>());
+            }
         }
 
         std::string e;
@@ -122,26 +142,42 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         return ok("config.save", "{}");
     });
 
-    reg.registerMethod("config.set", "Set config keys; params:{key:..., value:...}", [&](const RpcRequest& rq) -> RpcResult {
+    reg.registerMethod("config.set", "Set single key; params:{key:string, value:any}", [&](const RpcRequest& rq) -> RpcResult {
         json p;
         try { p = json::parse(rq.params.empty() ? "{}" : rq.params); }
         catch (...) { return err("config.set", -32602, "bad params"); }
         if (!p.contains("key")) return err("config.set", -32602, "missing key");
+
         std::string key = p["key"].get<std::string>();
         json val = p.contains("value") ? p["value"] : json();
 
         DaemonConfig nc = self.cfg();
-        if (key == "log.debug") nc.log.debug = val.is_boolean() ? val.get<bool>() : nc.log.debug;
-        else if (key == "log.file") nc.log.file = val.is_string() ? val.get<std::string>() : nc.log.file;
-        else if (key == "rpc.host") nc.rpc.host = val.is_string() ? val.get<std::string>() : nc.rpc.host;
-        else if (key == "rpc.port") nc.rpc.port = val.is_number_integer() ? val.get<int>() : nc.rpc.port;
-        else if (key == "shm.path") nc.shm.path = val.is_string() ? val.get<std::string>() : nc.shm.path;
-        else if (key == "profiles.dir") nc.profiles.dir = val.is_string() ? val.get<std::string>() : nc.profiles.dir;
-        else if (key == "profiles.active") nc.profiles.active = val.is_string() ? val.get<std::string>() : nc.profiles.active;
-        else if (key == "pidFile") nc.pidFile = val.is_string() ? val.get<std::string>() : nc.pidFile;
-        else if (key == "engine.deltaC") { if (val.is_number()) self.setEngineDeltaC(val.get<double>()); return ok("config.set", "{}"); }
-        else if (key == "engine.forceTickMs") { if (val.is_number_integer()) self.setEngineForceTickMs(val.get<int>()); return ok("config.set", "{}"); }
-        else return err("config.set", -32602, "unknown key");
+
+        if (key == "log.debug") {
+            if (val.is_boolean()) nc.log.debug = val.get<bool>();
+        } else if (key == "log.file") {
+            if (val.is_string()) nc.log.file = val.get<std::string>();
+        } else if (key == "rpc.host") {
+            if (val.is_string()) nc.rpc.host = val.get<std::string>();
+        } else if (key == "rpc.port") {
+            if (val.is_number_integer()) nc.rpc.port = val.get<int>();
+        } else if (key == "shm.path") {
+            if (val.is_string()) nc.shm.path = val.get<std::string>();
+        } else if (key == "profiles.dir") {
+            if (val.is_string()) nc.profiles.dir = val.get<std::string>();
+        } else if (key == "profiles.active") {
+            if (val.is_string()) nc.profiles.active = val.get<std::string>();
+        } else if (key == "pidFile") {
+            if (val.is_string()) nc.pidFile = val.get<std::string>();
+        } else if (key == "engine.deltaC") {
+            if (val.is_number()) self.setEngineDeltaC(val.get<double>());
+            return ok("config.set", "{}");
+        } else if (key == "engine.forceTickMs") {
+            if (val.is_number_integer()) self.setEngineForceTickMs(val.get<int>());
+            return ok("config.set", "{}");
+        } else {
+            return err("config.set", -32602, "unknown key");
+        }
 
         std::string e;
         if (!Config::Save(self.configPath(), nc, e)) return err("config.set", -32003, "config save failed");
@@ -211,7 +247,8 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
     });
 
     reg.registerMethod("active.profile", "Get active profile filename", [&](const RpcRequest&) -> RpcResult {
-        json d; d["active"] = self.cfg().profiles.active;
+        json d;
+        d["active"] = self.cfg().profiles.active;
         return ok("active.profile", d.dump());
     });
 
@@ -234,7 +271,11 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
 
     reg.registerMethod("detect.status", "Detection status/progress", [&](const RpcRequest&) -> RpcResult {
         auto st = self.detectionStatus();
-        json d; d["running"] = st.running; d["current_index"] = st.currentIndex; d["total"] = st.total; d["phase"] = st.phase;
+        json d;
+        d["running"] = st.running;
+        d["current_index"] = st.currentIndex;
+        d["total"] = st.total;
+        d["phase"] = st.phase;
         return ok("detect.status", d.dump());
     });
 
@@ -289,7 +330,10 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
     // hwmon / telemetry
     reg.registerMethod("hwmon.snapshot", "Counts of discovered devices", [&](const RpcRequest&) -> RpcResult {
         const auto& hw = self.hwmon();
-        json d; d["pwms"] = hw.pwms.size(); d["fans"] = hw.fans.size(); d["temps"] = hw.temps.size();
+        json d;
+        d["pwms"] = hw.pwms.size();
+        d["fans"] = hw.fans.size();
+        d["temps"] = hw.temps.size();
         return ok("hwmon.snapshot", d.dump());
     });
 
@@ -327,11 +371,13 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         try {
             p = json::parse(rq.params.empty() ? "{}" : rq.params);
             if (p.contains("repo") && p["repo"].is_string()) {
-                auto s = p["repo"].get<std::string>(); auto k = s.find('/');
+                auto s = p["repo"].get<std::string>();
+                auto k = s.find('/');
                 if (k != std::string::npos) { owner = s.substr(0, k); repo = s.substr(k + 1); }
             }
         } catch (...) {}
-        ReleaseInfo rel; std::string e;
+        ReleaseInfo rel;
+        std::string e;
         if (!UpdateChecker::fetchLatest(owner, repo, rel, e)) return err("daemon.update", -32020, e);
         int cmp = UpdateChecker::compareVersions(LFC_VERSION, rel.tag);
         json out;
@@ -341,7 +387,9 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         out["html"] = rel.htmlUrl;
         out["updateAvailable"] = (cmp < 0);
         out["assets"] = json::array();
-        for (auto& a : rel.assets) out["assets"].push_back({{"name", a.name}, {"url", a.url}, {"type", a.type}, {"size", a.size}});
+        for (auto& a : rel.assets) {
+            out["assets"].push_back({{"name", a.name}, {"url", a.url}, {"type", a.type}, {"size", a.size}});
+        }
 
         bool dl = p.value("download", false);
         if (dl) {
@@ -349,8 +397,13 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
             if (target.empty()) return err("daemon.update", -32602, "missing target");
             std::string url;
             for (const auto& a : rel.assets) {
-                std::string n = a.name; for (auto& c : n) c = (char)tolower(c);
-                if (n.find("linux") != std::string::npos && (n.find("x86_64") != std::string::npos || n.find("amd64") != std::string::npos)) { url = a.url; break; }
+                std::string n = a.name;
+                for (auto& c : n) c = static_cast<char>(tolower(c));
+                if (n.find("linux") != std::string::npos &&
+                    (n.find("x86_64") != std::string::npos || n.find("amd64") != std::string::npos)) {
+                    url = a.url;
+                    break;
+                }
             }
             if (url.empty() && !rel.assets.empty()) url = rel.assets[0].url;
             if (url.empty()) return err("daemon.update", -32021, "no assets");
