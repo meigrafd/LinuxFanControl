@@ -119,7 +119,7 @@ newgrp lfc
 ### FanControl.Release Profil importieren
 ```bash
 printf '%s\n' \
-'{"jsonrpc":"2.0","id":1,"method":"profile.import","params":{"path":"/path/to/userConfig.json"}}' \
+'{"jsonrpc":"2.0","id":1,"method":"profile.importAs","params":{"path":"/pfad/zur/userConfig.json","name":"Default"}}' \
 | nc 127.0.0.1 8777 | jq
 ```
 ### lfcd Engine aktivieren

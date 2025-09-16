@@ -14,13 +14,13 @@ engine.reset  —  Disable control and clear profile
 engine.status  —  Basic engine status
 hwmon.snapshot  —  Counts of discovered devices
 list.fan  —  List fan tach inputs
-list.profiles  —  List profiles (names only) in profiles dir
 list.pwm  —  List PWM outputs
 list.sensor  —  List temperature sensors with current values
 ping  —  Health check
 profile.delete  —  Delete profile file; params:{name}
 profile.getActive  —  Get active profile NAME (no extension)
 profile.import  —  Import FanControl.Releases config; params:{path}
+profile.importAs  —  Import FanControl.Releases and save; params:{path,name}
 profile.load  —  Load and apply profile by name; params:{name}
 profile.set  —  Write profile JSON; params:{name, profile}
 rpc.commands  —  List available RPC methods
