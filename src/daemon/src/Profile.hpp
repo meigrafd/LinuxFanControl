@@ -17,30 +17,37 @@ enum class MixFunction {
     Avg = 1
 };
 
+enum class SourceKind {
+    Table = 0,
+    Trigger = 1
+};
+
 struct CurvePoint {
     double tempC {0.0};
     int    percent {0}; // 0..100
 };
 
 struct SourceSettings {
-    int  minPercent   {20};   // clamp lower bound
-    int  maxPercent   {100};  // clamp upper bound
-    bool stopBelowMin {false};
-    double hysteresisC {0.0}; // simple temp hysteresis guard (°C)
-    int  spinupPercent {0};   // optional spin-up duty
-    int  spinupMs      {0};   // optional spin-up duration
+    int    minPercent   {20};
+    int    maxPercent   {100};
+    bool   stopBelowMin {false};
+    double hysteresisC  {0.0};
+    int    spinupPercent{0};
+    int    spinupMs     {0};
 };
 
 struct SourceCurve {
-    std::vector<std::string> tempPaths; // hwmon temp*_input absolute paths
-    std::vector<CurvePoint>   points;    // piecewise linear curve
-    SourceSettings            settings;
+    std::string                 label;     // optional display name of the source/curve
+    SourceKind                  kind{SourceKind::Table};
+    std::vector<std::string>    tempPaths; // hwmon temp*_input absolute paths
+    std::vector<CurvePoint>     points;    // piecewise linear curve
+    SourceSettings              settings;
 };
 
 struct Rule {
-    std::string              pwmPath;  // hwmon pwm path
-    std::vector<SourceCurve> sources;  // one-or-many sources feeding this PWM
-    MixFunction              mixFn {MixFunction::Max}; // aggregation across sources
+    std::string              pwmPath;   // hwmon pwm path
+    std::vector<SourceCurve> sources;   // one-or-many sources feeding this PWM
+    MixFunction              mixFn {MixFunction::Max};
 };
 
 struct Profile {
