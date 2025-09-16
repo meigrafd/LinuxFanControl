@@ -77,7 +77,7 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
     reg.registerMethod("version", "RPC and daemon version", [&](const RpcRequest&) -> RpcResult {
         json j;
         j["daemon"] = "lfcd";
-        j["version"] = LFC_VERSION;
+        j["version"] = LFCD_VERSION;
         j["rpc"] = 1;
         return ok("version", j.dump());
     });
@@ -91,7 +91,7 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         return ok("rpc.commands", arr.dump());
     });
 
-    // --- config (Mapping auf neue flache DaemonConfig, aber JSON wie gestern) ---
+    // --- config (Mapping auf flache DaemonConfig, JSON wie bisher strukturiert) ---
 
     reg.registerMethod("config.load", "Load daemon config from disk", [&](const RpcRequest&) -> RpcResult {
         std::string e;
@@ -100,7 +100,7 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
 
         json out;
         out["log"]["file"]           = tmp.logfile;
-        out["log"]["maxBytes"]       = 5ull * 1024ull * 1024ull; // placeholder (rotation not implemented)
+        out["log"]["maxBytes"]       = 5ull * 1024ull * 1024ull; // placeholder
         out["log"]["rotateCount"]    = 3;                        // placeholder
         out["log"]["debug"]          = tmp.debug;
 
@@ -133,12 +133,8 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         auto& jc = p["config"];
 
         if (jc.contains("log")) {
-            if (jc["log"].contains("file") && jc["log"]["file"].is_string()) {
-                nc.logfile = jc["log"]["file"].get<std::string>();
-            }
-            if (jc["log"].contains("debug") && jc["log"]["debug"].is_boolean()) {
-                nc.debug = jc["log"]["debug"].get<bool>();
-            }
+            if (jc["log"].contains("file") && jc["log"]["file"].is_string()) nc.logfile = jc["log"]["file"].get<std::string>();
+            if (jc["log"].contains("debug") && jc["log"]["debug"].is_boolean()) nc.debug = jc["log"]["debug"].get<bool>();
         }
         if (jc.contains("rpc")) {
             if (jc["rpc"].contains("host") && jc["rpc"]["host"].is_string()) nc.host = jc["rpc"]["host"].get<std::string>();
@@ -211,7 +207,6 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
             v = clampd(v, 0.0, 10.0);
             nc.deltaC = v;
             self.setEngineDeltaC(v);
-            // save below
         } else if (key == "engine.forceTickMs") {
             int v = self.engineForceTickMs();
             if (val.is_number_integer()) v = val.get<int>();
@@ -449,7 +444,7 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
 
     reg.registerMethod("daemon.update", "Check/download latest release; params:{download?:bool,target?:string,repo?:\"owner/repo\"}", [&](const RpcRequest& rq) -> RpcResult {
         std::string owner = "meigrafd", repo = "LinuxFanControl";
-        json p = json::parse(rq.params.empty() ? "{}" : rq.params, nullptr, false);
+        json p = json::parse(rq.params, nullptr, false);
         if (!p.is_discarded() && p.contains("repo") && p["repo"].is_string()) {
             auto s = p["repo"].get<std::string>();
             auto k = s.find('/');
@@ -459,10 +454,10 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         ReleaseInfo rel;
         std::string e;
         if (!UpdateChecker::fetchLatest(owner, repo, rel, e)) return err("daemon.update", -32020, e);
-        int cmp = UpdateChecker::compareVersions(LFC_VERSION, rel.tag);
+        int cmp = UpdateChecker::compareVersions(LFCD_VERSION, rel.tag);
 
         json out;
-        out["current"] = LFC_VERSION;
+        out["current"] = LFCD_VERSION;
         out["latest"] = rel.tag;
         out["name"] = rel.name;
         out["html"] = rel.htmlUrl;

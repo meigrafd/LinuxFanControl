@@ -6,7 +6,9 @@ Modernes, schnelles Fan Control mit GUI im Stil von [FanControl.Release](https:/
 
 ## Funktionsumfang
 - Hintergrundprozess mit der Logik von GUI getrennt, damit die Lüftersteuerung auch ohne GUI läuft.
-  - Einbindung von libsensors + /sys/class/hwmon um möglichst alle Lüfter und Sensoren zu erkennen.
+  - Backends:  
+    - `sysfs` (lesen & schreiben; bevorzugt)  
+    - `libsensors` (optional, nur lesen; aktiviert wenn eingecompiliert)  
   - Hybrid Protokoll: JSON-RPC 2.0 für Config/Control. Telemetry läuft über POSIX Shared Memory (SHM) Ringbuffer - deutlich performanter, kein RPC-Polling.
 - Automatische Erkennung und Kalibrierung der verfügbaren Sensoren und Lüfter.
 - Steuerlogik: Mix, Trigger oder Graph.
@@ -120,6 +122,12 @@ Diese besonderen ENV Einstellungen sind auch in der Konfigurationsdatei `daemon.
   - Bereich: 100..10000 (ms)
   - Sicherheits-Intervall: Spätestens alle forceTickMs wird ein Tick erzwungen, auch ohne Temperaturänderung.
 
+## Backends
+- sysfs: Standard; wird bevorzugt. Pfade werden beim Scan kanonisiert (zB. /sys/devices/platform/.../hwmon/hwmon8/temp1_input).
+- libsensors (optional): Wenn mitgebaut, kann sensorsBackend auf libsensors gestellt werden.
+  - Temperatur-/Lüftereinträge erscheinen als Pseudo-Pfade libsensors:<chip>:<name>.
+  - PWM-Schreiben erfolgt weiterhin über sysfs (libsensors liefert keine write-fähigen PWM-Nodes).
+  
 ## Debug
 Test JSON-RPC
 ```bash
