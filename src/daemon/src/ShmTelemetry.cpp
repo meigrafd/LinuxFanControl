@@ -30,7 +30,7 @@ void ShmTelemetry::close() {
         ::munmap(ptr_, cap_);
         ptr_ = nullptr;
     }
-    if (fd_{-1} != -1) {
+    if (fd_ != -1) {
         ::close(fd_);
         fd_ = -1;
     }
@@ -41,7 +41,7 @@ void ShmTelemetry::close() {
 bool ShmTelemetry::appendJsonLine(const std::string& jsonLine) {
     if (!ptr_ || cap_ == 0) return false;
     std::size_t n = jsonLine.size();
-    if (n + 2 >= cap_) n = cap_ - 2; // leave room for '\n' and '\0'
+    if (n + 2 >= cap_) n = cap_ - 2;
     std::memcpy(ptr_, jsonLine.data(), n);
     ptr_[n] = '\n';
     ptr_[n + 1] = '\0';

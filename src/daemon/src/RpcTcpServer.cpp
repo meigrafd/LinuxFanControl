@@ -5,7 +5,7 @@
  * (c) 2025 LinuxFanControl contributors
  */
 #include "RpcTcpServer.hpp"
-#include "CommandRegistry.hpp"
+#include "include/CommandRegistry.h"
 #include "Daemon.hpp"
 #include "Log.hpp"
 
