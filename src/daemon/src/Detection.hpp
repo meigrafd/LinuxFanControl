@@ -1,7 +1,7 @@
 /*
  * Linux Fan Control — Detection (header)
  * - Non-blocking PWM-to-fan detection worker
- * - Saves/restores pwmN_enable and duty
+ * - Saves/restores pwmN_enable, pwmN_mode and duty
  * - Captures peak RPM per PWM
  * (c) 2025 LinuxFanControl contributors
  */
@@ -35,7 +35,6 @@ public:
     Status status() const;
     std::vector<int> results() const;
 
-    // Needed by Daemon.cpp (used in detectionStart())
     bool running() const { return running_.load(); }
 
 private:
@@ -54,11 +53,12 @@ private:
     // saved state per PWM
     std::vector<int> savedDuty_;
     std::vector<int> savedEnable_;
+    std::vector<int> savedMode_;
 
     // results
     std::vector<int> peakRpm_;
 
-    // avoid matching the same tach twice globally
+    // avoid matching same tach twice globally
     std::vector<bool> claimedFans_;
 };
 
