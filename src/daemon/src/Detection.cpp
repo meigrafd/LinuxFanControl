@@ -125,12 +125,6 @@ std::vector<int> Detection::results() const {
 }
 
 void Detection::worker() {
-    const int cfg_.settleMs = 250;
-    const int cfg_.spinupCheckMs = 7000;
-    const int cfg_.spinupPollMs  = 100;
-    const int cfg_.measureTotalMs = 10000;
-    const int cfg_.rpmDeltaThresh = 30;
-
     for (size_t i = 0; i < snap_.pwms.size(); ++i) {
         savedDuty_[i] = read_pwm_percent_from_sysfs(snap_.pwms[i].path_pwm);
         int en = -1; read_int_file(pwm_enable_path(snap_.pwms[i].path_pwm), en);
