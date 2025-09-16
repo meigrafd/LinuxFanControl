@@ -323,9 +323,9 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         return ok("profile.delete", "{}");
     });
 
-    reg.registerMethod("active.profile", "Get active profile NAME (no extension)", [&](const RpcRequest&) -> RpcResult {
+    reg.registerMethod("profile.getActive", "Get active profile NAME (no extension)", [&](const RpcRequest&) -> RpcResult {
         json d; d["active"] = self.cfg().profileName; // name only
-        return ok("active.profile", d.dump());
+        return ok("profile.getActive", d.dump());
     });
 
     reg.registerMethod("list.profiles", "List profiles (names only) in profiles dir", [&](const RpcRequest&) -> RpcResult {

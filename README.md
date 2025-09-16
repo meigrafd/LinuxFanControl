@@ -125,7 +125,7 @@ Diese besonderen ENV Einstellungen sind auch in der Konfigurationsdatei `daemon.
 ## Backends
 - sysfs: Standard; wird bevorzugt. Pfade werden beim Scan kanonisiert (zB. /sys/devices/platform/.../hwmon/hwmon8/temp1_input).
 - libsensors (optional): Wenn mitgebaut, kann sensorsBackend auf libsensors gestellt werden.
-  - Temperatur-/Lüftereinträge erscheinen als Pseudo-Pfade libsensors: `<chip>:<name>`.
+  - Temperatur-/Lüftereinträge erscheinen als Pseudo-Pfade `libsensors:<chip>:<name>`.
   - PWM-Schreiben erfolgt weiterhin über sysfs (libsensors liefert keine write-fähigen PWM-Nodes).
   
 ## Debug
