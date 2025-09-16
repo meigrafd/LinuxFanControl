@@ -4,6 +4,7 @@
  * - Includes config.set for engine.{deltaC,forceTickMs,tickMs}
  * - list.sensor returns detailed sensor info (path, label, value, unit) with 2 decimals
  * - FanControlImport + UpdateChecker wired
+ * - Profile handling: config stores NAME ONLY (no ".json"); RPC accepts name or "*.json"
  * (c) 2025 LinuxFanControl contributors
  */
 #include "RpcHandlers.hpp"
@@ -66,6 +67,23 @@ static inline std::string fmt2(double v) {
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 static double clampd(double v, double lo, double hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
+// ---------- profile name/file helpers ----------
+
+// Strip trailing ".json" (case-insensitive). Return pure profile name.
+static std::string to_profile_name(std::string s) {
+    if (s.size() >= 5) {
+        std::string tail = s.substr(s.size() - 5);
+        for (char& c : tail) c = static_cast<char>(std::tolower(c));
+        if (tail == ".json") s.erase(s.size() - 5);
+    }
+    return s;
+}
+
+// Build full path for a given profile *name* (without extension).
+static std::filesystem::path file_for_profile(const std::string& dir, const std::string& name) {
+    return std::filesystem::path(dir) / (name + ".json");
+}
+
 // ---------- command bindings ----------
 
 void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
@@ -91,7 +109,7 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         return ok("rpc.commands", arr.dump());
     });
 
-    // --- config (Mapping auf flache DaemonConfig, JSON wie bisher strukturiert) ---
+    // --- config (flat DaemonConfig; JSON grouped for compatibility) ---
 
     reg.registerMethod("config.load", "Load daemon config from disk", [&](const RpcRequest&) -> RpcResult {
         std::string e;
@@ -110,7 +128,8 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         out["shm"]["path"]           = tmp.shmPath;
 
         out["profiles"]["dir"]       = tmp.profilesDir;
-        out["profiles"]["active"]    = tmp.profileName;
+        // IMPORTANT: store only NAME (no ".json")
+        out["profiles"]["active"]    = tmp.profileName;          // already name-only
         out["profiles"]["backups"]   = true; // placeholder
 
         out["pidFile"]               = tmp.pidfile;
@@ -144,8 +163,13 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
             if (jc["shm"].contains("path") && jc["shm"]["path"].is_string()) nc.shmPath = jc["shm"]["path"].get<std::string>();
         }
         if (jc.contains("profiles")) {
-            if (jc["profiles"].contains("dir") && jc["profiles"]["dir"].is_string()) nc.profilesDir = jc["profiles"]["dir"].get<std::string>();
-            if (jc["profiles"].contains("active") && jc["profiles"]["active"].is_string()) nc.profileName = jc["profiles"]["active"].get<std::string>();
+            if (jc["profiles"].contains("dir") && jc["profiles"]["dir"].is_string()) {
+                nc.profilesDir = jc["profiles"]["dir"].get<std::string>();
+            }
+            if (jc["profiles"].contains("active") && jc["profiles"]["active"].is_string()) {
+                // Normalize to NAME (strip ".json" if user supplied a filename)
+                nc.profileName = to_profile_name(jc["profiles"]["active"].get<std::string>());
+            }
         }
         if (jc.contains("pidFile") && jc["pidFile"].is_string()) {
             nc.pidfile = jc["pidFile"].get<std::string>();
@@ -197,7 +221,7 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         } else if (key == "profiles.dir") {
             if (val.is_string()) nc.profilesDir = val.get<std::string>();
         } else if (key == "profiles.active") {
-            if (val.is_string()) nc.profileName = val.get<std::string>();
+            if (val.is_string()) nc.profileName = to_profile_name(val.get<std::string>());
         } else if (key == "pidFile") {
             if (val.is_string()) nc.pidfile = val.get<std::string>();
         } else if (key == "engine.deltaC") {
@@ -251,13 +275,14 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         json p = json::parse(rq.params, nullptr, false);
         if (p.is_discarded() || !p.contains("name")) return err("profile.load", -32602, "missing name");
 
-        std::string name = p["name"].get<std::string>();
-        std::filesystem::path full = std::filesystem::path(self.cfg().profilesDir) / name;
+        // Accept name or "*.json", but store name-only in config
+        std::string nameOnly = to_profile_name(p["name"].get<std::string>());
+        auto full = file_for_profile(self.cfg().profilesDir, nameOnly);
         if (!std::filesystem::exists(full)) return err("profile.load", -32004, "profile not found");
         if (!self.applyProfileFile(full.string())) return err("profile.load", -32005, "invalid profile");
 
         DaemonConfig nc = self.cfg();
-        nc.profileName = name;
+        nc.profileName = nameOnly; // store name only
         std::string serr;
         (void)saveDaemonConfig(nc, self.configPath(), &serr);
         self.setCfg(nc);
@@ -270,10 +295,10 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         json p = json::parse(rq.params, nullptr, false);
         if (p.is_discarded() || !p.contains("name") || !p.contains("profile")) return err("profile.set", -32602, "missing name/profile");
 
-        std::string name = p["name"].get<std::string>();
+        std::string nameOnly = to_profile_name(p["name"].get<std::string>());
         json prof = p["profile"];
 
-        std::filesystem::path path = std::filesystem::path(self.cfg().profilesDir) / name;
+        auto path = file_for_profile(self.cfg().profilesDir, nameOnly);
         std::error_code ec;
         std::filesystem::create_directories(path.parent_path(), ec);
         if (ec) return err("profile.set", -32006, ec.message());
@@ -290,24 +315,27 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         json p = json::parse(rq.params, nullptr, false);
         if (p.is_discarded() || !p.contains("name")) return err("profile.delete", -32602, "missing name");
 
-        std::filesystem::path full = std::filesystem::path(self.cfg().profilesDir) / p["name"].get<std::string>();
+        std::string nameOnly = to_profile_name(p["name"].get<std::string>());
+        auto full = file_for_profile(self.cfg().profilesDir, nameOnly);
         std::error_code ec;
         bool okrm = std::filesystem::remove(full, ec);
         if (!okrm || ec) return err("profile.delete", -32007, "delete failed");
         return ok("profile.delete", "{}");
     });
 
-    reg.registerMethod("active.profile", "Get active profile filename", [&](const RpcRequest&) -> RpcResult {
-        json d; d["active"] = self.cfg().profileName;
+    reg.registerMethod("active.profile", "Get active profile NAME (no extension)", [&](const RpcRequest&) -> RpcResult {
+        json d; d["active"] = self.cfg().profileName; // name only
         return ok("active.profile", d.dump());
     });
 
-    reg.registerMethod("list.profiles", "List profiles in profiles dir", [&](const RpcRequest&) -> RpcResult {
+    reg.registerMethod("list.profiles", "List profiles (names only) in profiles dir", [&](const RpcRequest&) -> RpcResult {
         json arr = json::array();
         std::error_code ec;
         for (auto& e : std::filesystem::directory_iterator(self.cfg().profilesDir, ec)) {
             if (!e.is_regular_file()) continue;
-            if (e.path().extension() == ".json") arr.push_back(e.path().filename().string());
+            if (e.path().extension() == ".json") {
+                arr.push_back(e.path().stem().string()); // name only
+            }
         }
         return ok("list.profiles", arr.dump());
     });
