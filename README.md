@@ -4,10 +4,7 @@ Modernes, schnelles Fan Control mit GUI im Stil von [FanControl.Release](https:/
 - Hintergrundprozess mit der Logik von GUI getrennt, damit die Lüftersteuerung auch ohne GUI läuft.
   - Einbindung von libsensors + /sys/class/hwmon um möglichst alle Lüfter und Sensoren zu erkennen.
   - Hybrid Protokoll: JSON-RPC 2.0 für Config/Control. Telemetry läuft über POSIX Shared Memory (SHM) Ringbuffer - deutlich performanter, kein RPC-Polling.
-- Multilanguage support über i18n json Dateien.
-- Theme support.
 - Automatische Erkennung und Kalibrierung der verfügbaren Sensoren und Lüfter.
-- Nicht relevante Sensoren können ausgeblendet werden.
 - Steuerung über Mix, Trigger oder Graph.
 - FanControl.Release Config importierbar.
 
@@ -17,60 +14,15 @@ Modernes, schnelles Fan Control mit GUI im Stil von [FanControl.Release](https:/
 - `--logfile PATH` default `/var/log/lfc/daemon.log` fallback `/tmp/daemon_lfc.log`
 - `--profiles DIR` default `~/.config/LinuxFanControl/profiles/`
 - `--profile NAME` default `Default.json`
-- `--cmds [all|rpc|shm]`
 - `--host` for RPC server, default `127.0.0.1`
 - `--port` default `8777`
 - `--shm_path` default `/dev/shm/lfc_telemetry`
 - `--foreground`
 - `--debug`
+- `--cmds`
 - `--check-update`
 - `--update`
 - `--update-target PATH`
-
-Test JSON-RPC
-```bash
-curl -s -X POST http://127.0.0.1:8777/rpc \
-     -H 'Content-Type: application/json' \
-     -d '{"jsonrpc":"2.0","id":1,"method":"rpc.list"}'
-```
-Batch
-```bash
-curl -s -X POST http://127.0.0.1:8777/rpc \
-     -H 'Content-Type: application/json' \
-     -d '[{"jsonrpc":"2.0","id":"a","method":"rpc.list"},
-          {"jsonrpc":"2.0","id":"b","method":"engineStart","params":{}},
-          {"jsonrpc":"2.0","method":"engineStop"}]' | jq
-```
-Enumerate
-```bash
-curl -s http://127.0.0.1:8777/rpc \
-     -H 'content-type: application/json' \
-     -d '{"jsonrpc":"2.0","id":2,"method":"enumerate"}' | jq
-```
-JSON-RPC Test per netcat (eine Zeile pro Request):
-```bash
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"rpc.version"}' | nc 127.0.0.1 8777
-printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"enumerate"}'   | nc 127.0.0.1 8777
-printf '%s\n' '[{"jsonrpc":"2.0","id":"a","method":"rpc.list"},{"jsonrpc":"2.0","method":"engineStart"}]' | nc 127.0.0.1 8777
-```
-SHM lesen (einfacher Dumper):
-```bash
-python3 - <<'PY'
-import mmap, posix_ipc, struct, sys, time
-name="/lfc_telemetry"
-slotSize=1024
-capacity=512
-shm=posix_ipc.SharedMemory(name)
-m=mmap.mmap(shm.fd, struct.calcsize("8sIIIII")+slotSize*capacity)
-shm.close_fd()
-hdr=m.read(8+4*5)
-magic,ver,cap,ss,wi,_=struct.unpack("8sIIIII",hdr)
-print("magic",magic,"ver",ver,"cap",cap,"ss",ss,"wi",wi)
-m.seek(8+4*5)
-for i in range(10):
-    print(m.read(ss).split(b'\0',1)[0].decode(errors='ignore').strip())
-PY
-```
 
 ## Install
 ### Installiere je nach Distribution:
@@ -151,3 +103,67 @@ newgrp lfc
 - Versionierung & Backups: Beim Speichern wird eine Kopie `config_YYYYMMDD_HHMMSS.bak.json` erzeugt.
 - Sprachdateien (erweiterbar): `Locales/en.json`, `Locales/de.json`
 - Themes (erweiterbar): `Themes/default.json`
+
+##  CPU-Load Optimization:
+- Run engine ticks at a steady cadence (default 25 ms)
+- Use steady_clock and sleep the remaining budget per cycle
+- Keeps RPC responsive; avoids busy-spin when idle
+- Allow override via env (e.g. LFC_TICK_MS=50) without Config changes.
+
+## ENV
+- LFC_TICK_MS
+  - Standard: 25
+  - Bereich: 5..1000 (ms)
+  - Takt des Mainloops (Engine tick()-Frequenz). Höher = weniger CPU-Last, träger; niedriger = reaktiver.
+- LFC_DELTA_C
+  - Standard: 0.5 (°C) • Bereich: 0.0..10.0
+  - Temperatur-Schwellwert für Regel-Ticks: engine.tick() läuft nur, wenn mind. ein Sensor sich um ≥ Delta geändert hat (Detection ausgenommen). Senkt Leerlauf-CPU-Last.
+- LFC_FORCE_TICK_MS
+  - Standard: 1000 (ms) • Bereich: 100..10000
+  - Sicherheits-Intervall: Spätestens alle forceTickMs wird ein Tick erzwungen, auch ohne Temperaturänderung.
+
+## Debug
+Test JSON-RPC
+```bash
+curl -s -X POST http://127.0.0.1:8777/rpc \
+     -H 'Content-Type: application/json' \
+     -d '{"jsonrpc":"2.0","id":1,"method":"rpc.commands"}'
+```
+Batch
+```bash
+curl -s -X POST http://127.0.0.1:8777/rpc \
+     -H 'Content-Type: application/json' \
+     -d '[{"jsonrpc":"2.0","id":"a","method":"rpc.commands"},
+          {"jsonrpc":"2.0","id":"b","method":"engine.start","params":{}},
+          {"jsonrpc":"2.0","method":"engine.stop"}]' | jq
+```
+Enumerate
+```bash
+curl -s http://127.0.0.1:8777/rpc \
+     -H 'content-type: application/json' \
+     -d '{"jsonrpc":"2.0","id":2,"method":"telemetry.json"}' | jq
+```
+JSON-RPC Test per netcat (eine Zeile pro Request):
+```bash
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"version"}' | nc 127.0.0.1 8777
+printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"telemetry.json"}'   | nc 127.0.0.1 8777
+printf '%s\n' '[{"jsonrpc":"2.0","id":"a","method":"rpc.commands"},{"jsonrpc":"2.0","method":"engine.start"}]' | nc 127.0.0.1 8777
+```
+SHM lesen (einfacher Dumper):
+```bash
+python3 - <<'PY'
+import mmap, posix_ipc, struct, sys, time
+name="/lfc_telemetry"
+slotSize=1024
+capacity=512
+shm=posix_ipc.SharedMemory(name)
+m=mmap.mmap(shm.fd, struct.calcsize("8sIIIII")+slotSize*capacity)
+shm.close_fd()
+hdr=m.read(8+4*5)
+magic,ver,cap,ss,wi,_=struct.unpack("8sIIIII",hdr)
+print("magic",magic,"ver",ver,"cap",cap,"ss",ss,"wi",wi)
+m.seek(8+4*5)
+for i in range(10):
+    print(m.read(ss).split(b'\0',1)[0].decode(errors='ignore').strip())
+PY
+```

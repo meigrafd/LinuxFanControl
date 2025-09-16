@@ -27,6 +27,7 @@ add_executable(lfcd
   ${SRC_DIR}/FanControlImport.cpp
   ${SRC_DIR}/UpdateChecker.cpp
   ${SRC_DIR}/RpcTcpServer.cpp
+  ${SRC_DIR}/RpcHandlers.cpp
   ${SRC_DIR}/Hwmon.cpp
   ${SRC_DIR}/ShmTelemetry.cpp
   ${SRC_DIR}/Engine.cpp
@@ -45,7 +46,6 @@ if(LIBRT)
 endif()
 
 find_package(CURL REQUIRED)
-
 if(CURL_FOUND)
   message(STATUS "libcurl include: ${CURL_INCLUDE_DIRS}")
   message(STATUS "libcurl libs   : ${CURL_LIBRARIES}")
