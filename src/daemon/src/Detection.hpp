@@ -70,8 +70,6 @@ private:
 
     // avoid matching same tach twice globally
     std::vector<bool> claimedFans_;
-
-    std::thread thr_;
 };
 
 } // namespace lfc
