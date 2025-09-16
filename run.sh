@@ -10,7 +10,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="/tmp"
 
-# auto-detect daemon binary
+# Auto-detect daemon binary
 detect_daemon() {
     local candidates=(
         "${ROOT}/build/lfcd"

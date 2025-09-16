@@ -1,11 +1,13 @@
 /*
  * Linux Fan Control — Daemon (implementation)
+ * - Uses Config.cpp for all config helpers (no duplicates here)
  * (c) 2025 LinuxFanControl contributors
  */
 #include "Daemon.hpp"
 #include "RpcHandlers.hpp"
 #include "Hwmon.hpp"
 #include "Log.hpp"
+#include "Config.hpp"
 
 #include <filesystem>
 #include <thread>
@@ -60,13 +62,6 @@ void Daemon::removePidFile() {
 bool Daemon::init(DaemonConfig& cfg, bool /*debugCli*/, const std::string& cfgPath, bool /*foreground*/) {
     cfg_ = cfg;
     configPath_ = cfgPath;
-
-    // logger target
-    if (!cfg_.logfile.empty()) {
-        std::string dir;
-        if (file_parent_dir(cfg_.logfile, dir)) ensureDir(dir);
-        Logger::instance().configure(cfg_.logfile, 5 * 1024 * 1024, 3, cfg_.debug);
-    }
 
     // hwmon scan
     hwmon_ = Hwmon::scan();
@@ -146,8 +141,8 @@ bool Daemon::applyProfileIfValid(const std::string& profilePath) {
 // detection proxies
 bool Daemon::detectionStart() {
     std::lock_guard<std::mutex> lk(detMu_);
-    if (detection_ && detection_->running()) return false;
-    DetectionConfig dc; // use defaults
+    if (detection_ && detection_->running()) return false;  // fixed: use member detection_
+    DetectionConfig dc; // defaults
     detection_ = std::make_unique<Detection>(hwmon_, dc);
     detection_->start();
     return true;
