@@ -63,24 +63,26 @@ bool Daemon::applyProfileIfValid(const std::string& profilePath) {
     return true;
 }
 
-bool Daemon::init(DaemonConfig& cfg, bool debugCli, const std::string& cfgPath) {
+bool Daemon::init(DaemonConfig& cfg, bool debugCli, const std::string& cfgPath, bool foreground) {
     configPath_ = cfgPath;
     cfg_ = cfg;
 
     Logger::instance().configure(cfg.log.file, cfg.log.maxBytes, cfg.log.rotateCount, cfg.log.debug || debugCli);
     if (cfg.log.debug || debugCli) Logger::instance().setLevel(LogLevel::Debug);
 
-    std::string primary = cfg.pidFile.empty() ? std::string("/run/lfcd.pid") : cfg.pidFile;
-    if (!writePidFile(primary)) {
-        std::string fallback{"/tmp/lfcd.pid"};
-        if (writePidFile(fallback)) {
-            cfg.pidFile = fallback;
-            cfg_ = cfg;
-            std::string e;
-            (void)Config::Save(cfgPath, cfg_, e);
-            LFC_LOGI("pidfile fallback to %s (persisted)", fallback.c_str());
-        } else {
-            LFC_LOGW("pidfile create failed (primary: %s, fallback: %s)", primary.c_str(), fallback.c_str());
+    if (!foreground) {
+        std::string primary = cfg.pidFile.empty() ? std::string("/run/lfcd.pid") : cfg.pidFile;
+        if (!writePidFile(primary)) {
+            std::string fallback{"/tmp/lfcd.pid"};
+            if (writePidFile(fallback)) {
+                cfg.pidFile = fallback;
+                cfg_ = cfg;
+                std::string e;
+                (void)Config::Save(cfgPath, cfg_, e);
+                LFC_LOGI("pidfile fallback to %s (persisted)", fallback.c_str());
+            } else {
+                LFC_LOGW("pidfile create failed (primary: %s, fallback: %s)", primary.c_str(), fallback.c_str());
+            }
         }
     }
 

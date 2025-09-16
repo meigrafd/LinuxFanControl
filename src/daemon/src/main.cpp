@@ -236,7 +236,7 @@ int main(int argc, char** argv) {
     }
 
     Daemon daemon;
-    if (!daemon.init(cfg, cli.debug, cli.configPath)) {
+    if (!daemon.init(cfg, cli.debug, cli.configPath, cli.foreground)) {
         std::cerr << "[fatal] daemon init failed\n";
         return 2;
     }
