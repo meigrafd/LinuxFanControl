@@ -14,6 +14,7 @@ Modernes, schnelles Fan Control mit GUI im Stil von [FanControl.Release](https:/
 - Steuerlogik: Mix, Trigger oder Graph.
 - FanControl.Release Config importierbar.
 
+
 ### Daemon
 - `--config PATH` default `~/.config/LinuxFanControl/daemon.json`
 - `--pidfile PATH` default `/run/lfcd.pid` fallback `/tmp/lfcd.pid`
@@ -26,6 +27,11 @@ Modernes, schnelles Fan Control mit GUI im Stil von [FanControl.Release](https:/
 - `--foreground`, `--debug`, `--cmds`
 - `--check-update`, `--update`, `--update-target PATH`
 - `--download-update --target <file> [--repo <owner/name>]`
+
+Beim Start sichern wir jeden `pwm*_enable`-Wert (typisch `2` = auto).<br>
+Während des Betriebs erzwingt `setPercent()` `enable=1` (manual).<br>
+Beim Beenden schreiben wir die gesicherten Werte zurück ⇒ BIOS/Kernel-Auto übernimmt wieder.
+
 
 ## Install
 ### Installiere je nach Distribution:
@@ -58,6 +64,7 @@ sudo pacman -S --needed \
   fontconfig freetype2 icu
 ```
 
+
 ## Compile
 
 Build:
@@ -80,11 +87,13 @@ export LFC_DAEMON_ARGS="--debug"
 dotnet run -c Debug
 ```
 
+
 ## Quickstart:
 - GUI starten → Setup-Button → Auto-Detection & Kalibrierung.
 - Danach erscheinen oben die PWM-Tiles (verschiebbar), unten Triggers/Curves/Mixes.
 - Importer: FanControl.Release-JSON einlesen (Basis-Mapping).
 - Profile verwalten und Kurven/Channel-Zuweisungen konfigurieren.
+
 
 ## Rechte & PWM-Schreibzugriff
 Für viele /sys/class/hwmon/.../pwm*-Knoten ist root oder eine udev-Regel erforderlich:
@@ -107,6 +116,18 @@ newgrp lfc
 - Sprachdateien (erweiterbar): `Locales/en.json`, `Locales/de.json`
 - Themes (erweiterbar): `Themes/default.json`
 
+### FanControl.Release Profil importieren
+```bash
+printf '%s\n' \
+'{"jsonrpc":"2.0","id":1,"method":"profile.import","params":{"path":"/path/to/userConfig.json"}}' \
+| nc 127.0.0.1 8777 | jq
+```
+### lfcd Engine aktivieren
+```bash
+printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"engine.enable"}' | nc 127.0.0.1 8777 | jq
+```
+
+
 ##  CPU-Load Optimization:
 Diese besonderen ENV Einstellungen sind auch in der Konfigurationsdatei `daemon.json` enthalten und können auch zur Laufzeit über `config.set engine.deltaC / engine.forceTickMs` geändert werden.
 - LFCD_TICK_MS
@@ -122,12 +143,14 @@ Diese besonderen ENV Einstellungen sind auch in der Konfigurationsdatei `daemon.
   - Bereich: 100..10000 (ms)
   - Sicherheits-Intervall: Spätestens alle forceTickMs wird ein Tick erzwungen, auch ohne Temperaturänderung.
 
+  
 ## Backends
 - sysfs: Standard; wird bevorzugt. Pfade werden beim Scan kanonisiert (zB. /sys/devices/platform/.../hwmon/hwmon8/temp1_input).
 - libsensors (optional): Wenn mitgebaut, kann sensorsBackend auf libsensors gestellt werden.
   - Temperatur-/Lüftereinträge erscheinen als Pseudo-Pfade `libsensors:<chip>:<name>`.
   - PWM-Schreiben erfolgt weiterhin über sysfs (libsensors liefert keine write-fähigen PWM-Nodes).
-  
+
+
 ## Debug
 Test JSON-RPC
 ```bash

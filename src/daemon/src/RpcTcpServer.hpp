@@ -1,19 +1,19 @@
 /*
  * Linux Fan Control — RPC TCP Server (header)
- * - Minimal JSON-RPC 2.0 over TCP (newline-delimited)
- * - Non-blocking accept + client handling
+ * Minimal newline-delimited JSON-RPC 2.0 over TCP.
  * (c) 2025 LinuxFanControl contributors
  */
 #pragma once
+
+#include <atomic>
 #include <string>
 #include <thread>
-#include <atomic>
 #include <unordered_map>
 
 namespace lfc {
 
 class Daemon;
-class CommandRegistry;
+class CommandRegistry; // forward declare to avoid heavy include
 
 class RpcTcpServer {
 public:
@@ -24,24 +24,26 @@ public:
     void stop();
 
 private:
-    void loop(); // renamed from threadMain to match .cpp
-    bool handleLine(int fd, const std::string& line, std::string& outJson);
-
     struct Client {
-        std::string acc; // accumulated input buffer
+        std::string acc; // receive accumulator (per-connection)
     };
 
+    void loop();
+    bool handleLine(int fd, const std::string& line, std::string& outJson);
+
+private:
     Daemon& owner_;
-    CommandRegistry* reg_{nullptr};
     std::string host_;
     unsigned short port_{0};
     bool verbose_{false};
 
-    std::thread thr_;
     std::atomic<bool> running_{false};
     int listenFd_{-1};
+    std::thread thr_;
 
     std::unordered_map<int, Client> clients_;
+
+    CommandRegistry* reg_{nullptr};
 };
 
 } // namespace lfc
