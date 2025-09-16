@@ -15,20 +15,18 @@
 #include "UpdateChecker.hpp"
 #include "Version.hpp"
 #include "include/CommandRegistry.h"
-#include "Log.hpp"
 
 #include <nlohmann/json.hpp>
-
-#include <algorithm>
-#include <cctype>
-#include <chrono>
 #include <filesystem>
 #include <fstream>
-#include <optional>
 #include <sstream>
 #include <string>
-#include <thread>
 #include <vector>
+#include <cctype>
+#include <set>
+#include <thread>
+#include <chrono>
+#include <limits>
 
 using nlohmann::json;
 
@@ -74,6 +72,7 @@ static double clampd(double v, double lo, double hi) {
 }
 
 // profile name/file helpers
+
 static std::string to_profile_name(std::string s) {
     if (s.size() >= 5) {
         std::string tail = s.substr(s.size() - 5);
@@ -108,19 +107,21 @@ static bool has_temp(const HwmonInventory& inv, const std::string& tempPath) {
 
 // synchronous detection runner (polls non-blocking worker)
 static bool run_detection_sync(Daemon& self, int timeoutMs, std::vector<int>& outRpm) {
-    self.detectionAbort();
-    if (!self.detectionStart()) return false;
+    outRpm.clear();
+    auto s0 = self.detectionStatus();
+    if (!s0.running) (void)self.detectionStart();
 
     const auto t0 = std::chrono::steady_clock::now();
     bool timedOut = false;
     while (true) {
-        auto s = self.detectionStatus();
-        if (!s.running) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        if (std::chrono::steady_clock::now() - t0 > std::chrono::milliseconds(timeoutMs)) {
+        auto st = self.detectionStatus();
+        if (!st.running && st.total > 0) break;
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - t0).count() >= timeoutMs) {
             timedOut = true;
             break;
         }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     if (timedOut) {
         self.detectionAbort();
@@ -160,7 +161,9 @@ static json build_validation_report(Daemon& self,
             errs.push_back(std::string("Rule for PWM has no sources: ") + rule.pwmPath);
 
         for (const auto& sc : rule.sources) {
-            // temp path existence
+            if (sc.tempPaths.empty())
+                warns.push_back(std::string("Source has no temperature paths for PWM: ") + rule.pwmPath);
+
             for (const auto& tp : sc.tempPaths) {
                 json tdesc;
                 tdesc["tempPath"] = tp;
@@ -180,18 +183,18 @@ static json build_validation_report(Daemon& self,
             }
             if (sc.settings.minPercent < 0 || sc.settings.minPercent > 100 ||
                 sc.settings.maxPercent < 0 || sc.settings.maxPercent > 100 ||
-                sc.settings.minPercent > sc.settings.maxPercent) {
+                sc.settings.minPercent > sc.settings.maxPercent)
                 ++badPts;
-            }
+
             if (badPts > 0)
-                warns.push_back(std::string("Curve has inconsistent points or limits for PWM: ") + rule.pwmPath);
+                errs.push_back(std::string("Invalid curve/settings for PWM: ") + rule.pwmPath);
         }
     }
 
     report["pwms"] = pwmItems;
     report["temps"] = tempItems;
 
-    // optional detection run and rpm comparison
+    // optional detection using used PWM indices
     json detect;
     detect["requested"] = withDetect;
     detect["rpmMin"] = rpmMin;
@@ -206,18 +209,11 @@ static json build_validation_report(Daemon& self,
             for (size_t i = 0; i < res.size(); ++i) detect["results"].push_back(res[i]);
 
             // map used PWM -> rpm check
-            for (size_t ri = 0; ri < usedPwmIdx.size(); ++ri) {
-                int idx = usedPwmIdx[ri];
-                if (idx < 0) continue; // already reported missing
-                if (idx >= 0 && idx < static_cast<int>(res.size())) {
-                    int rpm = res[idx];
-                    if (rpm < rpmMin) {
-                        errs.push_back("No fan response detected on " + inv.pwms[idx].path_pwm
-                                       + " (peak " + std::to_string(rpm) + " rpm)");
-                    }
-                } else {
-                    errs.push_back("Detection result missing for mapped PWM index " + std::to_string(idx));
-                }
+            for (size_t i = 0; i < usedPwmIdx.size(); ++i) {
+                int idx = usedPwmIdx[i];
+                if (idx < 0 || idx >= (int)res.size()) continue;
+                if (res[idx] < rpmMin)
+                    errs.push_back("Detection found no PWM reaching rpmMin.");
             }
         }
     } else {
@@ -267,45 +263,52 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         out["shm"]["path"]           = tmp.shmPath;
         out["profiles"]["dir"]       = tmp.profilesDir;
         out["profiles"]["active"]    = tmp.profileName;
-        out["engine"]["tickMs"]      = self.engineTickMs();
-        out["engine"]["forceTickMs"] = self.engineForceTickMs();
+        out["profiles"]["backups"]   = true;
+        out["pidFile"]               = tmp.pidfile;
         out["engine"]["deltaC"]      = self.engineDeltaC();
+        out["engine"]["forceTickMs"] = self.engineForceTickMs();
+        out["engine"]["tickMs"]      = self.engineTickMs();
         return ok("config.load", out.dump());
     });
     reg.registerMethod("config.save", "Save daemon config to disk; params:{config:object}", [&](const RpcRequest& rq) -> RpcResult {
         if (rq.params.empty()) return err("config.save", -32602, "bad params");
         json p = json::parse(rq.params, nullptr, false);
-        if (p.is_discarded() || !p.contains("config")) return err("config.save", -32602, "missing config");
+        if (p.is_discarded() || !p.contains("config") || !p["config"].is_object())
+            return err("config.save", -32602, "missing config");
 
         DaemonConfig nc = self.cfg();
-        json c = p["config"];
-        if (c.contains("log") && c["log"].is_object()) {
-            if (c["log"].contains("file") && c["log"]["file"].is_string()) nc.logfile = c["log"]["file"].get<std::string>();
-            if (c["log"].contains("debug") && c["log"]["debug"].is_boolean()) nc.debug = c["log"]["debug"].get<bool>();
+        auto& jc = p["config"];
+        if (jc.contains("log")) {
+            if (jc["log"].contains("file") && jc["log"]["file"].is_string()) nc.logfile = jc["log"]["file"].get<std::string>();
+            if (jc["log"].contains("debug") && jc["log"]["debug"].is_boolean()) nc.debug = jc["log"]["debug"].get<bool>();
         }
-        if (c.contains("rpc") && c["rpc"].is_object()) {
-            if (c["rpc"].contains("host") && c["rpc"]["host"].is_string()) nc.host = c["rpc"]["host"].get<std::string>();
-            if (c["rpc"].contains("port") && c["rpc"]["port"].is_number_integer()) nc.port = c["rpc"]["port"].get<int>();
+        if (jc.contains("rpc")) {
+            if (jc["rpc"].contains("host") && jc["rpc"]["host"].is_string()) nc.host = jc["rpc"]["host"].get<std::string>();
+            if (jc["rpc"].contains("port") && jc["rpc"]["port"].is_number_integer()) nc.port = jc["rpc"]["port"].get<int>();
         }
-        if (c.contains("shm") && c["shm"].is_object()) {
-            if (c["shm"].contains("path") && c["shm"]["path"].is_string()) nc.shmPath = c["shm"]["path"].get<std::string>();
+        if (jc.contains("shm")) {
+            if (jc["shm"].contains("path") && jc["shm"]["path"].is_string()) nc.shmPath = jc["shm"]["path"].get<std::string>();
         }
-        if (c.contains("profiles") && c["profiles"].is_object()) {
-            if (c["profiles"].contains("dir") && c["profiles"]["dir"].is_string()) nc.profilesDir = c["profiles"]["dir"].get<std::string>();
-            if (c["profiles"].contains("active") && c["profiles"]["active"].is_string()) nc.profileName = to_profile_name(c["profiles"]["active"].get<std::string>());
+        if (jc.contains("profiles")) {
+            if (jc["profiles"].contains("dir") && jc["profiles"]["dir"].is_string()) nc.profilesDir = jc["profiles"]["dir"].get<std::string>();
+            if (jc["profiles"].contains("active") && jc["profiles"]["active"].is_string())
+                nc.profileName = to_profile_name(jc["profiles"]["active"].get<std::string>());
         }
-        if (c.contains("engine") && c["engine"].is_object()) {
-            if (c["engine"].contains("tickMs") && c["engine"]["tickMs"].is_number_integer())
-                self.setEngineTickMs(clampi(c["engine"]["tickMs"].get<int>(), 5, 1000));
-            if (c["engine"].contains("forceTickMs") && c["engine"]["forceTickMs"].is_number_integer())
-                self.setEngineForceTickMs(clampi(c["engine"]["forceTickMs"].get<int>(), 100, 10000));
-            if (c["engine"].contains("deltaC") && (c["engine"]["deltaC"].is_number_float() || c["engine"]["deltaC"].is_number_integer()))
-                self.setEngineDeltaC(clampd(c["engine"]["deltaC"].get<double>(), 0.0, 10.0));
-            nc.tickMs = self.engineTickMs();
-            nc.forceTickMs = self.engineForceTickMs();
-            nc.deltaC = self.engineDeltaC();
+        if (jc.contains("pidFile") && jc["pidFile"].is_string()) nc.pidfile = jc["pidFile"].get<std::string>();
+        if (jc.contains("engine") && jc["engine"].is_object()) {
+            if (jc["engine"].contains("deltaC") && jc["engine"]["deltaC"].is_number()) {
+                double v = clampd(jc["engine"]["deltaC"].get<double>(), 0.0, 10.0);
+                nc.deltaC = v; self.setEngineDeltaC(v);
+            }
+            if (jc["engine"].contains("forceTickMs") && jc["engine"]["forceTickMs"].is_number_integer()) {
+                int v = clampi(jc["engine"]["forceTickMs"].get<int>(), 100, 10000);
+                nc.forceTickMs = v; self.setEngineForceTickMs(v);
+            }
+            if (jc["engine"].contains("tickMs") && jc["engine"]["tickMs"].is_number_integer()) {
+                int v = clampi(jc["engine"]["tickMs"].get<int>(), 5, 1000);
+                nc.tickMs = v; self.setEngineTickMs(v);
+            }
         }
-
         std::string e;
         if (!saveDaemonConfig(nc, self.configPath(), &e)) return err("config.save", -32003, e);
         self.setCfg(nc);
@@ -319,31 +322,37 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         json val = p.contains("value") ? p["value"] : json();
 
         DaemonConfig nc = self.cfg();
-        if (key == "profiles.dir" && val.is_string()) {
-            nc.profilesDir = val.get<std::string>();
-        } else if (key == "profiles.active" && val.is_string()) {
-            nc.profileName = to_profile_name(val.get<std::string>());
+        if (key == "log.debug") {
+            if (val.is_boolean()) nc.debug = val.get<bool>();
+        } else if (key == "log.file") {
+            if (val.is_string()) nc.logfile = val.get<std::string>();
+        } else if (key == "rpc.host") {
+            if (val.is_string()) nc.host = val.get<std::string>();
+        } else if (key == "rpc.port") {
+            if (val.is_number_integer()) nc.port = val.get<int>();
+        } else if (key == "shm.path") {
+            if (val.is_string()) nc.shmPath = val.get<std::string>();
+        } else if (key == "profiles.dir") {
+            if (val.is_string()) nc.profilesDir = val.get<std::string>();
+        } else if (key == "profiles.active") {
+            if (val.is_string()) nc.profileName = to_profile_name(val.get<std::string>());
+        } else if (key == "pidFile") {
+            if (val.is_string()) nc.pidfile = val.get<std::string>();
         } else if (key == "engine.deltaC") {
             double v = self.engineDeltaC();
             if (val.is_number()) v = val.get<double>();
             else if (val.is_string()) { try { v = std::stod(val.get<std::string>()); } catch (...) {} }
-            v = clampd(v, 0.0, 10.0);
-            nc.deltaC = v;
-            self.setEngineDeltaC(v);
+            v = clampd(v, 0.0, 10.0); nc.deltaC = v; self.setEngineDeltaC(v);
         } else if (key == "engine.forceTickMs") {
             int v = self.engineForceTickMs();
             if (val.is_number_integer()) v = val.get<int>();
             else if (val.is_string()) { try { v = std::stoi(val.get<std::string>()); } catch (...) {} }
-            v = clampi(v, 100, 10000);
-            nc.forceTickMs = v;
-            self.setEngineForceTickMs(v);
+            v = clampi(v, 100, 10000); nc.forceTickMs = v; self.setEngineForceTickMs(v);
         } else if (key == "engine.tickMs") {
             int v = self.engineTickMs();
             if (val.is_number_integer()) v = val.get<int>();
             else if (val.is_string()) { try { v = std::stoi(val.get<std::string>()); } catch (...) {} }
-            v = clampi(v, 5, 1000);
-            nc.tickMs = v;
-            self.setEngineTickMs(v);
+            v = clampi(v, 5, 1000); nc.tickMs = v; self.setEngineTickMs(v);
         } else {
             return err("config.set", -32602, "unknown key");
         }
@@ -354,91 +363,38 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         return ok("config.set", "{}");
     });
 
-    // --- engine ---
-    reg.registerMethod("engine.enable", "Enable automatic control", [&](const RpcRequest&) -> RpcResult {
-        self.engineEnable(true);
-        return ok("engine.enable", "{}");
-    });
-    reg.registerMethod("engine.disable", "Disable automatic control", [&](const RpcRequest&) -> RpcResult {
-        self.engineEnable(false);
-        return ok("engine.disable", "{}");
-    });
-    reg.registerMethod("engine.reset", "Disable control and clear profile", [&](const RpcRequest&) -> RpcResult {
-        self.engineEnable(false);
-        Profile empty;
-        (void)self.applyProfile(empty);
-        return ok("engine.reset", "{}");
-    });
-    reg.registerMethod("engine.status", "Basic engine status", [&](const RpcRequest&) -> RpcResult {
-        json j;
-        j["enabled"] = self.engineControlEnabled();
-        j["activeProfile"] = self.cfg().profileName;
-        j["tickMs"] = self.engineTickMs();
-        j["forceTickMs"] = self.engineForceTickMs();
-        j["deltaC"] = self.engineDeltaC();
-        return ok("engine.status", j.dump());
-    });
-
-    // --- detection ---
-    reg.registerMethod("detect.start", "Start non-blocking detection", [&](const RpcRequest&) -> RpcResult {
-        if (!self.detectionStart()) return err("detect.start", -32030, "failed to start");
-        return ok("detect.start", "{}");
-    });
-    reg.registerMethod("detect.abort", "Abort detection", [&](const RpcRequest&) -> RpcResult {
-        self.detectionAbort();
-        return ok("detect.abort", "{}");
-    });
-    reg.registerMethod("detect.status", "Detection status/progress", [&](const RpcRequest&) -> RpcResult {
-        auto s = self.detectionStatus();
-        json j;
-        j["running"] = s.running;
-        j["current"] = s.currentIndex;
-        j["total"]   = s.total;
-        j["phase"]   = s.phase;
-        return ok("detect.status", j.dump());
-    });
-    reg.registerMethod("detect.results", "Return detection peak RPMs per PWM", [&](const RpcRequest&) -> RpcResult {
-        auto v = self.detectionResults();
-        json arr = json::array();
-        for (int rpm : v) arr.push_back(rpm);
-        return ok("detect.results", arr.dump());
-    });
-
-    // --- hwmon / lists ---
+    // hwmon/info
     reg.registerMethod("hwmon.snapshot", "Counts of discovered devices", [&](const RpcRequest&) -> RpcResult {
-        json j;
-        j["temps"] = self.hwmon().temps.size();
-        j["fans"]  = self.hwmon().fans.size();
-        j["pwms"]  = self.hwmon().pwms.size();
+        const auto& inv = self.hwmon();
+        json j; j["temps"]=inv.temps.size(); j["fans"]=inv.fans.size(); j["pwms"]=inv.pwms.size();
         return ok("hwmon.snapshot", j.dump());
     });
     reg.registerMethod("list.sensor", "List temperature sensors with current values", [&](const RpcRequest&) -> RpcResult {
+        const auto& inv = self.hwmon();
         json arr = json::array();
-        for (const auto& t : self.hwmon().temps) {
-            json o;
-            o["path"]  = t.path_input;
-            o["label"] = t.label;
-            if (auto tc = Hwmon::readTempC(t)) o["curC"] = *tc; else o["curC"] = nullptr;
-            arr.push_back(o);
+        for (size_t i=0;i<inv.temps.size();++i) {
+            auto t = Hwmon::readTempC(inv.temps[i]).value_or(std::numeric_limits<double>::quiet_NaN());
+            arr.push_back({{"index",(int)i},{"path",inv.temps[i].path_input},{"label",inv.temps[i].label},{"tempC",t}});
         }
         return ok("list.sensor", arr.dump());
     });
     reg.registerMethod("list.fan", "List fan tach inputs", [&](const RpcRequest&) -> RpcResult {
+        const auto& inv = self.hwmon();
         json arr = json::array();
-        for (const auto& f : self.hwmon().fans) {
-            json o;
-            o["path"] = f.path_input;
-            if (auto r = Hwmon::readRpm(f)) o["rpm"] = *r; else o["rpm"] = nullptr;
-            arr.push_back(o);
+        for (size_t i=0;i<inv.fans.size();++i) {
+            int rpm = Hwmon::readRpm(inv.fans[i]).value_or(0);
+            arr.push_back({{"index",(int)i},{"path",inv.fans[i].path_input},{"rpm",rpm}});
         }
         return ok("list.fan", arr.dump());
     });
     reg.registerMethod("list.pwm", "List PWM outputs", [&](const RpcRequest&) -> RpcResult {
+        const auto& inv = self.hwmon();
         json arr = json::array();
-        for (const auto& p : self.hwmon().pwms) {
-            json o;
-            o["path"] = p.path_pwm;
-            arr.push_back(o);
+        for (size_t i=0;i<inv.pwms.size();++i) {
+            int en  = Hwmon::readEnable(inv.pwms[i]).value_or(-1);
+            int pct = Hwmon::readPercent(inv.pwms[i]).value_or(-1);
+            int raw = Hwmon::readRaw(inv.pwms[i]).value_or(-1);
+            arr.push_back({{"index",(int)i},{"pwm",inv.pwms[i].path_pwm},{"enable",en},{"percent",pct},{"raw",raw},{"enablePath",inv.pwms[i].path_enable}});
         }
         return ok("list.pwm", arr.dump());
     });
@@ -488,43 +444,26 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
             return ok("profile.verifyMapping", rep.dump());
         });
 
-    reg.registerMethod("profile.import",
-        "Import FanControl.Releases config; params:{path,validateDetect?:bool,rpmMin?:int,timeoutMs?:int}",
-        [&](const RpcRequest& rq) -> RpcResult {
-            if (rq.params.empty()) return err("profile.import", -32602, "bad params");
-            json p = json::parse(rq.params, nullptr, false);
-            if (p.is_discarded() || !p.contains("path")) return err("profile.import", -32602, "missing path");
+    reg.registerMethod("profile.import", "Import FanControl.Releases config; params:{path}", [&](const RpcRequest& rq) -> RpcResult {
+        if (rq.params.empty()) return err("profile.import", -32602, "bad params");
+        json p = json::parse(rq.params, nullptr, false);
+        if (p.is_discarded() || !p.contains("path")) return err("profile.import", -32602, "missing path");
 
-            const bool withDetect = p.value("validateDetect", true);
-            const int rpmMin = clampi(p.value("rpmMin", 300), 0, 10000);
-            const int timeoutMs = clampi(p.value("timeoutMs", 15000), 1000, 60000);
+        std::string path = p["path"].get<std::string>();
+        std::string e;
+        Profile prof;
+        if (!FanControlImport::LoadAndMap(path, self.hwmon(), prof, e)) return err("profile.import", -32010, e);
 
-            std::string path = p["path"].get<std::string>();
-            std::string e;
-            Profile prof;
-            if (!FanControlImport::LoadAndMap(path, self.hwmon(), prof, e))
-                return err("profile.import", -32010, e);
+        self.engine().applyProfile(prof);
 
-            // Apply, but do not enable the engine automatically
-            self.engine().applyProfile(prof);
+        DaemonConfig nc = self.cfg();
+        nc.profileName = prof.name.empty() ? std::string("Imported") : prof.name;
+        std::string serr;
+        (void)saveDaemonConfig(nc, self.configPath(), &serr);
+        self.setCfg(nc);
 
-            // Remember active profile name (not saved to file)
-            DaemonConfig nc = self.cfg();
-            nc.profileName = prof.name.empty() ? std::string("Imported") : prof.name;
-            std::string serr;
-            (void)saveDaemonConfig(nc, self.configPath(), &serr);
-            self.setCfg(nc);
-
-            // Strict validation (optional detection)
-            auto rep = build_validation_report(self, prof, self.hwmon(), withDetect, rpmMin, timeoutMs);
-
-            json out;
-            out["applied"] = true;
-            out["activeName"] = nc.profileName;
-            out["warnings"] = build_basic_import_warnings(self.hwmon());
-            out["verify"] = rep;
-            return ok("profile.import", out.dump());
-        });
+        return ok("profile.import", "{}");
+    });
 
     reg.registerMethod("profile.importAs",
         "Import FanControl.Releases and save; params:{path,name,validateDetect?:bool,rpmMin?:int,timeoutMs?:int}",
@@ -548,8 +487,21 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
                 return err("profile.importAs", -32010, ierr);
             prof.name = nameOnly;
 
-            // Validate before saving
+            // Validate before saving/applying using the same logic as profile.verifyMapping
             auto rep = build_validation_report(self, prof, self.hwmon(), withDetect, rpmMin, timeoutMs);
+            const bool verifyOk = (rep.contains("ok") && rep["ok"].is_boolean()) ? rep["ok"].get<bool>() : false;
+
+            // Always return verification; only save/apply on success
+            json data;
+            data["name"] = nameOnly;
+            data["applied"] = false;
+            data["warnings"] = build_basic_import_warnings(self.hwmon());
+            data["verify"] = rep;
+
+            if (!verifyOk) {
+                // Do NOT save or apply on failed verification
+                return ok("profile.importAs", data.dump());
+            }
 
             const std::string dir = self.cfg().profilesDir;
             if (dir.empty()) return err("profile.importAs", -32011, "profilesDir not configured");
@@ -569,12 +521,8 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
             (void)saveDaemonConfig(nc, self.configPath(), &serr);
             self.setCfg(nc);
 
-            json data;
             data["savedPath"] = dst.string();
-            data["name"] = nameOnly;
             data["applied"] = true;
-            data["warnings"] = build_basic_import_warnings(self.hwmon());
-            data["verify"] = rep;
             return ok("profile.importAs", data.dump());
         });
 
@@ -627,10 +575,6 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
         if (!okDel && ec) return err("profile.delete", -32007, ec.message());
         return ok("profile.delete", "{}");
     });
-    reg.registerMethod("profile.getActive", "Get active profile NAME (no extension)", [&](const RpcRequest&) -> RpcResult {
-        json j; j["name"] = self.cfg().profileName;
-        return ok("profile.getActive", j.dump());
-    });
 
     // telemetry / daemon
     reg.registerMethod("telemetry.json", "Return current SHM JSON blob", [&](const RpcRequest&) -> RpcResult {
@@ -679,20 +623,15 @@ void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg) {
             if (target.empty()) return err("daemon.update", -32602, "missing target");
             std::string url;
             for (const auto& a : rel.assets) {
-                std::string n = a.name;
-                for (auto& c : n) c = static_cast<char>(tolower(c));
+                std::string n = a.name; for (auto& c : n) c = static_cast<char>(tolower(c));
                 if (n.find("linux") != std::string::npos &&
-                    (n.find("x86_64") != std::string::npos || n.find("amd64") != std::string::npos)) {
-                    url = a.url; break;
-                }
+                    (n.find("x86_64") != std::string::npos || n.find("amd64") != std::string::npos)) { url = a.url; break; }
             }
             if (url.empty() && !rel.assets.empty()) url = rel.assets[0].url;
             if (url.empty()) return err("daemon.update", -32021, "no assets");
             if (!UpdateChecker::downloadToFile(url, target, e)) return err("daemon.update", -32022, e);
-            out["downloaded"] = true;
-            out["target"] = target;
+            out["downloaded"] = true; out["target"] = target;
         }
-
         return ok("daemon.update", out.dump());
     });
     reg.registerMethod("daemon.restart", "Request daemon restart", [&](const RpcRequest&) -> RpcResult {
