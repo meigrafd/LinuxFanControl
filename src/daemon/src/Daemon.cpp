@@ -162,7 +162,7 @@ std::vector<CommandInfo> Daemon::listRpcCommands() const {
 bool Daemon::detectionStart() {
     std::lock_guard<std::mutex> lk(detMu_);
     if (detection_ && detection_->running()) return false;
-    Detection(const HwmonSnapshot& snap, const DetectionConfig& cfg);
+    detection_ = std::make_unique<Detection>(hwmon_, cfg_.detection);
     detection_->start();
     return true;
 }
