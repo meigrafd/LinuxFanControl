@@ -28,7 +28,7 @@ public:
     bool init(DaemonConfig& cfg, bool debugCli, const std::string& cfgPath, bool foreground);
     void runLoop();
     void shutdown();
-    void pumpOnce(int timeoutMs = 0);
+    void pumpOnce();
 
     // RPC entry point used by RpcTcpServer
     RpcResult dispatch(const std::string& method, const std::string& paramsJson);
@@ -58,13 +58,14 @@ public:
     // loop tuning accessors
     double engineDeltaC() const { return deltaC_; }
     int engineForceTickMs() const { return forceTickMs_; }
-    void setEngineDeltaC(double v) { if (v >= 0.0 && v <= 10.0) deltaC_ = v; }
-    void setEngineForceTickMs(int v) { if (v >= 100 && v <= 10000) forceTickMs_ = v; }
+    int engineTickMs() const { return tickMs_; }
+    void setEngineDeltaC(double v) { if (v >= 0.0 && v <= 10.0) { deltaC_ = v; engine_.setGating(deltaC_, forceTickMs_); } }
+    void setEngineForceTickMs(int v) { if (v >= 100 && v <= 10000) { forceTickMs_ = v; engine_.setGating(deltaC_, forceTickMs_); } }
+    void setEngineTickMs(int v) { if (v >= 5 && v <= 1000) tickMs_ = v; }
 
     // lifecycle
     void requestStop() { running_.store(false); }
 
-    // friend to let RpcHandlers access private members if required later
     friend void BindDaemonRpcCommands(Daemon& self, CommandRegistry& reg);
 
 private:
@@ -89,7 +90,8 @@ private:
     mutable std::mutex detMu_;
     std::unique_ptr<Detection> detection_;
 
-    // gating knobs
+    // loop timing/gating
+    int tickMs_{25};
     double deltaC_{0.5};
     int forceTickMs_{1000};
 };

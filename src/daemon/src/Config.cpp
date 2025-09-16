@@ -1,8 +1,8 @@
 /*
  * Linux Fan Control — Daemon Config (implementation)
- * - Daemon/runtime configuration (no profiles here)
- * - Env override via LFCD_* variables
- * - JSON save with atomic write
+ * - Robust JSON parsing with strict type checks
+ * - Env override via LFCD_*
+ * - Atomic save with 0600 permissions
  * (c) 2025 LinuxFanControl contributors
  */
 #include "Config.hpp"
@@ -20,6 +20,8 @@ using nlohmann::json;
 
 namespace lfc {
 
+// ---------- env helpers ----------
+
 static const char* getenv_c(const char* k) {
     const char* v = std::getenv(k);
     return v && *v ? v : nullptr;
@@ -33,6 +35,13 @@ static std::string getenv_or(const char* k, const std::string& def) {
 static int getenv_or_int(const char* k, int def) {
     if (auto* v = getenv_c(k)) {
         try { return std::stoi(v); } catch (...) {}
+    }
+    return def;
+}
+
+static double getenv_or_double(const char* k, double def) {
+    if (auto* v = getenv_c(k)) {
+        try { return std::stod(v); } catch (...) {}
     }
     return def;
 }
@@ -64,24 +73,88 @@ static std::string readFile(const fs::path& path) {
     return oss.str();
 }
 
+// ---------- robust json -> cfg ----------
+
+static void set_if_string(const json& j, const char* key, std::string& dst) {
+    auto it = j.find(key);
+    if (it != j.end() && it->is_string()) dst = it->get<std::string>();
+}
+
+static void set_if_bool(const json& j, const char* key, bool& dst) {
+    auto it = j.find(key);
+    if (it != j.end()) {
+        if (it->is_boolean()) dst = it->get<bool>();
+        else if (it->is_string()) dst = parseBool(it->get<std::string>());
+        else if (it->is_number_integer()) dst = (it->get<int>() != 0);
+    }
+}
+
+static void set_if_int(const json& j, const char* key, int& dst) {
+    auto it = j.find(key);
+    if (it != j.end()) {
+        if (it->is_number_integer()) dst = it->get<int>();
+        else if (it->is_string()) {
+            try { dst = std::stoi(it->get<std::string>()); } catch (...) {}
+        }
+    }
+}
+
+static void set_if_double(const json& j, const char* key, double& dst) {
+    auto it = j.find(key);
+    if (it != j.end()) {
+        if (it->is_number_float()) dst = it->get<double>();
+        else if (it->is_number_integer()) dst = static_cast<double>(it->get<int>());
+        else if (it->is_string()) {
+            try { dst = std::stod(it->get<std::string>()); } catch (...) {}
+        }
+    }
+}
+
+static int clampi(int v, int lo, int hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
+static double clampd(double v, double lo, double hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
 static void json_to_cfg(const json& j, DaemonConfig& c) {
-    if (j.contains("logLevel"))     c.logLevel   = j.value("logLevel", c.logLevel);
-    if (j.contains("debug"))        c.debug      = j.value("debug", c.debug);
-    if (j.contains("foreground"))   c.foreground = j.value("foreground", c.foreground);
-    if (j.contains("cmds"))         c.cmds       = j.value("cmds", c.cmds);
+    // Logging/runtime
+    set_if_string(j, "logLevel", c.logLevel);
+    set_if_bool(j,   "debug", c.debug);
+    set_if_bool(j,   "foreground", c.foreground);
+    set_if_bool(j,   "cmds", c.cmds);
 
-    if (j.contains("host"))         c.host       = j.value("host", c.host);
-    if (j.contains("port"))         c.port       = j.value("port", c.port);
+    // Networking
+    set_if_string(j, "host", c.host);
+    set_if_int(j,    "port", c.port);
 
-    if (j.contains("pidfile"))      c.pidfile    = j.value("pidfile", c.pidfile);
-    if (j.contains("logfile"))      c.logfile    = j.value("logfile", c.logfile);
-    if (j.contains("shm"))          c.shmPath    = j.value("shm", c.shmPath);
+    // Paths
+    set_if_string(j, "pidfile", c.pidfile);
+    set_if_string(j, "logfile", c.logfile);
+    set_if_string(j, "shm", c.shmPath);
 
-    if (j.contains("sysfsRoot"))    c.sysfsRoot      = j.value("sysfsRoot", c.sysfsRoot);
-    if (j.contains("sensorsBackend")) c.sensorsBackend = j.value("sensorsBackend", c.sensorsBackend);
+    // Sensors
+    set_if_string(j, "sysfsRoot", c.sysfsRoot);
+    set_if_string(j, "sensorsBackend", c.sensorsBackend);
 
-    if (j.contains("profilesDir"))  c.profilesDir = j.value("profilesDir", c.profilesDir);
-    if (j.contains("profile"))      c.profileName = j.value("profile", c.profileName);
+    // Profiles (locations only)
+    set_if_string(j, "profilesDir", c.profilesDir);
+    set_if_string(j, "profile", c.profileName);
+
+    // Loop tuning
+    set_if_int(j,    "tickMs", c.tickMs);
+    set_if_double(j, "deltaC", c.deltaC);
+    set_if_int(j,    "forceTickMs", c.forceTickMs);
+
+    // clamp ranges
+    c.tickMs      = clampi(c.tickMs, 5, 1000);
+    c.deltaC      = clampd(c.deltaC, 0.0, 10.0);
+    c.forceTickMs = clampi(c.forceTickMs, 100, 10000);
 }
 
 static json cfg_to_json(const DaemonConfig& c) {
@@ -104,6 +177,10 @@ static json cfg_to_json(const DaemonConfig& c) {
     j["profilesDir"]    = c.profilesDir;
     j["profile"]        = c.profileName;
 
+    j["tickMs"]         = c.tickMs;
+    j["deltaC"]         = c.deltaC;
+    j["forceTickMs"]    = c.forceTickMs;
+
     return j;
 }
 
@@ -125,17 +202,32 @@ static void apply_env_overrides(DaemonConfig& c) {
 
     if (auto* v = getenv_c("LFCD_PROFILES_DIR")) c.profilesDir = v;
     if (auto* v = getenv_c("LFCD_PROFILE"))      c.profileName = v;
+
+    // Loop tuning (with range clamp)
+    int tms = getenv_or_int("LFCD_TICK_MS", c.tickMs);
+    int ftm = getenv_or_int("LFCD_FORCE_TICK_MS", c.forceTickMs);
+    double dc = getenv_or_double("LFCD_DELTA_C", c.deltaC);
+    c.tickMs      = (tms ? tms : c.tickMs);
+    c.forceTickMs = (ftm ? ftm : c.forceTickMs);
+    c.deltaC      = dc;
+
+    c.tickMs      = clampi(c.tickMs, 5, 1000);
+    c.deltaC      = clampd(c.deltaC, 0.0, 10.0);
+    c.forceTickMs = clampi(c.forceTickMs, 100, 10000);
 }
+
+// ---------- public API ----------
 
 DaemonConfig loadDaemonConfig(const std::string& configPath, std::string* err) {
     DaemonConfig cfg;
 
+    // 1) Load JSON file (robust to type mismatches)
     if (!configPath.empty()) {
         try {
             fs::path p = expandUserPath(configPath);
             if (fs::exists(p)) {
                 auto s = readFile(p);
-                auto j = json::parse(s);
+                auto j = json::parse(s, /*cb*/nullptr, /*allow_exceptions*/true);
                 json_to_cfg(j, cfg);
                 cfg.configFile = p.string();
             } else if (err) {
@@ -146,8 +238,10 @@ DaemonConfig loadDaemonConfig(const std::string& configPath, std::string* err) {
         }
     }
 
+    // 2) Env overrides (LFCD_*)
     apply_env_overrides(cfg);
 
+    // 3) Expand and sanitize
     cfg.pidfile     = expandUserPath(cfg.pidfile);
     cfg.logfile     = expandUserPath(cfg.logfile);
     cfg.shmPath     = expandUserPath(cfg.shmPath);

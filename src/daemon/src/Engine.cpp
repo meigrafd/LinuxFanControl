@@ -2,6 +2,7 @@
  * Linux Fan Control — Engine (implementation)
  * - Periodic sensor readout and telemetry
  * - Profile application and evaluation
+ * - CPU load gating by deltaC and forceTickMs
  * (c) 2025 LinuxFanControl contributors
  */
 #include "Engine.hpp"
@@ -51,26 +52,19 @@ static std::string fmt2(double v) {
 Engine::Engine() = default;
 Engine::~Engine() { stop(); }
 
-void Engine::setSnapshot(const HwmonSnapshot& snap) {
-    snap_ = snap;
-}
+void Engine::setSnapshot(const HwmonSnapshot& snap) { snap_ = snap; }
+bool Engine::initShm(const std::string& path) { return shm_.openOrCreate(path, 1 << 20); }
+void Engine::start() { running_ = true; lastTick_ = std::chrono::steady_clock::now(); lastWork_ = lastTick_; }
+void Engine::stop() { running_ = false; shm_.close(); }
+void Engine::enableControl(bool on) { controlEnabled_ = on; }
 
-bool Engine::initShm(const std::string& path) {
-    return shm_.openOrCreate(path, 1 << 20);
-}
-
-void Engine::start() {
-    running_ = true;
-    lastTick_ = std::chrono::steady_clock::now();
-}
-
-void Engine::stop() {
-    running_ = false;
-    shm_.close();
-}
-
-void Engine::enableControl(bool on) {
-    controlEnabled_ = on;
+void Engine::setGating(double deltaC, int forceTickMs) {
+    if (deltaC < 0.0) deltaC = 0.0;
+    if (deltaC > 10.0) deltaC = 10.0;
+    if (forceTickMs < 100) forceTickMs = 100;
+    if (forceTickMs > 10000) forceTickMs = 10000;
+    gateDeltaC_ = deltaC;
+    gateForceTickMs_ = forceTickMs;
 }
 
 static bool parsePoint(const std::string& s, int& out_mC, int& out_pct) {
@@ -232,16 +226,36 @@ int Engine::evalTrigger(const TriggerEval& t, int mC) const {
     return std::clamp(static_cast<int>(idleP + r * (loadP - idleP)), 0, 100);
 }
 
+bool Engine::gatingAllowsWork(const std::vector<std::pair<std::string,int>>& temps_mC,
+                              std::chrono::steady_clock::time_point now) {
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastWork_).count() >= gateForceTickMs_) {
+        return true;
+    }
+    if (lastTemps_mC_.empty()) return true;
+
+    const int thr_mC = static_cast<int>(gateDeltaC_ * 1000.0 + 0.5);
+    int maxAbs = 0;
+    for (const auto& kv : temps_mC) {
+        int prev = 0; bool havePrev = false;
+        for (const auto& pv : lastTemps_mC_) {
+            if (pv.first == kv.first) { prev = pv.second; havePrev = true; break; }
+        }
+        if (!havePrev) { maxAbs = thr_mC; break; }
+        int d = std::abs(kv.second - prev);
+        if (d > maxAbs) maxAbs = d;
+        if (maxAbs >= thr_mC) break;
+    }
+    return maxAbs >= thr_mC;
+}
+
 void Engine::tick() {
     if (!running_) return;
 
     auto now = std::chrono::steady_clock::now();
-    if (now - lastTick_ < std::chrono::milliseconds(200)) return;
-    lastTick_ = now;
 
+    // Read sensors
     std::vector<std::pair<std::string, int>> temps_mC;
     temps_mC.reserve(snap_.temps.size());
-
     std::vector<std::pair<std::string, double>> tempsC_2dp;
     tempsC_2dp.reserve(snap_.temps.size());
 
@@ -254,6 +268,23 @@ void Engine::tick() {
             tempsC_2dp.emplace_back(name, c);
         }
     }
+
+    // Optional skip if gating says "no change"
+    if (!gatingAllowsWork(temps_mC, now)) {
+        json j;
+        j["temps"] = json::array();
+        for (const auto& kv : tempsC_2dp) {
+            j["temps"].push_back({{"name", kv.first}, {"c", fmt2(kv.second)}});
+        }
+        j["fans"] = json::array();
+        j["pwm"] = json::array();
+        lastTelemetry_ = j.dump();
+        (void)shm_.appendJsonLine(lastTelemetry_);
+        return;
+    }
+
+    lastWork_ = now;
+    lastTemps_mC_ = temps_mC;
 
     std::vector<std::pair<std::string, int>> fans;
     fans.reserve(snap_.fans.size());

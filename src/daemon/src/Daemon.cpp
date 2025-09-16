@@ -63,6 +63,11 @@ bool Daemon::init(DaemonConfig& cfg, bool /*debugCli*/, const std::string& cfgPa
     cfg_ = cfg;
     configPath_ = cfgPath;
 
+    // apply loop tuning from config
+    setEngineTickMs(cfg_.tickMs);
+    setEngineDeltaC(cfg_.deltaC);
+    setEngineForceTickMs(cfg_.forceTickMs);
+
     // hwmon scan
     hwmon_ = Hwmon::scan();
 
@@ -95,7 +100,13 @@ bool Daemon::init(DaemonConfig& cfg, bool /*debugCli*/, const std::string& cfgPa
 void Daemon::runLoop() {
     running_.store(true);
     while (running_.load()) {
-        pumpOnce(forceTickMs_);
+        auto t0 = std::chrono::steady_clock::now();
+        pumpOnce();
+        auto t1 = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+        int sleepMs = tickMs_ - static_cast<int>(elapsed);
+        if (sleepMs < 0) sleepMs = 0;
+        std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
     }
     shutdown();
 }
@@ -109,7 +120,7 @@ void Daemon::shutdown() {
     removePidFile();
 }
 
-void Daemon::pumpOnce(int /*timeoutMs*/) {
+void Daemon::pumpOnce() {
     engine_.tick();
     std::lock_guard<std::mutex> lk(detMu_);
     if (detection_) detection_->poll();
@@ -141,7 +152,7 @@ bool Daemon::applyProfileIfValid(const std::string& profilePath) {
 // detection proxies
 bool Daemon::detectionStart() {
     std::lock_guard<std::mutex> lk(detMu_);
-    if (detection_ && detection_->running()) return false;  // fixed: use member detection_
+    if (detection_ && detection_->running()) return false;
     DetectionConfig dc; // defaults
     detection_ = std::make_unique<Detection>(hwmon_, dc);
     detection_->start();
