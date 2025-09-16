@@ -188,7 +188,7 @@ void Detection::worker() {
 
         write_int_file(pwm_enable_path(pwm.path_pwm), 1);
 
-        auto attempt = [&](int use_mode, bool& detected, bool& via_global, size_t& global_idx, int& max_rpm_out) {
+        auto attempt = [&](int use_mode, int measure_ms, bool& detected, bool& via_global, size_t& global_idx, int& max_rpm_out) {
             detected = false; via_global = false; global_idx = static_cast<size_t>(-1); max_rpm_out = 0;
             if (use_mode >= 0) write_int_file(pwm_mode_path(pwm.path_pwm), use_mode);
             std::this_thread::sleep_for(std::chrono::milliseconds(settle_ms));
@@ -212,7 +212,7 @@ void Detection::worker() {
 
             phase_ = "measure";
             int maxRpm = 0;
-            const auto t_end = t0 + std::chrono::milliseconds(measure_total_ms);
+            const auto t_end = t0 + std::chrono::milliseconds(measure_ms);
             while (!stop_.load() && std::chrono::steady_clock::now() < t_end) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(spinup_poll_ms));
                 int v = 0;
@@ -231,10 +231,10 @@ void Detection::worker() {
         int curMode = -1; (void)read_int_file(pwm_mode_path(pwm.path_pwm), curMode);
         int altMode = (curMode == 0) ? 1 : 0;
 
-        attempt(curMode, det, via_global, gidx, measured_max);
+        attempt(curMode, measure_total_ms, det, via_global, gidx, measured_max);
         if (!det) {
             LFC_LOGD("detection: pwm[%zu] no change in mode=%d, trying mode=%d", i, curMode, altMode);
-            attempt(altMode, det, via_global, gidx, measured_max);
+            attempt(altMode, measure_total_ms, det, via_global, gidx, measured_max);
         }
 
         phase_ = "restore";
