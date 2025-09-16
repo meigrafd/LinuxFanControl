@@ -1,5 +1,5 @@
 /*
- * Linux Fan Control — Command Registry (header)
+ * Linux Fan Control — Command Registry (header-only)
  * - JSON-RPC method table, metadata, and dispatch
  * (c) 2025 LinuxFanControl contributors
  */
