@@ -15,7 +15,7 @@
 #include "Config.hpp"
 #include "Engine.hpp"
 #include "Detection.hpp"
-#include "CommandRegistry.hpp"
+#include "include/CommandRegistry.h"
 
 namespace lfc {
 
