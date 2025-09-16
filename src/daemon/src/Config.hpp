@@ -9,6 +9,8 @@
 #include <cstddef>
 #include <vector>
 
+#include "Detection.hpp"
+
 namespace lfc {
 
 // ---------- Runtime (daemon) config ----------
