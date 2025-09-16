@@ -61,11 +61,11 @@ start_daemon() {
     if [[ -z "${DAEMON}" || ! -x "${DAEMON}" ]]; then
         echo "[!] Daemon binary not found. Build first or set LFCD_DAEMON."
         exit 1
-    }
+    fi
     if daemon_running; then
         echo "[i] Daemon already running (pid $(cat "$(pidfile)")). Use 'stop-daemon' first."
         exit 0
-    }
+    fi
     echo "[i] Starting daemon: ${DAEMON} ${DAEMON_ARGS}"
     setsid bash -c "exec '${DAEMON}' ${DAEMON_ARGS} >>'${LOG_DIR}/daemon_lfc.log' 2>&1" </dev/null &
     disown
@@ -79,7 +79,7 @@ stop_daemon() {
         echo "[i] Daemon not running."
         rm -f "$(pidfile)" || true
         exit 0
-    }
+    fi
     local pid; pid="$(cat "$(pidfile)")"
     echo "[i] Stopping daemon pid ${pid} ..."
     kill "${pid}" 2>/dev/null || true
@@ -87,7 +87,7 @@ stop_daemon() {
     if kill -0 "${pid}" 2>/dev/null; then
         echo "[i] Force kill..."
         kill -9 "${pid}" 2>/dev/null || true
-    }
+    fi
     rm -f "$(pidfile)" || true
     echo "[i] Stopped."
 }
