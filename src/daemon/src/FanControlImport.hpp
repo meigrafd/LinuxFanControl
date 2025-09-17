@@ -25,23 +25,21 @@ public:
                            Profile& out,
                            std::string& err);
 
-    // Convenience overload: accepts any 'hw' that exposes .temps and .pwms members.
     template <typename HW>
     static bool LoadAndMap(const std::string& path, const HW& hw, Profile& out, std::string& err) {
         return LoadAndMap(path, hw.temps, hw.pwms, out, err);
     }
 
 private:
-    // Mapping helpers operating on vectors
     static std::string mapPwmFromIdentifier(const std::vector<HwmonPwm>& pwms,
                                             const std::string& identifier);
 
-    static std::vector<std::string> mapTempFromIdentifier(const std::vector<HwmonTemp>& temps,
-                                                          const std::string& identifier);
+    // Return best single temp path for a FanControl identifier (no duplicates)
+    static std::string mapBestTempFromIdentifier(const std::vector<HwmonTemp>& temps,
+                                                 const std::string& identifier);
 
     static std::string lower(std::string s);
 
-    // Build SourceCurve from a FanCurves entry (by name), resolving Trigger/Table and temperature source(s).
     static bool buildSourceFromCurveJson(const nlohmann::json& curveJson,
                                          const std::vector<HwmonTemp>& temps,
                                          std::vector<std::string>& outTempPaths,
@@ -49,6 +47,7 @@ private:
                                          int& outMinPercent, int& outMaxPercent, double& outHystC,
                                          int& outSpinupPercent, int& outSpinupMs,
                                          bool& outStopBelowMin,
+                                         bool   isTrigger,
                                          std::string& err);
 
     static void parsePointsArray(const nlohmann::json& arr, std::vector<std::pair<double,int>>& dst);

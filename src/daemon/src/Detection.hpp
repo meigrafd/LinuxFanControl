@@ -14,7 +14,6 @@
 
 namespace lfc {
 
-// Snapshot alias used by detection
 using HwmonSnapshot = HwmonInventory;
 
 struct DetectionConfig {
@@ -25,7 +24,7 @@ struct DetectionConfig {
     int rpmDeltaThresh{30};
     int rampStartPercent{30};
     int rampEndPercent{100};
-    int modeDwellMs{300};   // dwell after writing pwm*_mode
+    int modeDwellMs{600};   // wait after writing pwm*_mode to avoid audible drop
 };
 
 class Detection {
