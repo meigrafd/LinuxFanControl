@@ -38,7 +38,7 @@ Da FanControl für **Windows** entwickelt ist, müssen die dort definierten Sens
 1. Import mit
 
    ```bash
-   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"profile.importAs","params":{"path":"/PATH/TO/userConfig.json","name":"Default"}}' | nc 127.0.0.1 8777 | jq
+   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"profile.importAs","params":{"path":"/PATH/TO/userConfig.json","name":"Default","requireAllPwms":false}}' | nc 127.0.0.1 8777 | jq
    ```
 2. Anschließend mit
 

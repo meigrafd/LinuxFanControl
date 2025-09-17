@@ -10,7 +10,7 @@
 #include <atomic>
 #include <thread>
 
-#include "Hwmon.hpp"  // provides HwmonInventory, Hwmon{Temp,Fan,Pwm}
+#include "Hwmon.hpp"  // HwmonInventory, Hwmon{Temp,Fan,Pwm}
 
 namespace lfc {
 
@@ -25,6 +25,7 @@ struct DetectionConfig {
     int rpmDeltaThresh{30};
     int rampStartPercent{30};
     int rampEndPercent{100};
+    int modeDwellMs{300};   // dwell after writing pwm*_mode
 };
 
 class Detection {
@@ -40,8 +41,8 @@ public:
     ~Detection();
 
     void start();
-    void abort();        // request stop
-    void poll();         // no-op hook for UI-driven polling
+    void abort();
+    void poll();
 
     Status status() const;
     std::vector<int> results() const;
