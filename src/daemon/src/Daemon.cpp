@@ -2,39 +2,44 @@
  * Linux Fan Control — Daemon (implementation)
  * - Initializes logging, telemetry, hwmon backend and RPC
  * - Applies LFCD_* env overrides (tick/deltaC/force)
- * - Drives the main control loop and optional detection
+ * - Stores/restores original pwm*_enable so BIOS/driver regains control on exit
  * (c) 2025 LinuxFanControl contributors
  */
+
 #include "Daemon.hpp"
-#include "Config.hpp"
+
+#include "Engine.hpp"
+#include "RpcTcpServer.hpp"
 #include "RpcHandlers.hpp"
 #include "FanControlImport.hpp"
 #include "Detection.hpp"
 #include "Log.hpp"
 #include "Version.hpp"
 #include "include/CommandRegistry.h"
-#include "Engine.hpp"
-#include "RpcTcpServer.hpp"
 
 #include <filesystem>
 #include <fstream>
 #include <thread>
 #include <cstdlib>
 #include <algorithm>
-#include <unistd.h>
+#include <chrono>
+#include <unistd.h> // getpid()
 
 namespace lfc {
 
-static int clampi(int v, int lo, int hi){ return v<lo?lo:(v>hi?hi:v); }
-static double clampd(double v, double lo, double hi){ return v<lo?lo:(v>hi?hi:v); }
+// ---------- helpers ----------
 
 int Daemon::getenv_int(const char* key, int def) {
-    if (const char* s = std::getenv(key)) { try { return std::stoi(s); } catch (...) {} }
+    if (const char* s = std::getenv(key)) {
+        try { return std::stoi(s); } catch (...) {}
+    }
     return def;
 }
 
 double Daemon::getenv_double(const char* key, double def) {
-    if (const char* s = std::getenv(key)) { try { return std::stod(s); } catch (...) {} }
+    if (const char* s = std::getenv(key)) {
+        try { return std::stod(s); } catch (...) {}
+    }
     return def;
 }
 
@@ -44,38 +49,30 @@ std::string Daemon::ensure_profile_filename(const std::string& name) {
     return name + ".json";
 }
 
+// ---------- lifecycle ----------
+
 Daemon::Daemon() = default;
 Daemon::~Daemon() = default;
 
 bool Daemon::init(DaemonConfig& cfg, bool debugCli, const std::string& cfgPath, bool foreground) {
-    cfg_ = cfg;
-    debug_ = debugCli || cfg.debug;
-    configPath_ = cfgPath;
-    foreground_ = foreground;
+    cfg_         = cfg;
+    debug_       = debugCli || cfg.debug;
+    configPath_  = cfgPath;
+    foreground_  = foreground;
 
-    if (cfg_.tickMs <= 0) cfg_.tickMs = 25;
-    if (cfg_.deltaC < 0.0) cfg_.deltaC = 0.5;
+    if (cfg_.tickMs <= 0)      cfg_.tickMs = 25;
     if (cfg_.forceTickMs <= 0) cfg_.forceTickMs = 1000;
+    if (cfg_.deltaC < 0.0)     cfg_.deltaC = 0.5;
 
-    tickMs_      = clampi(getenv_int("LFCD_TICK_MS",       cfg_.tickMs),      5,   1000);
-    deltaC_      = clampd(getenv_double("LFCD_DELTA_C",    cfg_.deltaC),      0.0, 10.0);
-    forceTickMs_ = clampi(getenv_int("LFCD_FORCE_TICK_MS", cfg_.forceTickMs), 100, 10000);
+    tickMs_      = std::clamp(getenv_int("LFCD_TICK_MS",       cfg_.tickMs),      5,   1000);
+    deltaC_      = std::clamp(getenv_double("LFCD_DELTA_C",    cfg_.deltaC),      0.0, 10.0);
+    forceTickMs_ = std::clamp(getenv_int("LFCD_FORCE_TICK_MS", cfg_.forceTickMs), 100, 10000);
 
     const std::string logPath = cfg_.logfile.empty() ? std::string("/tmp/daemon_lfc.log") : cfg_.logfile;
     Logger::instance().configure(logPath, 0, 0, debug_);
     LFC_LOGI("lfcd v%s starting", LFCD_VERSION);
 
-    try {
-        if (!configPath_.empty()) std::filesystem::create_directories(std::filesystem::path(configPath_).parent_path());
-        if (!cfg_.profilesDir.empty()) std::filesystem::create_directories(cfg_.profilesDir);
-        if (!cfg_.pidfile.empty()) std::filesystem::create_directories(std::filesystem::path(cfg_.pidfile).parent_path());
-    } catch (...) {}
-
-    {
-        const std::string shm = cfg_.shmPath.empty() ? std::string("/dev/shm/lfc_telemetry") : cfg_.shmPath;
-        if (!telemetry_.init(shm)) LFC_LOGW("telemetry: init failed: %s", shm.c_str());
-    }
-
+    // Scan hwmon and remember original pwm*_enable values for restore on shutdown
     hwmon_ = Hwmon::scan();
     origPwmEnable_.clear();
     for (const auto& p : hwmon_.pwms) {
@@ -83,13 +80,16 @@ bool Daemon::init(DaemonConfig& cfg, bool debugCli, const std::string& cfgPath, 
         origPwmEnable_.push_back({p.path_enable, val});
     }
 
+    // Engine + telemetry
     engine_ = std::make_unique<Engine>();
     engine_->setHwmonView(hwmon_.temps, hwmon_.fans, hwmon_.pwms);
     engine_->attachTelemetry(&telemetry_);
 
+    // RPC registry + handlers
     rpcRegistry_ = std::make_unique<CommandRegistry>();
     BindDaemonRpcCommands(*this, *rpcRegistry_);
 
+    // RPC server
     {
         const std::string host = cfg_.host.empty() ? std::string("127.0.0.1") : cfg_.host;
         const unsigned short port = static_cast<unsigned short>(cfg_.port > 0 ? cfg_.port : 8777);
@@ -101,6 +101,7 @@ bool Daemon::init(DaemonConfig& cfg, bool debugCli, const std::string& cfgPath, 
         LFC_LOGI("rpc: listening on %s:%u", host.c_str(), (unsigned)port);
     }
 
+    // Optional PID file
     if (!cfg_.pidfile.empty()) {
         try {
             std::ofstream pf(cfg_.pidfile, std::ios::trunc);
@@ -111,18 +112,23 @@ bool Daemon::init(DaemonConfig& cfg, bool debugCli, const std::string& cfgPath, 
         }
     }
 
+    // Try to apply configured profile (native or FanControl import)
     if (!cfg_.profilesDir.empty() && !cfg_.profileName.empty()) {
         const auto full = (std::filesystem::path(cfg_.profilesDir) / ensure_profile_filename(cfg_.profileName)).string();
         if (std::filesystem::exists(full)) {
-            if (!applyProfileFile(full)) LFC_LOGW("profile: failed to load '%s'", full.c_str());
-            else LFC_LOGI("profile: loaded '%s'", full.c_str());
+            if (!applyProfileFile(full)) {
+                LFC_LOGW("profile: failed to load '%s' — waiting for detection/import", full.c_str());
+            } else {
+                LFC_LOGI("profile: loaded '%s'", full.c_str());
+            }
         } else {
-            LFC_LOGI("no profile present at %s", full.c_str());
+            LFC_LOGI("no profile present at %s — waiting for detection/import", full.c_str());
         }
     } else {
-        LFC_LOGI("no profile configured");
+        LFC_LOGI("no profile configured — waiting for detection/import");
     }
 
+    // Initial telemetry snapshot
     (void)telemetry_.update(engine_->telemetryJson());
 
     running_.store(true, std::memory_order_relaxed);
@@ -136,12 +142,12 @@ void Daemon::runLoop() {
     auto nextTick  = clock::now();
 
     while (running_.load(std::memory_order_relaxed) && !stop_.load(std::memory_order_relaxed)) {
-        const int tickMs  = tickMs_;
-        const int forceMs = forceTickMs_;
-        const double dC   = deltaC_;
+        const int    tickMs = tickMs_;
+        const int    forceMs = forceTickMs_;
+        const double dC = deltaC_;
 
         auto now = clock::now();
-        bool force = (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastForce).count() >= forceMs);
+        const bool force = (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastForce).count() >= forceMs);
 
         if (force || now >= nextTick) {
             (void)engine_->tick(dC);
@@ -149,32 +155,42 @@ void Daemon::runLoop() {
             nextTick = now + std::chrono::milliseconds(tickMs);
         }
 
-        if (detection_ && detection_->running()) detection_->poll();
+        if (detection_ && detection_->running()) {
+            detection_->poll();
+        }
+
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
 
 void Daemon::shutdown() {
+    // Stop loop flags
     stop_.store(true, std::memory_order_relaxed);
     running_.store(false, std::memory_order_relaxed);
 
+    // Stop detection first
     if (detection_) {
         detection_->abort();
         detection_.reset();
     }
 
+    // Restore original pwm*_enable so BIOS/driver can take over again
     for (const auto& it : origPwmEnable_) {
         Hwmon::writeEnable(it.first, it.second);
     }
 
+    // Stop RPC and disable engine last
     if (rpcServer_) rpcServer_->stop();
-    if (engine_) engine_->enable(false);
+    if (engine_)    engine_->enable(false);
 
+    // Remove PID file
     if (!cfg_.pidfile.empty()) {
         std::error_code ec;
         std::filesystem::remove(cfg_.pidfile, ec);
     }
 }
+
+// ---------- telemetry / engine control ----------
 
 bool Daemon::telemetryGet(std::string& out) const {
     return telemetry_.get(out);
@@ -189,16 +205,18 @@ void Daemon::engineEnable(bool on) {
 }
 
 void Daemon::setEngineDeltaC(double v) {
-    deltaC_ = clampd(v, 0.0, 10.0);
+    deltaC_ = std::clamp(v, 0.0, 10.0);
 }
 
 void Daemon::setEngineForceTickMs(int v) {
-    forceTickMs_ = clampi(v, 100, 10000);
+    forceTickMs_ = std::clamp(v, 100, 10000);
 }
 
 void Daemon::setEngineTickMs(int v) {
-    tickMs_ = clampi(v, 5, 1000);
+    tickMs_ = std::clamp(v, 5, 1000);
 }
+
+// ---------- detection passthrough ----------
 
 bool Daemon::detectionStart() {
     if (detection_ && detection_->running()) return false;
@@ -219,10 +237,10 @@ DetectionStatus Daemon::detectionStatus() const {
     DetectionStatus s{};
     if (!detection_) return s;
     auto st = detection_->status();
-    s.running = st.running;
+    s.running      = st.running;
     s.currentIndex = st.currentIndex;
-    s.total = st.total;
-    s.phase = st.phase;
+    s.total        = st.total;
+    s.phase        = st.phase;
     return s;
 }
 
@@ -230,6 +248,8 @@ std::vector<int> Daemon::detectionResults() const {
     if (!detection_) return {};
     return detection_->results();
 }
+
+// ---------- profiles ----------
 
 bool Daemon::applyProfile(const Profile& p) {
     if (!engine_) return false;
@@ -255,12 +275,14 @@ bool Daemon::applyProfileFile(const std::string& path) {
     std::string ierr;
     if (FanControlImport::LoadAndMap(path, hwmon_.temps, hwmon_.pwms, p, ierr)) {
         engine_->applyProfile(p);
-        LFC_LOGI("profile: imported & applied '%s'", path.c_str());
+        LFC_LOGI("profile: imported & applied '%s' (FanControl.Releases)", path.c_str());
         return true;
     }
     LFC_LOGW("profile: import failed for '%s': %s", path.c_str(), ierr.c_str());
     return false;
 }
+
+// ---------- RPC registry ----------
 
 std::vector<CommandInfo> Daemon::listRpcCommands() const {
     if (!rpcRegistry_) return {};

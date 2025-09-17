@@ -43,13 +43,15 @@ struct DaemonConfig {
     std::string configFile      = "";                       // LFCD_CONFIG (path)
 };
 
+// load/save helpers
 DaemonConfig loadDaemonConfig(const std::string& configPath, std::string* err = nullptr);
 DaemonConfig loadDaemonConfig(std::string* err = nullptr);
 
 bool saveDaemonConfig(const DaemonConfig& cfg, std::string* err = nullptr);
 bool saveDaemonConfig(const DaemonConfig& cfg, const std::string& path, std::string* err);
 
-bool parseBool(const std::string& s);
+// misc utils
+bool        parseBool(const std::string& s);
 std::string expandUserPath(const std::string& p);
 
 } // namespace lfc
