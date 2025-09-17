@@ -1,4 +1,3 @@
-````markdown
 # Linux Fan Control — `lfcd` JSON‑RPC API
 
 This document lists all RPC commands exposed by the daemon and their possible parameters.
@@ -300,5 +299,3 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"profile.verifyMapping","params"
 | nc 127.0.0.1 8777
 ```
 
-```
-```
