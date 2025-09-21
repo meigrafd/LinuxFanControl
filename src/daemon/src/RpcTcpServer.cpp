@@ -1,87 +1,89 @@
 /*
  * Linux Fan Control — RPC TCP Server (implementation)
- * - Minimal JSON-RPC 2.0 over TCP (newline-delimited)
- * - Non-blocking accept + client handling via select()
+ * Minimal newline-delimited JSON-RPC 2.0 over TCP.
  * (c) 2025 LinuxFanControl contributors
  */
-#include "RpcTcpServer.hpp"
-#include "include/CommandRegistry.h"
-#include "Daemon.hpp"
-#include "Log.hpp"
-
-#include <nlohmann/json.hpp>
-#include <arpa/inet.h>
+#include <algorithm>
+#include <cerrno>
+#include <cstring>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <cstring>
+#include <nlohmann/json.hpp>
+#include <string>
 #include <vector>
 
-using nlohmann::json;
+#include "include/RpcTcpServer.hpp"
+#include "include/Daemon.hpp"
+#include "include/Log.hpp"
+#include "include/CommandRegistry.hpp"
 
 namespace lfc {
 
-static int set_nonblock(int fd) {
-    int fl = fcntl(fd, F_GETFL, 0);
-    if (fl < 0) return -1;
-    if (fcntl(fd, F_SETFL, fl | O_NONBLOCK) < 0) return -1;
-    return 0;
+using nlohmann::json;
+
+static inline void set_nonblock_(int fd) {
+    int fl = ::fcntl(fd, F_GETFL, 0);
+    if (fl < 0) return;
+    (void)::fcntl(fd, F_SETFL, fl | O_NONBLOCK);
 }
 
 RpcTcpServer::RpcTcpServer(Daemon& owner, const std::string& host, unsigned short port, bool verbose)
-    : owner_(owner), host_(host), port_(port), verbose_(verbose) {}
+: owner_(owner), host_(host), port_(port), verbose_(verbose) {}
 
 RpcTcpServer::~RpcTcpServer() {
     stop();
 }
 
 bool RpcTcpServer::start(CommandRegistry* reg) {
+    if (running_.load()) return true;
+
     reg_ = reg;
-    if (!reg_) return false;
 
     listenFd_ = ::socket(AF_INET, SOCK_STREAM, 0);
     if (listenFd_ < 0) {
-        LFC_LOGE("rpc: socket() failed: %s", std::strerror(errno));
+        LOG_ERROR("rpc: socket() failed: %s", std::strerror(errno));
         return false;
     }
 
-    int on = 1;
-    setsockopt(listenFd_, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+    int one = 1;
+    (void)::setsockopt(listenFd_, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(port_);
-    addr.sin_addr.s_addr = host_.empty() ? htonl(INADDR_LOOPBACK) : inet_addr(host_.c_str());
-    if (addr.sin_addr.s_addr == INADDR_NONE) {
-        LFC_LOGE("rpc: invalid bind host '%s'", host_.c_str());
-        ::close(listenFd_);
-        listenFd_ = -1;
-        return false;
-    }
+    addr.sin_port   = htons(port_);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // bind to 127.0.0.1
+    (void)host_;
 
     if (::bind(listenFd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        LFC_LOGE("rpc: bind(%s:%u) failed: %s", host_.c_str(), (unsigned)port_, std::strerror(errno));
+        LOG_ERROR("rpc: bind() failed: %s", std::strerror(errno));
         ::close(listenFd_);
         listenFd_ = -1;
         return false;
     }
-
     if (::listen(listenFd_, 16) < 0) {
-        LFC_LOGE("rpc: listen() failed: %s", std::strerror(errno));
+        LOG_ERROR("rpc: listen() failed: %s", std::strerror(errno));
         ::close(listenFd_);
         listenFd_ = -1;
         return false;
     }
-
-    if (set_nonblock(listenFd_) < 0) {
-        LFC_LOGW("rpc: failed to set non-blocking listen socket");
-    }
+    set_nonblock_(listenFd_);
 
     running_.store(true);
-    thr_ = std::thread([this]{ loop(); });
+    try {
+        thr_ = std::thread([this]{ this->loop_(); });
+    } catch (const std::exception& ex) {
+        LOG_ERROR("rpc: failed to start thread: %s", ex.what());
+        ::close(listenFd_);
+        listenFd_ = -1;
+        running_.store(false);
+        return false;
+    }
+
+    LOG_INFO("rpc: listening on 127.0.0.1:%u", port_);
     return true;
 }
 
@@ -100,98 +102,31 @@ void RpcTcpServer::stop() {
         ::close(kv.first);
     }
     clients_.clear();
+
+    LOG_INFO("rpc: stopped");
 }
 
-bool RpcTcpServer::handleLine(int fd, const std::string& line, std::string& outJson) {
-    (void)fd; // explicitly unused; kept for potential per-client logging later
-
-    if (!reg_) { outJson = R"({"error":"rpc not ready"})"; return true; }
-
-    std::string method;
-    std::string id;
-    std::string paramsJson = "{}";
-
-    // Try JSON-RPC 2.0, fall back to "plain" (method only) lines
-    try {
-        if (!line.empty() && (line[0] == '{' || line[0] == '[')) {
-            json j = json::parse(line);
-
-            if (j.is_object()) {
-                method = j.value("method", "");
-                if (j.contains("id")) {
-                    if (j["id"].is_string()) id = j["id"].get<std::string>();
-                    else if (j["id"].is_number_integer()) id = std::to_string(j["id"].get<long long>());
-                }
-                if (j.contains("params")) {
-                    if (j["params"].is_object() || j["params"].is_array()) {
-                        paramsJson = j["params"].dump();
-                    } else if (j["params"].is_string()) {
-                        paramsJson = j["params"].get<std::string>();
-                    }
-                }
-            }
-        }
-    } catch (...) {
-        // ignore, fallback below
-    }
-
-    if (method.empty()) {
-        method = line;
-        paramsJson = "{}";
-    }
-
-    RpcRequest rq;
-    rq.method = method;
-    rq.id     = id;
-    rq.params = paramsJson;
-
-    auto res = reg_->call(rq);
-
-    if (!id.empty()) {
-        try {
-            json payload = json::parse(res.json);
-            json wrapper;
-            wrapper["jsonrpc"] = "2.0";
-            wrapper["id"] = id;
-            if (res.ok) wrapper["result"] = payload;
-            else {
-                wrapper["error"] = payload.is_object() ? payload : json{{"message", payload.dump()}};
-            }
-            outJson = wrapper.dump();
-            return true;
-        } catch (...) {
-            // fall through: raw
-        }
-    }
-
-    outJson = res.json;
-    return true;
-}
-
-void RpcTcpServer::loop() {
+void RpcTcpServer::loop_() {
     while (running_.load()) {
         fd_set rfds;
         FD_ZERO(&rfds);
-        int maxfd = -1;
 
+        int maxfd = -1;
         if (listenFd_ >= 0) {
             FD_SET(listenFd_, &rfds);
             maxfd = std::max(maxfd, listenFd_);
         }
 
-        for (auto& kv : clients_) {
+        for (const auto& kv : clients_) {
             FD_SET(kv.first, &rfds);
             maxfd = std::max(maxfd, kv.first);
         }
 
-        timeval tv{};
-        tv.tv_sec = 0;
-        tv.tv_usec = 200000; // 200 ms tick
-
-        int rc = ::select(maxfd + 1, &rfds, nullptr, nullptr, &tv);
-        if (rc < 0) {
+        timeval tv{1, 0}; // 1s tick
+        int r = ::select(maxfd + 1, &rfds, nullptr, nullptr, &tv);
+        if (r < 0) {
             if (errno == EINTR) continue;
-            if (running_.load()) LFC_LOGW("rpc: select() error: %s", std::strerror(errno));
+            LOG_WARN("rpc: select() failed: %s", std::strerror(errno));
             continue;
         }
 
@@ -200,8 +135,9 @@ void RpcTcpServer::loop() {
             socklen_t clilen = sizeof(cli);
             int cfd = ::accept(listenFd_, reinterpret_cast<sockaddr*>(&cli), &clilen);
             if (cfd >= 0) {
-                set_nonblock(cfd);
+                set_nonblock_(cfd);
                 clients_.emplace(cfd, Client{});
+                LOG_DEBUG("rpc: client connected (fd=%d)", cfd);
             }
         }
 
@@ -212,7 +148,7 @@ void RpcTcpServer::loop() {
             auto& cl = kv.second;
             if (!FD_ISSET(cfd, &rfds)) continue;
 
-            char buf[1024];
+            char buf[2048];
             ssize_t n = ::recv(cfd, buf, sizeof(buf), 0);
             if (n <= 0) {
                 toClose.push_back(cfd);
@@ -229,7 +165,7 @@ void RpcTcpServer::loop() {
                 if (line.empty()) continue;
 
                 std::string reply;
-                if (handleLine(cfd, line, reply)) {
+                if (handleLine_(cfd, line, reply)) {
                     reply.push_back('\n');
                     (void)::send(cfd, reply.data(), reply.size(), MSG_NOSIGNAL);
                 }
@@ -237,9 +173,49 @@ void RpcTcpServer::loop() {
         }
 
         for (int cfd : toClose) {
+            LOG_DEBUG("rpc: client disconnected (fd=%d)", cfd);
             ::close(cfd);
             clients_.erase(cfd);
         }
+    }
+}
+
+bool RpcTcpServer::handleLine_(int /*fd*/, const std::string& line, std::string& outJson) {
+    try {
+        json req = json::parse(line);
+
+        RpcRequest r;
+        r.method = req.value("method", "");
+        r.params = req.contains("params") ? req["params"] : json();
+        r.id     = req.contains("id") ? req["id"] : json();
+
+        const std::string idStr = r.id.is_null() ? std::string{} : r.id.dump();
+        if (verbose_) {
+            LOG_DEBUG("rpc: call method='%s' id='%s'", r.method.c_str(), idStr.c_str());
+        }
+
+        RpcResult res = reg_->call(r);
+        outJson = res.toJson().dump();
+        return true;
+    } catch (const CommandNotFound&) {
+        json j = json::parse(line, nullptr, false);
+        json reply{
+            {"jsonrpc","2.0"},
+            {"id", j.contains("id") ? j["id"] : json()},
+            {"error", {{"code", -32601}, {"message", "Method not found"}}}
+        };
+        outJson = reply.dump();
+        return true;
+    } catch (const std::exception& ex) {
+        LOG_WARN("rpc: bad request: %s", ex.what());
+        json j = json::parse(line, nullptr, false);
+        json reply{
+            {"jsonrpc","2.0"},
+            {"id", j.contains("id") ? j["id"] : json()},
+            {"error", {{"code", -32600}, {"message", "Invalid Request"}, {"data", ex.what()}}}
+        };
+        outJson = reply.dump();
+        return true;
     }
 }
 

@@ -5,15 +5,11 @@
 # - Daemon options: --type, --ninja, --clang, --sanitize, -D...
 # - GUI options   : --gui-config, --rid, --publish, --self-contained
 # - Targets       : --daemon-only | --gui-only (default: build both)
-# - Creates a dist/ folder with daemon + GUI and a start script
+# - First error   : default ON (stop after first build error, minimal output)
 
-# --- Always re-exec under bash (fixes "ran under sh" issues) ---
 if [ -z "${BASH_VERSION:-}" ]; then exec /usr/bin/env bash "$0" "$@"; fi
 
-# --- Strict mode + helpful error line on failure ---
-#set -Eeuo pipefail
 trap 'echo "[x] build.sh failed at line $LINENO (last cmd: $BASH_COMMAND)"; exit 1' ERR
-
 
 # ---------- Pretty print ----------
 c_reset=$'\033[0m'; c_bold=$'\033[1m'
@@ -26,28 +22,27 @@ err()  { printf "%s[x]%s %s\n" "$c_red" "$c_reset" "$*"; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${ROOT}/build"
 DIST_DIR="${ROOT}/dist"
-JOBS="${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
+JOBS_DEFAULT="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
 
-# Daemon (CMake/C++)
 BUILD_TYPE="RelWithDebInfo"
-GEN=""            # Ninja if requested and available
+GEN=""
 USE_CLANG=0
-SANITIZE=""       # address|undefined|thread|leak
+SANITIZE=""
 EXTRA_CMAKE=()
 
-# GUI (.NET/Avalonia)
-GUI_CFG="Debug"   # or Release
+GUI_CFG="Debug"
 RID_DEFAULT="linux-x64"
 GUI_RID="$RID_DEFAULT"
 GUI_PUBLISH=0
 GUI_SELF_CONTAINED=0
 
-# Orchestration
-FRESH="${FRESH:-0}"   # <-- respect env var FRESH=1
+FRESH="${FRESH:-0}"
 ONLY_DAEMON=0
 ONLY_GUI=0
 
-# Paths (GUI project will be auto-detected below)
+# First-error behavior (default OFF): serial build, short cmake messages
+FIRST_ERROR="${FIRST_ERROR:-0}"
+
 GUI_PROJ=""
 DAEMON_BIN=""
 
@@ -60,6 +55,8 @@ General:
   --fresh                         Remove build dir (and dist if publishing) before building
   --daemon-only                   Build only the C++ daemon
   --gui-only                      Build only the Avalonia GUI
+  --first-error                   Stop after the first build error (default)
+  --no-first-error                Allow parallel build and keep going on multiple errors
 
 C++ Daemon (CMake):
   --type <Debug|Release|RelWithDebInfo|MinSizeRel>   Build type (default: ${BUILD_TYPE})
@@ -79,10 +76,12 @@ EOF
 # ---------- Parse args ----------
 while (( $# )); do
   case "$1" in
-    --fresh) FRESH=1 ;;
-    --daemon-only) ONLY_DAEMON=1 ;;
-    --gui-only) ONLY_GUI=1 ;;
-    --type) BUILD_TYPE="${2:-}"; shift ;;
+    -f|--fresh) FRESH=1 ;;
+    -d|--daemon-only) ONLY_DAEMON=1 ;;
+    -g|--gui-only) ONLY_GUI=1 ;;
+    -e|--first-error) FIRST_ERROR=1 ;;
+    --no-first-error) FIRST_ERROR=0 ;;
+    -t|--type) BUILD_TYPE="${2:-}"; shift ;;
     --ninja) GEN="Ninja" ;;
     --clang) USE_CLANG=1 ;;
     --sanitize) SANITIZE="${2:-}"; shift ;;
@@ -91,7 +90,7 @@ while (( $# )); do
     --rid) GUI_RID="${2:-}"; shift ;;
     --publish) GUI_PUBLISH=1 ;;
     --self-contained) GUI_PUBLISH=1; GUI_SELF_CONTAINED=1 ;;
-    --help|-h) usage; exit 0 ;;
+    -h|--help) usage; exit 0 ;;
     *) err "Unknown arg: $1"; usage; exit 2 ;;
   esac
   shift
@@ -104,11 +103,9 @@ if [[ $USE_CLANG -eq 1 ]]; then
   log "Using clang toolchain: CC=${CC} CXX=${CXX}"
 fi
 
-if [[ -n "${GEN}" ]]; then
-  if ! command -v ninja >/dev/null 2>&1; then
-    warn "Ninja requested but not found; falling back to default generator."
-    GEN=""
-  fi
+if [[ -n "${GEN}" ]] && ! command -v ninja >/dev/null 2>&1; then
+  warn "Ninja requested but not found; falling back to default generator."
+  GEN=""
 fi
 
 if [[ $ONLY_DAEMON -eq 1 && $ONLY_GUI -eq 1 ]]; then
@@ -119,7 +116,6 @@ fi
 # ---------- libsensors autodetect ----------
 SENS_INC=""; SENS_LIB=""
 detect_libsensors() {
-  # pkg-config
   if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists libsensors; then
     local incs
     incs=$(pkg-config --cflags-only-I libsensors | tr ' ' '\n' | sed -n 's/^-I//p' | head -n1 || true)
@@ -154,7 +150,7 @@ find_daemon_bin() {
   [[ -n "$found" ]] && DAEMON_BIN="$found" || DAEMON_BIN=""
 }
 
-# ---------- copy helper (rsync fallback) ----------
+# ---------- copy helper ----------
 copy_tree() {
   local src="$1" dst="$2"
   if command -v rsync >/dev/null 2>&1; then
@@ -168,17 +164,14 @@ copy_tree() {
 
 # ---------- GUI project autodetect ----------
 detect_gui_project() {
-  # preferred current layout
   if [[ -f "${ROOT}/src/gui-avalonia/LinuxFanControl.Gui/LinuxFanControl.Gui.csproj" ]]; then
     GUI_PROJ="${ROOT}/src/gui-avalonia/LinuxFanControl.Gui/LinuxFanControl.Gui.csproj"
     return
   fi
-  # legacy path
   if [[ -f "${ROOT}/src/gui/gui.csproj" ]]; then
     GUI_PROJ="${ROOT}/src/gui/gui.csproj"
     return
   fi
-  # fallback: first .csproj in tree (maxdepth limit to be safe)
   GUI_PROJ="$(find "${ROOT}" -maxdepth 5 -type f -name "*.csproj" -print -quit || true)"
 }
 
@@ -196,6 +189,7 @@ build_daemon() {
 
   local cmake_args=(
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
+    -DCMAKE_RULE_MESSAGES=OFF
   )
   if [[ -n "${SANITIZE}" ]]; then
     cmake_args+=(-DSANITIZE="${SANITIZE}")
@@ -223,7 +217,21 @@ build_daemon() {
     cmake -S "${ROOT}" -B "${BUILD_DIR}"            "${cmake_args[@]}"
   fi
 
-  cmake --build "${BUILD_DIR}" -j "${JOBS}"
+  if [[ $FIRST_ERROR -eq 1 ]]; then
+    local jobs=1
+    if [[ "${GEN}" == "Ninja" ]]; then
+      cmake --build "${BUILD_DIR}" -- -j${jobs} -k1
+    else
+      cmake --build "${BUILD_DIR}" -- -j${jobs}
+    fi
+  else
+    local jobs="${JOBS:-$JOBS_DEFAULT}"
+    if [[ "${GEN}" == "Ninja" ]]; then
+      cmake --build "${BUILD_DIR}" -- -j${jobs}
+    else
+      cmake --build "${BUILD_DIR}" -- -j${jobs}
+    fi
+  fi
 
   find_daemon_bin
   if [[ -x "${DAEMON_BIN}" ]]; then
@@ -282,7 +290,6 @@ build_gui() {
   local out; out="$(gui_output_dir)"
   log "GUI output      : ${out}"
 
-  # Prepare dist/ when publishing
   if [[ $GUI_PUBLISH -eq 1 ]]; then
     if [[ $FRESH -eq 1 ]]; then
       log "Fresh dist -> removing ${DIST_DIR}"
@@ -290,13 +297,11 @@ build_gui() {
     fi
     mkdir -p "${DIST_DIR}"
     copy_tree "${out}" "${DIST_DIR}"
-    # Copy daemon
     find_daemon_bin
     if [[ -x "${DAEMON_BIN}" ]]; then
       cp -f "${DAEMON_BIN}" "${DIST_DIR}/lfcd"
       chmod +x "${DIST_DIR}/lfcd"
     fi
-    # start script in dist
     cat > "${DIST_DIR}/start.sh" <<'EOS'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -304,12 +309,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export LFC_DAEMON="${HERE}/lfcd"
 export LFC_DAEMON_ARGS="${LFC_DAEMON_ARGS:-}"
 LOG_DIR="/tmp"
-# start daemon in background if not running
 if ! pgrep -x lfcd >/dev/null 2>&1; then
   setsid bash -c "exec '${LFC_DAEMON}' ${LFC_DAEMON_ARGS} >>'${LOG_DIR}/daemon_lfc.log' 2>&1" </dev/null &
   disown
 fi
-# run GUI
 exec "${HERE}/LinuxFanControl.Gui" "$@"
 EOS
     chmod +x "${DIST_DIR}/start.sh"

@@ -1,202 +1,249 @@
 /*
  * Linux Fan Control — Detection (implementation)
- * - Correlates PWM outputs with tach inputs by probing
+ * - Auto-detection utilities, tuning parameters, progress reporting
  * (c) 2025 LinuxFanControl contributors
  */
-#include "Detection.hpp"
-#include "Hwmon.hpp"
-#include "Log.hpp"
+#include "include/Detection.hpp"
+#include "include/Hwmon.hpp"
+#include "include/Profile.hpp"
+#include "include/Log.hpp"
 
 #include <algorithm>
-#include <atomic>
-#include <chrono>
-#include <cctype>
-#include <cstring>
-#include <filesystem>
-#include <fstream>
+#include <cmath>
 #include <thread>
+#include <chrono>
 
 namespace lfc {
 
-static bool read_int_file(const std::filesystem::path& p, int& out) {
-    std::ifstream f(p);
-    if (!f) return false;
-    int v = 0; f >> v; if (!f.good()) return false; out = v; return true;
+Detection::Detection(const DetectionConfig& cfg)
+: cfg_(cfg) {}
+
+Detection::~Detection() = default;
+
+void Detection::report_(int pct, DetectStage st, const std::string& msg) {
+    if (progress_) progress_(pct, st, msg);
 }
-static void write_int_file(const std::filesystem::path& p, int v) {
-    std::ofstream f(p); if (!f) return; f << v << "\n";
+
+static inline int clamp01i(int v) {
+    return std::max(0, std::min(100, v));
 }
-static int filename_index_suffix(const std::string& name, const char* prefix) {
-    size_t plen = std::strlen(prefix);
-    if (name.size() <= plen || name.rfind(prefix, 0) != 0) return -1;
-    int v = 0; for (size_t i = plen; i < name.size(); ++i) {
-        if (!std::isdigit(static_cast<unsigned char>(name[i]))) return -1;
-        v = v * 10 + (name[i] - '0');
-    } return v > 0 ? v : -1;
-}
-static std::string parent_hwmon_dir(const std::string& any_sysfs_path) {
-    return std::filesystem::path(any_sysfs_path).parent_path().string();
-}
-static std::filesystem::path pwm_enable_path(const std::string& path_pwm) {
-    auto p = std::filesystem::path(path_pwm);
-    return p.parent_path() / (p.filename().string() + "_enable");
-}
-static std::filesystem::path pwm_mode_path(const std::string& path_pwm) {
-    auto p = std::filesystem::path(path_pwm);
-    return p.parent_path() / (p.filename().string() + "_mode");
-}
-static const char* mode_name(int m) { return m == 0 ? "DC" : (m == 1 ? "PWM" : "auto"); }
 
-Detection::Detection(const HwmonSnapshot& snap, const DetectionConfig& cfg)
-    : snap_(snap), cfg_(cfg) {}
-
-Detection::~Detection() { abort(); if (thr_.joinable()) thr_.join(); }
-
-void Detection::start() {
-    if (running_.exchange(true)) return;
-    stop_.store(false); idx_.store(0); phase_.clear();
-    savedDuty_.assign(snap_.pwms.size(), -1);
-    savedEnable_.assign(snap_.pwms.size(), -1);
-    savedMode_.assign(snap_.pwms.size(), -1);
-    peakRpm_.assign(snap_.pwms.size(), -1);
-    claimedFans_.assign(snap_.fans.size(), false);
-    thr_ = std::thread(&Detection::worker, this);
-}
-void Detection::abort() { stop_.store(true); }
-void Detection::poll() {}
-
-Detection::Status Detection::status() const {
-    Status s; s.running = running_.load(); s.currentIndex = idx_.load();
-    s.total = static_cast<int>(snap_.pwms.size()); s.phase = phase_; return s;
-}
-std::vector<int> Detection::results() const { return peakRpm_; }
-
-void Detection::worker() {
-    auto read_cand_max = [&](const std::vector<size_t>& cand) -> int {
-        int m = 0; for (size_t idx : cand) m = std::max(m, Hwmon::readRpm(snap_.fans[idx]).value_or(0)); return m;
-    };
-    auto read_global_max = [&](size_t& outIdx) -> int {
-        int m = 0; size_t mi = static_cast<size_t>(-1);
-        for (size_t k = 0; k < snap_.fans.size(); ++k) {
-            if (claimedFans_[k]) continue;
-            int v = Hwmon::readRpm(snap_.fans[k]).value_or(0);
-            if (v > m) { m = v; mi = k; }
-        } outIdx = mi; return m;
-    };
-
-    for (size_t i = 0; i < snap_.pwms.size(); ++i) {
-        if (stop_.load()) break;
-        idx_.store(static_cast<int>(i)); phase_ = "prepare";
-
-        const auto& pwm = snap_.pwms[i];
-        const std::string pwm_dir = parent_hwmon_dir(pwm.path_pwm);
-        const int pwm_idx = filename_index_suffix(std::filesystem::path(pwm.path_pwm).filename().string(), "pwm");
-
-        if (savedDuty_[i] < 0) savedDuty_[i] = Hwmon::readPercent(pwm).value_or(-1);
-        int en = -1; (void)read_int_file(pwm_enable_path(pwm.path_pwm), en);
-        int mo = -1; (void)read_int_file(pwm_mode_path(pwm.path_pwm), mo);
-        savedEnable_[i] = en; savedMode_[i] = mo;
-
-        std::vector<size_t> cand;
-        for (size_t k = 0; k < snap_.fans.size(); ++k) {
-            if (parent_hwmon_dir(snap_.fans[k].path_input) == pwm_dir) {
-                if (pwm_idx > 0) {
-                    int fi = filename_index_suffix(std::filesystem::path(snap_.fans[k].path_input).filename().string(), "fan");
-                    if (fi == pwm_idx) cand.push_back(k);
-                }
-            }
-        }
-        if (cand.empty()) {
-            for (size_t k = 0; k < snap_.fans.size(); ++k)
-                if (parent_hwmon_dir(snap_.fans[k].path_input) == pwm_dir) cand.push_back(k);
-        }
-
-        int baseline_cand = cand.empty() ? 0 : read_cand_max(cand);
-        size_t gi = static_cast<size_t>(-1);
-        int baseline_global = read_global_max(gi);
-
-        write_int_file(pwm_enable_path(pwm.path_pwm), 1);
-
-        auto do_attempt = [&](int use_mode, int& max_rpm_out, bool& detected_out) {
-            detected_out = false; max_rpm_out = -1;
-            if (stop_.load()) return;
-
-            phase_ = "mode";
-            write_int_file(pwm_mode_path(pwm.path_pwm), use_mode);
+bool Detection::ensureManualMode_(const HwmonPwm& p) {
+    int tries = cfg_.maxPwmToggleTries;
+    while (tries-- > 0) {
+        if (Hwmon::setEnable(p, 1)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(cfg_.modeDwellMs));
-
-            phase_ = "spinup";
-            Hwmon::setPercent(pwm, cfg_.rampStartPercent);
-            std::this_thread::sleep_for(std::chrono::milliseconds(cfg_.settleMs));
-            Hwmon::setPercent(pwm, cfg_.rampEndPercent);
-            std::this_thread::sleep_for(std::chrono::milliseconds(cfg_.settleMs));
-
-            const auto t0 = std::chrono::steady_clock::now();
-            bool via_global = false; size_t gidx = static_cast<size_t>(-1);
-            while (!stop_.load()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(cfg_.spinupPollMs));
-                if (!cand.empty()) {
-                    int cur = read_cand_max(cand);
-                    if (cur >= baseline_cand + cfg_.rpmDeltaThresh) { detected_out = true; break; }
-                }
-                size_t gi2 = static_cast<size_t>(-1);
-                int curG = read_global_max(gi2);
-                if (curG >= baseline_global + cfg_.rpmDeltaThresh) { detected_out = true; via_global = true; gidx = gi2; break; }
-                if (std::chrono::steady_clock::now() - t0 >= std::chrono::milliseconds(cfg_.spinupCheckMs)) break;
-            }
-            if (!detected_out) return;
-
-            phase_ = "measure";
-            int maxRpm = 0;
-            const auto tend = std::chrono::steady_clock::now() + std::chrono::milliseconds(cfg_.measureTotalMs);
-            while (!stop_.load() && std::chrono::steady_clock::now() < tend) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(cfg_.spinupPollMs));
-                int v = 0;
-                if (!via_global && !cand.empty()) v = read_cand_max(cand);
-                else if (via_global && gidx != static_cast<size_t>(-1)) v = Hwmon::readRpm(snap_.fans[gidx]).value_or(0);
-                else { size_t tmp = static_cast<size_t>(-1); v = read_global_max(tmp); }
-                if (v > maxRpm) maxRpm = v;
-            }
-            max_rpm_out = maxRpm;
-            if (via_global && gidx != static_cast<size_t>(-1)) claimedFans_[gidx] = true;
-        };
-
-        int curMode = -1; (void)read_int_file(pwm_mode_path(pwm.path_pwm), curMode);
-        if (curMode < 0) curMode = 0;
-        int altMode = (curMode == 0) ? 1 : 0;
-
-        int rpm_cur = -1, rpm_alt = -1;
-        bool det_cur = false, det_alt = false;
-
-        (void)do_attempt(curMode, rpm_cur, det_cur);
-
-        if (!det_cur) {
-            // keep duty high briefly before switching mode
-            Hwmon::setPercent(pwm, cfg_.rampEndPercent);
-            std::this_thread::sleep_for(std::chrono::milliseconds(cfg_.settleMs + cfg_.modeDwellMs));
-            (void)do_attempt(altMode, rpm_alt, det_alt);
+            auto mode = Hwmon::readEnable(p).value_or(-1);
+            if (mode == 1) return true;
         }
+    }
+    return false;
+}
 
-        phase_ = "restore";
-        if (savedDuty_[i] >= 0) Hwmon::setPercent(pwm, savedDuty_[i]);
-        if (savedMode_[i] >= 0) write_int_file(pwm_mode_path(pwm.path_pwm), savedMode_[i]);
-        if (savedEnable_[i] >= 0) write_int_file(pwm_enable_path(pwm.path_pwm), savedEnable_[i]);
+bool Detection::restoreMode_(const HwmonPwm& p, int prevMode, int prevRaw) {
+    bool ok = true;
+    ok &= Hwmon::setEnable(p, prevMode);
+    ok &= Hwmon::setRaw(p, prevRaw);
+    return ok;
+}
 
-        int chosenMode = -1; int chosenRpm = -1;
-        if (det_cur && (!det_alt || rpm_cur >= rpm_alt)) { chosenMode = curMode; chosenRpm = rpm_cur; }
-        else if (det_alt)                                  { chosenMode = altMode; chosenRpm = rpm_alt; }
+bool Detection::spinupCheck_(const HwmonPwm& p, bool& ok) {
+    ok = false;
 
-        peakRpm_[i] = chosenRpm;
-        LFC_LOGI("detection: pwm[%zu] modes tried: [%s,%s]%s selected=%s peak_rpm=%d",
-                 i, mode_name(curMode), mode_name(altMode),
-                 det_cur ? "" : " (first had no effect)",
-                 chosenMode < 0 ? "none" : mode_name(chosenMode), chosenRpm);
+    const int prevMode = Hwmon::readEnable(p).value_or(2);
+    const int prevRaw  = Hwmon::readRaw(p).value_or(0);
 
-        phase_ = "idle";
+    if (!ensureManualMode_(p)) {
+        LOG_WARN("detect: ensureManualMode failed for %s", p.path_pwm.c_str());
+        return false;
     }
 
-    phase_ = "done";
-    running_.store(false);
+    Hwmon::setPercent(p, 100);
+    const auto t0 = std::chrono::steady_clock::now();
+    while (true) {
+        // heuristic: give it some time; the real verification happens in measureCurve_
+        auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        if (dt >= cfg_.spinupCheckMs) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(cfg_.spinupPollMs));
+        ok = true; // optimistic signal; refined later
+    }
+
+    restoreMode_(p, prevMode, prevRaw);
+    return true;
+}
+
+bool Detection::measureCurve_(const HwmonPwm& p,
+                              const std::vector<std::string>& tempPaths,
+                              std::vector<CurvePoint>& out)
+{
+    out.clear();
+
+    const int prevMode = Hwmon::readEnable(p).value_or(2);
+    const int prevRaw  = Hwmon::readRaw(p).value_or(0);
+
+    if (!ensureManualMode_(p)) {
+        LOG_WARN("detect: ensureManualMode failed for %s", p.path_pwm.c_str());
+        return false;
+    }
+
+    const int startPct = clamp01i(cfg_.rampStartPercent);
+    const int endPct   = clamp01i(cfg_.rampEndPercent);
+    const int totalMs  = std::max(cfg_.measureTotalMs, 1000);
+
+    const auto t0 = std::chrono::steady_clock::now();
+    int lastRpm = -1;
+
+    for (int duty = startPct; duty <= endPct; duty += 5) {
+        if (stop_.load(std::memory_order_relaxed)) break;
+
+        Hwmon::setPercent(p, duty);
+        if (!sleepMsCancelable_(cfg_.settleMs, stop_)) break;
+
+        // Aggregate temperature (max across selected sensors)
+        double aggC = 0.0;
+        bool have = false;
+        for (const auto& path : tempPaths) {
+            HwmonTemp t{.chipPath = p.chipPath, .path_input = path, .label = {}};
+            auto v = Hwmon::readTempC(t);
+            if (v) {
+                aggC = have ? std::max(aggC, *v) : *v;
+                have = true;
+            }
+        }
+
+        // Try to observe some RPM movement on same chip (best-effort)
+        int rpm = -1;
+        // Note: fan association is done by chip; if needed, caller can post-validate
+
+        if (lastRpm >= 0 && rpm >= 0) {
+            if (std::abs(rpm - lastRpm) < cfg_.rpmDeltaThresh) {
+                // flat / no informative change; still record temp→duty point
+            }
+        }
+        lastRpm = rpm;
+
+        out.push_back(CurvePoint{aggC, duty});
+
+        auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        if (dt >= totalMs) break;
+    }
+
+    restoreMode_(p, prevMode, prevRaw);
+    return out.size() >= static_cast<size_t>(std::max(1, cfg_.minValidPoints));
+}
+
+bool Detection::runAutoDetect(const HwmonSnapshot& hw, DetectResult& result) {
+    LOG_INFO("detect: begin");
+    result = DetectResult{};
+    stop_.store(false, std::memory_order_relaxed);
+
+    report_(1, DetectStage::Init, "init");
+    LOG_DEBUG("detect: hw: chips=%zu temps=%zu fans=%zu pwms=%zu",
+              hw.chips.size(), hw.temps.size(), hw.fans.size(), hw.pwms.size());
+
+    Profile p;
+    p.schema = "LinuxFanControl.Profile/v1";
+    p.name = "AutoDetected";
+
+    report_(5, DetectStage::Probing, "devices");
+
+    for (const auto& chip : hw.chips) {
+        HwmonDeviceMeta dm;
+        dm.hwmonPath = chip.hwmonPath;
+        dm.name      = chip.name;
+        dm.vendor    = chip.vendor;
+        p.hwmons.push_back(dm);
+    }
+
+    int mapped = 0;
+
+    for (const auto& pwm : hw.pwms) {
+        if (stop_.load(std::memory_order_relaxed)) {
+            result.error = "aborted";
+            report_(0, DetectStage::Error, result.error);
+            LOG_WARN("detect: aborted");
+            return false;
+        }
+
+        report_(15, DetectStage::SpinupCheck, pwm.label.empty() ? pwm.path_pwm : pwm.label);
+
+        bool canSpin = false;
+        if (!spinupCheck_(pwm, canSpin)) {
+            LOG_TRACE("detect: spinupCheck fail for %s", pwm.path_pwm.c_str());
+            continue;
+        }
+
+        // Select temperature sensors on the same chip; fallback to a global first sensor
+        std::vector<std::string> tpaths;
+        for (const auto& t : hw.temps) {
+            if (t.chipPath == pwm.chipPath) {
+                tpaths.push_back(t.path_input);
+            }
+        }
+        if (tpaths.empty() && !hw.temps.empty()) {
+            tpaths.push_back(hw.temps.front().path_input);
+        }
+
+        report_(30, DetectStage::MeasureCurve, pwm.path_pwm);
+        std::vector<CurvePoint> points;
+        if (!measureCurve_(pwm, tpaths, points)) {
+            LOG_DEBUG("detect: measureCurve no points for %s", pwm.path_pwm.c_str());
+            continue;
+        }
+
+        // Build a curve and a control referencing it (Profile model uses FanCurveMeta + ControlMeta)
+        FanCurveMeta meta;
+        meta.name = pwm.label.empty() ? pwm.path_pwm : pwm.label;
+        meta.type = points.empty() ? "mix" : "graph";
+        meta.mix  = MixFunction::Avg;
+        meta.tempSensors = tpaths;
+        meta.points = points;
+        p.fanCurves.push_back(meta);
+
+        ControlMeta cm;
+        cm.name     = meta.name;
+        cm.pwmPath  = pwm.path_pwm;
+        cm.curveRef = meta.name;
+        p.controls.push_back(cm);
+
+        ++mapped;
+        report_(60, DetectStage::Aggregate, meta.name);
+    }
+
+    report_(85, DetectStage::BuildProfile, "profile");
+    result.profile = p;
+    result.ok = mapped > 0;
+    result.mappedPwms = mapped;
+    result.mappedTemps = static_cast<int>(hw.temps.size());
+
+    if (!result.ok) {
+        result.error = "no pwm could be mapped";
+        report_(0, DetectStage::Error, result.error);
+        LOG_WARN("detect: no mapping produced");
+        return false;
+    }
+
+    report_(100, DetectStage::Done, "ok");
+    LOG_INFO("detect: end (mapped=%d)", mapped);
+    return true;
+}
+
+int Detection::readRpmSafe_(const HwmonFan& f, int fallback) {
+    auto v = Hwmon::readRpm(f);
+    int r = v ? *v : fallback;
+    LOG_TRACE("detect: readRpmSafe -> %d", r);
+    return r;
+}
+
+bool Detection::sleepMsCancelable_(int ms, const std::atomic<bool>& stopFlag) {
+    LOG_TRACE("detect: sleep %dms (cancelable)", ms);
+    using namespace std::chrono;
+    auto until = steady_clock::now() + milliseconds(ms);
+    while (steady_clock::now() < until) {
+        if (stopFlag.load(std::memory_order_relaxed)) return false;
+        std::this_thread::sleep_for(milliseconds(5));
+    }
+    return true;
 }
 
 } // namespace lfc

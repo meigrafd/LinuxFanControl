@@ -1,0 +1,14 @@
+/*
+ * Linux Fan Control — Auto-generated build config
+ * (c) 2025 LinuxFanControl contributors
+ */
+#pragma once
+
+/* Optional External GPU Libraries */
+#cmakedefine HAVE_NVML 1
+#cmakedefine HAVE_AMDSMI 1
+#cmakedefine HAVE_IGCL 1
+
+/* Optional Libraries */
+#cmakedefine HAVE_LIBHWMON 1
+#cmakedefine HAVE_SENSORS  1

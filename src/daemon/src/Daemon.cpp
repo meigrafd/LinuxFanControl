@@ -1,296 +1,299 @@
 /*
  * Linux Fan Control — Daemon (implementation)
- * - Initializes logging, telemetry, hwmon backend and RPC
- * - Applies LFCD_* env overrides (tick/deltaC/force)
- * - Stores/restores original pwm*_enable so BIOS/driver regains control on exit
  * (c) 2025 LinuxFanControl contributors
  */
+#include "include/Utils.hpp"
+#include "include/Daemon.hpp"
+#include "include/Engine.hpp"
+#include "include/Hwmon.hpp"
+#include "include/GpuMonitor.hpp"
+#include "include/ShmTelemetry.hpp"
+#include "include/Detection.hpp"
+#include "include/Log.hpp"
+#include "include/VendorMapping.hpp"
 
-#include "Daemon.hpp"
-
-#include "Engine.hpp"
-#include "RpcTcpServer.hpp"
-#include "RpcHandlers.hpp"
-#include "FanControlImport.hpp"
-#include "Detection.hpp"
-#include "Log.hpp"
-#include "Version.hpp"
-#include "include/CommandRegistry.h"
-
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <thread>
-#include <cstdlib>
-#include <algorithm>
-#include <chrono>
-#include <unistd.h> // getpid()
+
+namespace fs = std::filesystem;
 
 namespace lfc {
 
-// ---------- helpers ----------
-
-int Daemon::getenv_int(const char* key, int def) {
-    if (const char* s = std::getenv(key)) {
-        try { return std::stoi(s); } catch (...) {}
-    }
-    return def;
+Daemon::Daemon()
+: configPath_(),
+  telemetry_(nullptr)
+{
+    LOG_TRACE("daemon: ctor");
 }
 
-double Daemon::getenv_double(const char* key, double def) {
-    if (const char* s = std::getenv(key)) {
-        try { return std::stod(s); } catch (...) {}
-    }
-    return def;
+Daemon::Daemon(std::string cfgPath)
+: configPath_(std::move(cfgPath)),
+  telemetry_(nullptr)
+{}
+
+Daemon::~Daemon() {
+    LOG_TRACE("daemon: dtor");
+    shutdown();
 }
 
-std::string Daemon::ensure_profile_filename(const std::string& name) {
-    if (name.empty()) return name;
-    if (name.size() >= 5 && name.substr(name.size() - 5) == ".json") return name;
-    return name + ".json";
-}
+bool Daemon::init(const DaemonConfig& cfg, bool debugCli) {
+    LOG_INFO("daemon: init start");
+    cfg_   = cfg;
+    debug_ = debugCli || cfg.debug;
 
-// ---------- lifecycle ----------
-
-Daemon::Daemon() = default;
-Daemon::~Daemon() = default;
-
-bool Daemon::init(DaemonConfig& cfg, bool debugCli, const std::string& cfgPath, bool foreground) {
-    cfg_         = cfg;
-    debug_       = debugCli || cfg.debug;
-    configPath_  = cfgPath;
-    foreground_  = foreground;
-
-    if (cfg_.tickMs <= 0)      cfg_.tickMs = 25;
-    if (cfg_.forceTickMs <= 0) cfg_.forceTickMs = 1000;
-    if (cfg_.deltaC < 0.0)     cfg_.deltaC = 0.5;
-
-    tickMs_      = std::clamp(getenv_int("LFCD_TICK_MS",       cfg_.tickMs),      5,   1000);
-    deltaC_      = std::clamp(getenv_double("LFCD_DELTA_C",    cfg_.deltaC),      0.0, 10.0);
-    forceTickMs_ = std::clamp(getenv_int("LFCD_FORCE_TICK_MS", cfg_.forceTickMs), 100, 10000);
-
-    const std::string logPath = cfg_.logfile.empty() ? std::string("/tmp/daemon_lfc.log") : cfg_.logfile;
-    Logger::instance().configure(logPath, 0, 0, debug_);
-    LFC_LOGI("lfcd v%s starting", LFCD_VERSION);
-
-    // Scan hwmon and remember original pwm*_enable values for restore on shutdown
-    hwmon_ = Hwmon::scan();
-    origPwmEnable_.clear();
-    for (const auto& p : hwmon_.pwms) {
-        int val = Hwmon::readEnable(p).value_or(2);
-        origPwmEnable_.push_back({p.path_enable, val});
+    // Optional vendor mapping override (hot-reloadable)
+    if (!cfg_.vendorMapPath.empty()) {
+        VendorMapping::instance().setOverridePath(cfg_.vendorMapPath);
+        LOG_INFO("daemon: vendor map override: %s", cfg_.vendorMapPath.c_str());
+    }
+    {
+        using WM = VendorMapping::WatchMode;
+        WM mode = (cfg_.vendorMapWatchMode == "inotify") ? WM::Inotify : WM::MTime;
+        VendorMapping::instance().setWatchMode(mode, cfg_.vendorMapThrottleMs);
+        LOG_INFO("daemon: vendor map watch mode=%s throttleMs=%d",
+                 cfg_.vendorMapWatchMode.c_str(), cfg_.vendorMapThrottleMs);
     }
 
-    // Engine + telemetry
+    // Construct telemetry with path coming from Config.* (no defaults here)
+    telemetry_ = std::make_unique<ShmTelemetry>(cfg_.shmPath);
+    LOG_INFO("daemon: telemetry shm at: %s", cfg_.shmPath.c_str());
+
+    // One-time hwmon inventory discovery; values will be read live later.
+    refreshHwmon();
+    LOG_INFO("daemon: hwmon snapshot temps=%zu fans=%zu pwms=%zu", hwmon_.temps.size(), hwmon_.fans.size(), hwmon_.pwms.size());
+    rememberOriginalEnables();
+
+    // Engine
     engine_ = std::make_unique<Engine>();
     engine_->setHwmonView(hwmon_.temps, hwmon_.fans, hwmon_.pwms);
-    engine_->attachTelemetry(&telemetry_);
+    //engine_->applyProfile(profile_);
+    LOG_DEBUG("daemon: engine ready");
 
-    // RPC registry + handlers
-    rpcRegistry_ = std::make_unique<CommandRegistry>();
-    BindDaemonRpcCommands(*this, *rpcRegistry_);
+    // Engine disabled by default until a valid profile is loaded
+    setEnabled(false);
 
-    // RPC server
-    {
-        const std::string host = cfg_.host.empty() ? std::string("127.0.0.1") : cfg_.host;
-        const unsigned short port = static_cast<unsigned short>(cfg_.port > 0 ? cfg_.port : 8777);
-        rpcServer_ = std::make_unique<RpcTcpServer>(*this, host, port, debug_);
-        if (!rpcServer_->start(rpcRegistry_.get())) {
-            LFC_LOGE("rpc: failed to start on %s:%u", host.c_str(), (unsigned)port);
-            return false;
-        }
-        LFC_LOGI("rpc: listening on %s:%u", host.c_str(), (unsigned)port);
-    }
-
-    // Optional PID file
-    if (!cfg_.pidfile.empty()) {
-        try {
-            std::ofstream pf(cfg_.pidfile, std::ios::trunc);
-            if (pf) pf << getpid() << "\n";
-            else    LFC_LOGW("pidfile: cannot write %s", cfg_.pidfile.c_str());
-        } catch (...) {
-            LFC_LOGW("pidfile: exception while writing %s", cfg_.pidfile.c_str());
-        }
-    }
-
-    // Try to apply configured profile (native or FanControl import)
-    if (!cfg_.profilesDir.empty() && !cfg_.profileName.empty()) {
-        const auto full = (std::filesystem::path(cfg_.profilesDir) / ensure_profile_filename(cfg_.profileName)).string();
-        if (std::filesystem::exists(full)) {
-            if (!applyProfileFile(full)) {
-                LFC_LOGW("profile: failed to load '%s' — waiting for detection/import", full.c_str());
-            } else {
-                LFC_LOGI("profile: loaded '%s'", full.c_str());
-            }
+    // Try to load active profile from disk and enable engine on success.
+    try {
+        const std::string profPath = profilePathForName(cfg_.profileName);
+        std::error_code ec;
+        if (!profPath.empty() && fs::exists(profPath, ec) && !ec) {
+            Profile loaded = loadProfileFromFile(profPath);
+            applyProfile(loaded);
+            setEnabled(true);
+            LOG_INFO("daemon: loaded profile '%s' -> engine enabled", cfg_.profileName.c_str());
         } else {
-            LFC_LOGI("no profile present at %s — waiting for detection/import", full.c_str());
+            LOG_INFO("daemon: no profile file yet ('%s'); engine stays disabled", profPath.c_str());
         }
-    } else {
-        LFC_LOGI("no profile configured — waiting for detection/import");
+    } catch (const std::exception& ex) {
+        setEnabled(false);
+        LOG_WARN("daemon: failed to load profile '%s': %s (engine disabled)",
+                 cfg_.profileName.c_str(), ex.what());
     }
 
-    // Initial telemetry snapshot
-    (void)telemetry_.update(engine_->telemetryJson());
+    // One-shot GPU inventory (metrics will be refreshed lightly in the loop)
+    gpus_ = GpuMonitor::snapshot();
+
+    // RPC
+    rpcRegistry_ = std::make_unique<CommandRegistry>();
+    rpcServer_   = std::make_unique<RpcTcpServer>(*this,
+                     cfg_.host.empty() ? std::string("127.0.0.1") : cfg_.host,
+                     static_cast<unsigned short>(cfg_.port > 0 ? cfg_.port : 8777),
+                     debug_);
+    if (!rpcServer_->start(rpcRegistry_.get())) {
+        LOG_ERROR("daemon: rpc server start failed");
+        return false;
+    }
+    LOG_INFO("daemon: init done (rpc on %s:%u)", cfg_.host.c_str(), (unsigned) (cfg_.port>0?cfg_.port:8777));
 
     running_.store(true, std::memory_order_relaxed);
-    stop_.store(false, std::memory_order_relaxed);
     return true;
 }
 
 void Daemon::runLoop() {
+    LOG_INFO("daemon: runLoop enter");
     using clock = std::chrono::steady_clock;
-    auto lastForce = clock::now();
-    auto nextTick  = clock::now();
+
+    auto nextTick   = clock::now();
+    auto lastForce  = clock::now();
+    auto lastGpu    = clock::now();
+    auto lastHwmon  = clock::now();
+
+    // NOTE: No periodic hwmon rescan here. Inventory is static during runtime.
+    //       Sensors/controls are read live by Engine/telemetry helpers.
 
     while (running_.load(std::memory_order_relaxed) && !stop_.load(std::memory_order_relaxed)) {
-        const int    tickMs = tickMs_;
-        const int    forceMs = forceTickMs_;
-        const double dC = deltaC_;
-
         auto now = clock::now();
-        const bool force = (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastForce).count() >= forceMs);
 
-        if (force || now >= nextTick) {
-            (void)engine_->tick(dC);
-            if (force) lastForce = now;
-            nextTick = now + std::chrono::milliseconds(tickMs);
+        // Engine tick (curve evaluation & PWM writes)
+        if (now >= nextTick) {
+            if (enabled_.load(std::memory_order_relaxed) && engine_) {
+                (void)engine_->tick(cfg_.deltaC);
+                //bool ch = engine_->tick(cfg_.deltaC);
+                //if (ch) LOG_TRACE("daemon: engine tick applied");
+            }
+            nextTick = now + std::chrono::milliseconds(cfg_.tickMs);
         }
 
-        if (detection_ && detection_->running()) {
-            detection_->poll();
+        // Telemetry publish at forceTick cadence (values are read live)
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastForce).count() >= cfg_.forceTickMs) {
+            publishTelemetry();
+            lastForce = now;
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        // Lightweight GPU metrics refresh (inventory stays the same)
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastGpu).count() >= 1000) {
+            GpuMonitor::refreshMetrics(gpus_);
+            lastGpu = now;
+        }
+
+        // Lightweight hwmon housekeeping (drop vanished files, refresh values)
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastHwmon).count() >= 500) {
+            Hwmon::refreshValues(hwmon_);
+            lastHwmon = now;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 }
 
 void Daemon::shutdown() {
-    // Stop loop flags
-    stop_.store(true, std::memory_order_relaxed);
-    running_.store(false, std::memory_order_relaxed);
+    LOG_INFO("daemon: shutdown");
+    if (!running_.exchange(false)) return;
 
-    // Stop detection first
-    if (detection_) {
-        detection_->abort();
-        detection_.reset();
+    if (rpcServer_) {
+        LOG_DEBUG("daemon: stopping rpc");
+        rpcServer_->stop();
+        rpcServer_.reset();
+    }
+    rpcRegistry_.reset();
+
+    if (detectRunning_.load(std::memory_order_relaxed)) {
+        detectionRequestStop();
+        if (detectThread_.joinable()) detectThread_.join();
     }
 
-    // Restore original pwm*_enable so BIOS/driver can take over again
+    engine_.reset();
+    detection_.reset();
+    telemetry_.reset();
+
+    restoreOriginalEnables();
+    LOG_INFO("daemon: shutdown complete");
+}
+
+/* -------------------------- internal helpers ------------------------------- */
+
+void Daemon::refreshHwmon() {
+    LOG_TRACE("daemon: refreshHwmon");
+    hwmon_ = Hwmon::scan();
+}
+
+void Daemon::refreshGpus() {
+    LOG_TRACE("daemon: refreshGpus");
+    gpus_ = GpuMonitor::snapshot();
+}
+
+void Daemon::publishTelemetry() {
+    LOG_TRACE("daemon: publishTelemetry");
+    if (telemetry_) {
+        (void)telemetry_->publish(
+            hwmon_,            // inventory only; values read live inside
+            gpus_,
+            profile_,
+            enabled_.load(std::memory_order_relaxed),
+            nullptr);
+    }
+}
+
+void Daemon::rememberOriginalEnables() {
+    LOG_DEBUG("daemon: rememberOriginalEnables");
+    origPwmEnable_.clear();
+    for (const auto& p : hwmon_.pwms) {
+        int mode = 2;
+        if (auto v = Hwmon::readEnable(p)) mode = *v;
+        origPwmEnable_.push_back({p.path_enable, mode});
+    }
+}
+
+void Daemon::restoreOriginalEnables() {
+    LOG_DEBUG("daemon: restoreOriginalEnables");
     for (const auto& it : origPwmEnable_) {
-        Hwmon::writeEnable(it.first, it.second);
+        std::ofstream f(it.first);
+        if (f) { f << it.second; }
     }
-
-    // Stop RPC and disable engine last
-    if (rpcServer_) rpcServer_->stop();
-    if (engine_)    engine_->enable(false);
-
-    // Remove PID file
-    if (!cfg_.pidfile.empty()) {
-        std::error_code ec;
-        std::filesystem::remove(cfg_.pidfile, ec);
-    }
+    origPwmEnable_.clear();
 }
 
-// ---------- telemetry / engine control ----------
-
-bool Daemon::telemetryGet(std::string& out) const {
-    return telemetry_.get(out);
+bool Daemon::telemetryGet(std::string& outJson) const {
+    LOG_TRACE("daemon: telemetryGet");
+    auto j = ShmTelemetry::buildJson(hwmon_, gpus_, profile_, enabled_.load(std::memory_order_relaxed));
+    outJson = j.dump(2);
+    return true;
 }
 
-bool Daemon::engineControlEnabled() const {
-    return engine_ ? engine_->enabled() : false;
+std::string Daemon::profilesDirPath() const {
+    return lfc::util::expandUserPath(cfg_.profilesDir);
 }
 
-void Daemon::engineEnable(bool on) {
-    if (engine_) engine_->enable(on);
+std::string Daemon::profilePathForName(const std::string& name) const {
+    const std::string base = profilesDirPath();
+    fs::path dir(base);
+    fs::path file = (name.empty() ? cfg_.profileName : name) + std::string(".json");
+    return (dir / file).string();
 }
 
-void Daemon::setEngineDeltaC(double v) {
-    deltaC_ = std::clamp(v, 0.0, 10.0);
+void Daemon::applyProfile(const Profile& p) {
+    profile_ = p;
+    if (engine_) engine_->applyProfile(profile_);
 }
 
-void Daemon::setEngineForceTickMs(int v) {
-    forceTickMs_ = std::clamp(v, 100, 10000);
-}
-
-void Daemon::setEngineTickMs(int v) {
-    tickMs_ = std::clamp(v, 5, 1000);
-}
-
-// ---------- detection passthrough ----------
+// ----- Detection control -------------------------------------------------------
 
 bool Daemon::detectionStart() {
-    if (detection_ && detection_->running()) return false;
-    hwmon_ = Hwmon::scan();
-    if (engine_) engine_->setHwmonView(hwmon_.temps, hwmon_.fans, hwmon_.pwms);
+    LOG_INFO("daemon: detectionStart");
+    if (detectRunning_.load(std::memory_order_relaxed)) return false;
 
-    DetectionConfig dcfg;
-    detection_ = std::make_unique<Detection>(hwmon_, dcfg);
-    detection_->start();
+    DetectionConfig dcfg{};
+    detection_ = std::make_unique<Detection>(dcfg);
+
+    {
+        std::lock_guard<std::mutex> lk(detectMtx_);
+        detectResult_ = DetectResult{};
+    }
+
+    detectRunning_.store(true, std::memory_order_relaxed);
+    detectThread_ = std::thread([this]{
+        LOG_DEBUG("daemon: detection thread started");
+        DetectResult res;
+        if (!detection_) {
+            res.ok = false;
+            res.error = "no detection object";
+        } else {
+            detection_->runAutoDetect(hwmon_, res);
+        }
+        {
+            std::lock_guard<std::mutex> lk(detectMtx_);
+            detectResult_ = std::move(res);
+        }
+        detectRunning_.store(false, std::memory_order_relaxed);
+        LOG_INFO("daemon: detection thread finished (ok=%s)", detectResult_.ok? "true":"false");
+    });
+
     return true;
 }
 
-void Daemon::detectionAbort() {
-    if (detection_) detection_->abort();
-}
-
-DetectionStatus Daemon::detectionStatus() const {
-    DetectionStatus s{};
-    if (!detection_) return s;
-    auto st = detection_->status();
-    s.running      = st.running;
-    s.currentIndex = st.currentIndex;
-    s.total        = st.total;
-    s.phase        = st.phase;
-    return s;
-}
-
-std::vector<int> Daemon::detectionResults() const {
-    if (!detection_) return {};
-    return detection_->results();
-}
-
-// ---------- profiles ----------
-
-bool Daemon::applyProfile(const Profile& p) {
-    if (!engine_) return false;
-    engine_->applyProfile(p);
+bool Daemon::detectionStatus(DetectResult& out) const {
+    LOG_TRACE("daemon: detectionStatus");
+    std::lock_guard<std::mutex> lk(detectMtx_);
+    out = detectResult_;
+    out.ok = out.ok && !detectRunning_.load(std::memory_order_relaxed);
     return true;
 }
 
-bool Daemon::applyProfileIfValid(const std::string& path) {
-    Profile p;
-    std::string perr;
-    if (p.loadFromFile(path, &perr)) {
-        engine_->applyProfile(p);
-        LFC_LOGI("profile: applied '%s' (native)", path.c_str());
-        return true;
-    }
-    return false;
-}
-
-bool Daemon::applyProfileFile(const std::string& path) {
-    if (applyProfileIfValid(path)) return true;
-
-    Profile p;
-    std::string ierr;
-    if (FanControlImport::LoadAndMap(path, hwmon_.temps, hwmon_.pwms, p, ierr)) {
-        engine_->applyProfile(p);
-        LFC_LOGI("profile: imported & applied '%s' (FanControl.Releases)", path.c_str());
-        return true;
-    }
-    LFC_LOGW("profile: import failed for '%s': %s", path.c_str(), ierr.c_str());
-    return false;
-}
-
-// ---------- RPC registry ----------
-
-std::vector<CommandInfo> Daemon::listRpcCommands() const {
-    if (!rpcRegistry_) return {};
-    return rpcRegistry_->list();
-}
-
-Profile Daemon::currentProfile() const {
-    return engine_ ? engine_->currentProfile() : Profile{};
+void Daemon::detectionRequestStop() {
+    LOG_INFO("daemon: detectionRequestStop");
+    if (detection_) detection_->requestStop();
 }
 
 } // namespace lfc

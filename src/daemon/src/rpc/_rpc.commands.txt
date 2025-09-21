@@ -1,0 +1,34 @@
+commands                 List available RPC commands
+config.get               Get effective daemon configuration
+config.save              Save daemon configuration
+config.set               Set a single config key
+daemon.restart           Request daemon restart
+daemon.shutdown          Shutdown daemon gracefully
+daemon.update            Check/download latest release
+detect.abort             Abort detection
+detect.results           Return detection peak RPMs per PWM
+detect.start             Start non-blocking detection
+detect.status            Detection status/progress
+engine.disable           Disable automatic control
+engine.enable            Enable automatic control
+engine.reset             Disable control and clear profile
+engine.status            Basic engine status
+help                     Show help for a command
+list.fan                 List tach inputs (RPM)
+list.pwm                 List PWM controls
+list.sensor              List temperature inputs
+ping                     Liveness probe
+profile.delete           Delete a profile
+profile.getActive        Get active profile name
+profile.importAs         Start async import of a profile; returns {jobId}
+profile.importCancel     Cancel an import job
+profile.importCommit     Commit a finished import job: save profile and set active
+profile.importJobs       List all active import jobs
+profile.importStatus     Get async import status
+profile.list             List profiles
+profile.load             Load a profile by name
+profile.rename           Rename a profile
+profile.save             Save a profile
+profile.setActive        Set active profile
+telemetry.json           Return current SHM JSON blob
+version                  Return daemon/rpc version info

@@ -13,6 +13,8 @@ Modernes, schnelles Fan Control mit GUI im Stil von [FanControl.Release](https:/
 - Automatische Erkennung und Kalibrierung der verfügbaren Sensoren und Lüfter.
 - Steuerlogik: Mix, Trigger oder Graph.
 - FanControl.Release Config [importierbar](docs/import.md).
+- Externe GPU‑Libs sind optional. CMake aktiviert NVML/AMDSMI/IGCL automatisch, falls Header+Lib gefunden werden.
+- Fallbacks: Wenn keine GPU‑Libs vorhanden sind, werden Werte über `/sys/class/hwmon` bzw. `/sys/class/drm` ausgelesen.
 
 
 ### Daemon
@@ -34,39 +36,88 @@ Beim Beenden schreiben wir die gesicherten Werte zurück ⇒ BIOS/Kernel-Auto ü
 
 
 ## Install
-### Installiere je nach Distribution:
+### Optionale GPU‑Libs (NVML/AMDSMI/Level‑Zero) werden automatisch eingebunden, wenn vorhanden.
 
-Fedora:
+#### Fedora:
 ```bash
 sudo dnf install \
   gcc-c++ cmake make pkgconfig git \
   nlohmann-json-devel lm_sensors lm_sensors-devel libcurl-devel \
-  dotnet-sdk-9.0 \
   libX11 libXrandr libXcursor libXrender mesa-libgbm \
-  fontconfig freetype libicu
+  dotnet-sdk-9.0 fontconfig freetype libicu
 ```
-Ubuntu/Debian:
+**Optional: NVIDIA (NVML)**
+```bash
+# NVIDIA Treiber aus RPM Fusion (siehe deren Howto)
+sudo dnf install akmod-nvidia
+# NVML-Header/Bibliothek über CUDA Subpakete
+sudo dnf install cuda-nvml-devel
+```
+**Optional: AMD (AMDSMI)**
+```bash
+sudo dnf install amdsmi amdsmi-devel
+```
+**Optional: Intel (Level Zero / Sysman)**
+```bash
+sudo dnf install oneapi-level-zero-devel intel-level-zero
+```
+
+#### Ubuntu/Debian:
 ```bash
 sudo apt install \
   build-essential cmake pkg-config git \
   nlohmann-json3-dev libsensors-dev lm-sensors libcurl4-openssl-dev \
-  dotnet-sdk-9.0 \
   libx11-6 libxrandr2 libxrender1 libxcursor1 libgbm1 \
-  libfontconfig1 libfreetype6 libicu*
+  dotnet-sdk-9.0 libfontconfig1 libfreetype6 libicu*
 ```
-Arch:
+**Optional: NVIDIA (NVML)**
+```bash
+# Entwicklertitel/Headers + Laufzeitbibliothek
+sudo apt install libnvidia-ml-dev
+# (Stellt Header bereit; erfordert installierten NVIDIA-Treiber)
+```
+**Optional: AMD (AMDSMI)**
+```bash
+# Verfügbar in aktuellen Ubuntu/ROCm-Setups
+sudo apt install amd-smi-lib
+# Falls Paket nicht gefunden wird: ROCm/AMDGPU Repo gemäß AMD-Doku hinzufügen.
+```
+**Optional: Intel (Level Zero / Sysman)**
+```bash
+# Ab 24.04: libze-dev (Level Zero Loader + Headers)
+sudo apt install libze-dev
+```
+
+#### Arch:
 ```bash
 sudo pacman -S --needed \
   base-devel cmake git \
   nlohmann-json lm_sensors curl \
-  dotnet-sdk \
   libx11 libxrandr libxrender libxcursor libgbm \
-  fontconfig freetype2 icu
+  dotnet-sdk fontconfig freetype2 icu
+```
+**Optional: NVIDIA (NVML)**
+```bash
+sudo pacman -S --needed nvidia nvidia-utils cuda
+# Hinweis: nvml.h kommt aus dem Paket 'cuda'; libnvidia-ml.so aus 'nvidia-utils'.
+```
+**Optional: AMD (AMDSMI)**
+```bash
+sudo pacman -S --needed amdsmi
+```
+**Optional: Intel (Level Zero / Sysman)**
+```bash
+sudo pacman -S --needed level-zero-headers level-zero-loader
 ```
 
+## Nachbereitung
+**Sensoren initialisieren (empfohlen)**
+```bash
+sudo sensors-detect
+sensors
+```
 
 ## Compile
-
 Build:
 ```bash
 ./build.sh
@@ -182,19 +233,18 @@ printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"config.set","params":{"key":"en
 ```
 SHM lesen (einfacher Dumper):
 ```bash
+pip install posix_ipc
+
 python3 - <<'PY'
-import mmap, posix_ipc, struct, sys, time
-name="/lfc_telemetry"
-slotSize=1024
-capacity=512
-shm=posix_ipc.SharedMemory(name)
-m=mmap.mmap(shm.fd, struct.calcsize("8sIIIII")+slotSize*capacity)
+import os, mmap, posix_ipc, json
+name="/lfc.telemetry"
+shm = posix_ipc.SharedMemory(name)
+size = os.fstat(shm.fd).st_size
+mm = mmap.mmap(shm.fd, size, access=mmap.ACCESS_READ)
 shm.close_fd()
-hdr=m.read(8+4*5)
-magic,ver,cap,ss,wi,_=struct.unpack("8sIIIII",hdr)
-print("magic",magic,"ver",ver,"cap",cap,"ss",ss,"wi",wi)
-m.seek(8+4*5)
-for i in range(10):
-    print(m.read(ss).split(b'\0',1)[0].decode(errors='ignore').strip())
+data = mm.read(size).rstrip(b"\x00")
+mm.close()
+j = json.loads(data.decode("utf-8", errors="ignore"))
+print(json.dumps(j, indent=2, ensure_ascii=False))
 PY
 ```

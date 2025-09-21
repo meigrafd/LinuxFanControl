@@ -1,67 +1,105 @@
-## Import von FanControl.Releases-Profilen (Windows → Linux)
+# Import Workflow
 
-Das Projekt unterstützt den Import von Konfigurationen aus [Rem0o/FanControl.Releases](https://github.com/Rem0o/FanControl.Releases).<br>
-Da FanControl für **Windows** entwickelt ist, müssen die dort definierten Sensoren und Lüfterausgänge auf Linux-Systeme gemappt werden.
+## Deutsch
 
-### Mapping-Strategie
+### Unterstützte Quellformate
 
-**Temperatursensoren**
+1. **LinuxFanControl Profile (.json)** — Erkennung via `schema` (z.B. `LinuxFanControl.Profile/v1`).
+2. **FanControl (Rem0o) – Release-Profile (.json)** — Heuristik über Felder wie `Computers`, `Controls`, `Curves`, `Version`.
 
-* Zuweisung erfolgt anhand von `hwmon`-Einträgen unter `/sys/class/hwmon`.
-* Primär wird nach passenden **Labels** gesucht (`temp*_label`, z.B. `Tctl`, `CPU Die`, `edge`, `junction`, `nvme_temp`).
-* Fallback: Zuordnung nach **Treiberquelle** (`k10temp`, `coretemp`, `amdgpu`, `nvidia`, `nvme`, `acpitz`) und Index-Heuristiken.
-* Nur Werte im plausiblen Bereich (-20 °C bis 150 °C) werden akzeptiert.
-* Kann ein Sensor nicht eindeutig zugeordnet werden, bricht der Import mit einer Fehlermeldung ab.
+### Ablauf (asynchron)
 
-**PWM-Ausgänge und Lüfter**
+1. **Start** via `profile.importAs`
 
-* Jeder in FanControl definierte Control-Kanal wird einem `hwmon`-PWM zugeordnet.
-* Bevorzugt über die Topologie: PWMs und Tachos innerhalb desselben `hwmonX`, z.B. `pwm1` ↔ `fan1_input`.
-* Die Zuordnung wird später durch die **Detection-Routine** validiert: PWM kurz ansteuern und prüfen, ob ein Tachometer reagiert.
-* Bei fehlender oder unsicherer Zuordnung gibt der Import eine Warnung zurück.
-
-**Kurven und Regeln**
-
-* Temperatur-zu-PWM-Kurven werden 1:1 übernommen.
-* Alle Punkte und Hysteresen bleiben erhalten.
-* Einheiten: °C bleiben °C, PWM-Werte werden in Prozent (0–100 %) abgebildet.
-
-### Sicherheitsmechanismen
-
-* **Harte Fehler** bei nicht auflösbaren Sensoren oder Controls → kein stillschweigendes „Raten“.
-* **Warnungen** bei unsicheren Matches (z.B. generische `temp1_input`).
-* Nach einem Import kann optional die Detection gestartet werden, um PWM↔Fan-Paare praktisch zu bestätigen.
-* Importiert & lädt das Profil in die Engine. Die Engine bleibt aber zunächst **deaktiviert**. (Safety: es wird nichts automatisch geregelt).
-
-### Praktische Nutzung
-
-1. Import mit
-
-   ```bash
-   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"profile.importAs","params":{"path":"/PATH/TO/userConfig.json","name":"Default","requireAllPwms":false}}' | nc 127.0.0.1 8777 | jq
-   ```
-2. Anschließend mit
-
-   ```bash
-   printf '%s\n' '[{"jsonrpc":"2.0","method":"list.sensor"},{"jsonrpc":"2.0","method":"list.fan"},{"jsonrpc":"2.0","method":"list.pwm"}]' | nc 127.0.0.1 8777 | jq
+   ```json
+   {
+     "path": "/path/to/source.json",
+     "name": "Gaming",
+     "validateDetect": true,
+     "rpmMin": 600,
+     "timeoutMs": 4000
+   }
    ```
 
-   prüfen, ob die Pfade/Labels sinnvoll zugeordnet sind.
-3. `engine.enable` und `telemetry.json` verwenden, um die Wirkung live zu beobachten.
-4. Optional `detect.start` und danach `detect.results` aufrufen, um die maximalen RPM je PWM zu sehen.
+   **Antwort:** `{ "jobId": "<string>" }`
+2. **Status** via `profile.importStatus` — Snapshot der Felder (siehe unten).
+3. **Abbruch** via `profile.importCancel`.
+4. **Commit** via `profile.importCommit` — Profil speichern & aktiv setzen.
+5. **Jobs** via `profile.importJobs` — Liste aktiver Jobs.
 
-### Alternativ mit strenger Validierung
+### Statusobjekt (ImportStatus)
 
-Wichtig: Die Validierung prüft u.a. ob alle in den Regeln referenzierten pwmPath/tempPaths existieren, ob Kurven konsistent sind, und – falls gewünscht – führt sie eine synchrone Detection durch und vergleicht die gemessenen Drehzahlen mit den im Profil verwendeten PWM-Kanälen (Default-Schwelle 300 RPM).
+| Feld                  | Typ    | Bedeutung                                   |
+| --------------------- | ------ | ------------------------------------------- |
+| `jobId`               | string | Eindeutige Job-ID                           |
+| `state`               | string | `pending` \| `running` \| `done` \| `error` |
+| `progress`            | number | 0..100 (heuristisch)                        |
+| `message`             | string | Menschlich lesbarer Status                  |
+| `error`               | string | Fehlermeldung bei Fehlern                   |
+| `profileName`         | string | Name des erzeugten Profils                  |
+| `isFanControlRelease` | bool   | Quelle war FanControl-Release               |
 
-   ```bash
-   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"profile.verifyMapping","params":{"path":"/PATH/TO/userConfig.json","withDetect":true}}' | nc 127.0.0.1 8777 | jq
+### Validierung (optional)
+
+* `validateDetect` (bool) aktiviert Prüfschritte.
+* `rpmMin` (int > 0) Mindest‑RPM.
+* `timeoutMs` (int ≥ 0) Zeitbudget pro PWM.
+
+**Ablauf:** PWM auf 100 %, Tachos gleichen Chips poll’en, Zustand zurücksetzen. Fehler → `state="error"` + Text in `error`.
+
+### Commit‑Semantik
+
+`profile.importCommit` lädt das erzeugte Profil aus dem Job, persistiert es und setzt es als aktiv. Fehler werden als RPC‑Codes zurückgegeben (siehe RPC‑API.md).
+
+---
+
+## English
+
+### Supported source formats
+
+1. **LinuxFanControl Profile (.json)** — detected via `schema` (e.g., `LinuxFanControl.Profile/v1`).
+2. **FanControl (Rem0o) — release profiles (.json)** — heuristics over `Computers`, `Controls`, `Curves`, `Version`.
+
+### Flow (asynchronous)
+
+1. **Start** via `profile.importAs`
+
+   ```json
+   {
+     "path": "/path/to/source.json",
+     "name": "Gaming",
+     "validateDetect": true,
+     "rpmMin": 600,
+     "timeoutMs": 4000
+   }
    ```
 
-### Manuelle Anpassungen
+   **Return:** `{ "jobId": "<string>" }`
+2. **Status** via `profile.importStatus` — snapshot of fields (see below).
+3. **Cancel** via `profile.importCancel`.
+4. **Commit** via `profile.importCommit` — save profile & set active.
+5. **Jobs** via `profile.importJobs` — list active jobs.
 
-Falls der automatische Import nicht perfekt passt:
+### Status object (ImportStatus)
 
-* Profil zunächst mit `profile.importAs` unter einem Namen speichern.
-* JSON-Datei im `profilesDir` öffnen und Sensoren oder PWMs manuell anpassen.
-* Mit `profile.load` erneut aktivieren.
+| Field                 | Type   | Meaning                                     |
+| --------------------- | ------ | ------------------------------------------- |
+| `jobId`               | string | unique job id                               |
+| `state`               | string | `pending` \| `running` \| `done` \| `error` |
+| `progress`            | number | 0..100 (heuristic)                          |
+| `message`             | string | human‑readable status                       |
+| `error`               | string | error message when failing                  |
+| `profileName`         | string | name of created profile                     |
+| `isFanControlRelease` | bool   | source was FanControl release               |
+
+### Validation (optional)
+
+* `validateDetect` (bool) enables checks.
+* `rpmMin` (int > 0) minimum RPM.
+* `timeoutMs` (int ≥ 0) per‑PWM budget.
+
+**Procedure:** set PWM to 100%, poll tachs on same chip, restore state. Failures → `state="error"` with message.
+
+### Commit semantics
+
+`profile.importCommit` loads the profile from the job, persists it, and sets it active. Failures return RPC error codes (see RPC‑API.md).

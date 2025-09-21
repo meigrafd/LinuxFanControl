@@ -1,17 +1,27 @@
-#include "include/CommandIntrospection.h"
-#include "include/CommandRegistry.h"
-#include <sstream>
-using namespace lfc;
+/*
+ * Linux Fan Control — Command Introspection (implementation)
+ * Uses nlohmann::json to serialize introspection.
+ * (c) 2025 LinuxFanControl contributors
+ */
+#include "include/CommandIntrospection.hpp"
+#include "include/CommandRegistry.hpp"
+#include <nlohmann/json.hpp>
 
-std::string BuildIntrospectionJson(const CommandRegistry& reg) {
-    auto list = reg.list();
-    std::ostringstream os; os << "{\"methods\":[";
-    for (size_t i=0;i<list.size();++i) {
-        if (i) os<<",";
-        os << "{\"name\":\"" << list[i].name << "\",\"help\":\"";
-        for (char ch: list[i].help) { if (ch=='"'||ch=='\\') os<<'\\'<<ch; else if (ch=='\n') os<<"\\n"; else os<<ch; }
-        os << "\"}";
+using nlohmann::json;
+
+// Global symbol (legacy)
+std::string BuildIntrospectionJson(const lfc::CommandRegistry& reg) {
+    json methods = json::array();
+    for (const auto& m : reg.list()) {
+        methods.push_back({{"name", m.name}, {"help", m.help}});
     }
-    os << "]}";
-    return os.str();
+    json root = {{"methods", methods}};
+    return root.dump();
 }
+
+// Namespaced shim to satisfy callers expecting lfc::
+namespace lfc {
+std::string BuildIntrospectionJson(const CommandRegistry& reg) {
+    return ::BuildIntrospectionJson(reg);
+}
+} // namespace lfc

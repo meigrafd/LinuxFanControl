@@ -28,8 +28,8 @@ private:
         std::string acc; // receive accumulator (per-connection)
     };
 
-    void loop();
-    bool handleLine(int fd, const std::string& line, std::string& outJson);
+    void loop_();
+    bool handleLine_(int fd, const std::string& line, std::string& outJson);
 
 private:
     Daemon& owner_;

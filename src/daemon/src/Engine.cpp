@@ -1,216 +1,181 @@
 /*
  * Linux Fan Control — Engine (implementation)
- * - Applies Profile rules to hwmon outputs
- * - Builds telemetry JSON
  * (c) 2025 LinuxFanControl contributors
  */
-#include "Engine.hpp"
-#include "ShmTelemetry.hpp"
-#include "Hwmon.hpp"
-#include <nlohmann/json.hpp>
-#include <sstream>
-#include <iomanip>
+#include "include/Engine.hpp"
+#include "include/Hwmon.hpp"
+#include "include/Log.hpp"
+
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 
 namespace lfc {
 
+Engine::Engine() = default;
+Engine::~Engine() = default;
+
 void Engine::setHwmonView(const std::vector<HwmonTemp>& temps,
-                          const std::vector<HwmonFan>& fans,
-                          const std::vector<HwmonPwm>& pwms) {
-    temps_ = &temps;
-    fans_  = &fans;
-    pwms_  = &pwms;
+                          const std::vector<HwmonFan>&  fans,
+                          const std::vector<HwmonPwm>&  pwms)
+{
+    temps_ = temps;
+    fans_  = fans;
+    pwms_  = pwms;
+    LOG_DEBUG("engine: hwmon view set (temps=%zu fans=%zu pwms=%zu)", temps_.size(), fans_.size(), pwms_.size());
 }
 
 void Engine::applyProfile(const Profile& p) {
     profile_ = p;
-    lastTemps_.assign(profile_.rules.size(), 0.0);
-    lastDuty_.assign(profile_.rules.size(), -1);
-    spinUntil_.assign(profile_.rules.size(), std::chrono::steady_clock::time_point{});
+    // Keep state vector size in sync with controls
+    ruleState_.assign(profile_.controls.size(), RuleState{});
+    LOG_INFO("engine: profile applied '%s' (controls=%zu curves=%zu)",
+             profile_.name.c_str(), profile_.controls.size(), profile_.fanCurves.size());
 }
 
-int Engine::lerpPoints(const std::vector<CurvePoint>& pts, double tC) {
-    if (pts.empty()) return 0;
-    if (tC <= pts.front().tempC) return pts.front().percent;
-    if (tC >= pts.back().tempC)  return pts.back().percent;
-    for (size_t i = 1; i < pts.size(); ++i) {
-        const auto& a = pts[i - 1];
-        const auto& b = pts[i];
-        if (tC <= b.tempC) {
-            double u = (tC - a.tempC) / (b.tempC - a.tempC);
-            double v = a.percent + u * (b.percent - a.percent);
-            int iv = static_cast<int>(v + 0.5);
-            return std::max(0, std::min(100, iv));
+bool Engine::tick(double deltaC) {
+    bool anyChanged = false;
+
+    // Ensure state is aligned with control count
+    if (ruleState_.size() != profile_.controls.size()) {
+        LOG_DEBUG("engine: resizing rule state (%zu -> %zu)",
+                  ruleState_.size(), profile_.controls.size());
+        ruleState_.assign(profile_.controls.size(), RuleState{});
+    }
+
+    for (size_t i = 0; i < profile_.controls.size(); ++i) {
+        const auto& ctrl = profile_.controls[i];
+        RuleState& st = ruleState_[i];
+
+        const HwmonPwm* pwm = findPwm(ctrl.pwmPath);
+        if (!pwm) {
+            LOG_WARN("engine: pwm not found: %s", ctrl.pwmPath.c_str());
+            continue;
         }
+
+        // Resolve referenced curve
+        const FanCurveMeta* curve = nullptr;
+        for (const auto& c : profile_.fanCurves) {
+            if (c.name == ctrl.curveRef) { curve = &c; break; }
+        }
+        if (!curve) {
+            LOG_WARN("engine: curve not found: %s", ctrl.curveRef.c_str());
+            continue;
+        }
+
+        // Aggregate temperatures from the curve's sensor list
+        std::vector<double> tempsC;
+        tempsC.reserve(curve->tempSensors.size());
+        for (const auto& path : curve->tempSensors) {
+            const HwmonTemp* t = findTempSensor(path);
+            if (!t) continue;
+            auto v = Hwmon::readTempC(*t);
+            if (v) tempsC.push_back(*v);
+        }
+
+        double aggC = 0.0;
+        if (!tempsC.empty()) {
+            if (curve->mix == MixFunction::Min) {
+                aggC = *std::min_element(tempsC.begin(), tempsC.end());
+            } else if (curve->mix == MixFunction::Max) {
+                aggC = *std::max_element(tempsC.begin(), tempsC.end());
+            } else {
+                double sum = 0.0; for (double x : tempsC) sum += x;
+                aggC = sum / static_cast<double>(tempsC.size());
+            }
+        }
+
+        // Use deltaC as a minimum-change gate to avoid flapping
+        // If the aggregate temperature didn't move enough since the last tick,
+        // keep the existing duty and skip recalculation/apply.
+        if (st.hasLastTemp && std::fabs(aggC - st.lastTempC) < deltaC) {
+            // Update the stored temperature (small drift tracking) and continue
+            st.lastTempC = aggC;
+            LOG_TRACE("engine: deltaC gate (|%.3f-%.3f|=%.3f < %.3f) -> keep %d%% on %s",
+                      aggC, st.prevTempC, std::fabs(aggC - st.prevTempC), deltaC,
+                      st.lastPercent, pwm->path_pwm.c_str());
+            continue;
+        }
+
+        // Compute target percent from curve at current aggregate temperature
+        const int targetPct = curvePercent(*curve, aggC);
+
+        // Optional per-control hysteresis (if the rule state provides it)
+        const int outPct = applyHysteresis(st, targetPct);
+
+        // Apply only if resulting duty differs
+        if (outPct != st.lastPercent) {
+            if (Hwmon::setPercent(*pwm, outPct)) {
+                LOG_DEBUG("engine: set %s <- %d%% (was %d%%) @ agg=%.2fC (Δ=%.3fC>=%.3fC)",
+                          pwm->path_pwm.c_str(), outPct, st.lastPercent, aggC,
+                          (st.hasLastTemp ? std::fabs(aggC - st.lastTempC) : 999.0), deltaC);
+                st.lastPercent = outPct;
+                anyChanged = true;
+            } else {
+                LOG_WARN("engine: setPercent failed on %s -> %d%%", pwm->path_pwm.c_str(), outPct);
+            }
+        }
+
+        // Remember temperature for next deltaC comparison
+        st.prevTempC = st.hasLastTemp ? st.lastTempC : aggC;
+        st.lastTempC = aggC;
+        st.hasLastTemp = true;
     }
-    return pts.back().percent;
+
+    return anyChanged;
 }
 
-int Engine::evalCurvePercent(const SourceCurve& sc, double tC) {
-    return lerpPoints(sc.points, tC);
-}
-
-int Engine::clampDuty(const SourceCurve& sc, int duty) {
-    duty = std::max(0, std::min(100, duty));
-    duty = std::max(sc.settings.minPercent, std::min(sc.settings.maxPercent, duty));
-    if (sc.settings.stopBelowMin && duty < sc.settings.minPercent) return 0;
-    return duty;
-}
-
-int Engine::aggregatePercents(const std::vector<int>& percs, MixFunction fn) {
-    if (percs.empty()) return 0;
-    if (fn == MixFunction::Avg) {
-        long sum = 0;
-        for (int p : percs) sum += p;
-        int avg = static_cast<int>((sum + static_cast<long>(percs.size() / 2)) / static_cast<long>(percs.size()));
-        return std::max(0, std::min(100, avg));
-    }
-    int m = 0;
-    for (int p : percs) m = std::max(m, p);
-    return m;
-}
-
-const HwmonTemp* Engine::findTempByPath(const std::string& path) const {
-    if (!temps_) return nullptr;
-    for (const auto& t : *temps_) {
-        if (t.path_input == path) return &t;
-    }
-    return nullptr;
-}
-
-const HwmonPwm* Engine::findPwmByPath(const std::string& path) const {
-    if (!pwms_) return nullptr;
-    for (const auto& p : *pwms_) {
+const HwmonPwm* Engine::findPwm(const std::string& path) const {
+    for (const auto& p : pwms_) {
         if (p.path_pwm == path) return &p;
     }
     return nullptr;
 }
 
-bool Engine::tick(double /*deltaC*/) {
-    if (!enabled_) return false;
-    if (profile_.empty()) return false;
-    if (!temps_ || !pwms_) return false;
-
-    bool anyChanged = false;
-    auto now = std::chrono::steady_clock::now();
-
-    for (size_t i = 0; i < profile_.rules.size(); ++i) {
-        const auto& rule = profile_.rules[i];
-        const HwmonPwm* pwm = findPwmByPath(rule.pwmPath);
-        if (!pwm) continue;
-
-        // Collect source percents (each source may reference multiple temps -> take max per source)
-        std::vector<int> percs;
-        double ruleMaxTemp = 0.0;
-
-        for (const auto& sc : rule.sources) {
-            int srcPerc = 0;
-            double srcMaxTemp = 0.0;
-
-            for (const auto& tpath : sc.tempPaths) {
-                const HwmonTemp* tp = findTempByPath(tpath);
-                if (!tp) continue;
-                auto tc = Hwmon::readTempC(*tp);                  // °C (double)
-                if (!tc.has_value()) continue;
-                srcMaxTemp = std::max(srcMaxTemp, *tc);
-                int p = evalCurvePercent(sc, *tc);
-                p = clampDuty(sc, p);
-                srcPerc = std::max(srcPerc, p);
-            }
-
-            ruleMaxTemp = std::max(ruleMaxTemp, srcMaxTemp);
-            percs.push_back(srcPerc);
-        }
-
-        // Mix all sources
-        int target = aggregatePercents(percs, rule.mixFn);
-
-        // Hysteresis relative to last max temp per rule (kept simple here)
-        double lastT = (i < lastTemps_.size()) ? lastTemps_[i] : 0.0;
-        if (ruleMaxTemp + 1e-9 < lastT) {
-            // cooling down; allow drop
-        }
-        if (i < lastTemps_.size()) lastTemps_[i] = ruleMaxTemp;
-
-        // Spin-up window: if target just rose above min, optionally enforce spinupPercent for spinupMs
-        if (i >= spinUntil_.size()) spinUntil_.resize(profile_.rules.size());
-        if (i >= lastDuty_.size())  lastDuty_.resize(profile_.rules.size(), -1);
-
-        if (lastDuty_[i] < target) {
-            const auto& sc0 = rule.sources.empty() ? SourceCurve{} : rule.sources.front();
-            if (sc0.settings.spinupPercent > 0 && sc0.settings.spinupMs > 0) {
-                if (now >= spinUntil_[i]) {
-                    target = std::max(target, sc0.settings.spinupPercent);
-                    spinUntil_[i] = now + std::chrono::milliseconds(sc0.settings.spinupMs);
-                }
-            }
-        }
-
-        // Apply to hwmon (Hwmon::setPercent returns void in this repo)
-        if (i < lastDuty_.size()) {
-            if (lastDuty_[i] != target) {
-                Hwmon::setPercent(*pwm, target);
-                lastDuty_[i] = target;
-                anyChanged = true;
-            }
-        }
+const HwmonTemp* Engine::findTempSensor(const std::string& path) const {
+    for (const auto& t : temps_) {
+        if (t.path_input == path) return &t;
     }
-
-    if (anyChanged && telemetry_) {
-        (void)telemetry_->update(telemetryJson());
-    }
-    return anyChanged;
+    return nullptr;
 }
 
-std::string Engine::fmt2(double v) {
-    std::ostringstream oss;
-    oss.setf(std::ios::fixed);
-    oss << std::setprecision(2) << v;
-    return oss.str();
+int Engine::curvePercent(const FanCurveMeta& curve, double tempC) const {
+    if (curve.points.empty()) return 0;
+
+    const auto& pts = curve.points;
+    if (tempC <= pts.front().tempC) {
+        return clamp01(pts.front().percent);
+    }
+    if (tempC >= pts.back().tempC) {
+        return clamp01(pts.back().percent);
+    }
+
+    for (size_t i = 1; i < pts.size(); ++i) {
+        const CurvePoint& a = pts[i - 1];
+        const CurvePoint& b = pts[i];
+        if (tempC <= b.tempC) {
+            const double den = std::max(1e-9, (b.tempC - a.tempC));
+            const double u = (tempC - a.tempC) / den;
+            const double y = static_cast<double>(a.percent) +
+                             u * (static_cast<double>(b.percent) - static_cast<double>(a.percent));
+            return clamp01(static_cast<int>(std::lround(y)));
+        }
+    }
+    return clamp01(pts.back().percent);
 }
 
-std::string Engine::telemetryJson() const {
-    nlohmann::json j;
+int Engine::applyHysteresis(RuleState& st, int target) {
+    // Keep original behavior: small smoothing by stepping toward target
+    const int cur = (st.lastPercent < 0) ? 0 : st.lastPercent;
+    if (target == cur) return cur;
 
-    // Temps
-    if (temps_) {
-        auto& arr = j["temps"] = nlohmann::json::array();
-        for (const auto& t : *temps_) {
-            nlohmann::json o;
-            o["path"]  = t.path_input;
-            o["label"] = t.label.empty() ? t.path_input : t.label;
-            auto c = Hwmon::readTempC(t);
-            if (c.has_value()) o["c"] = fmt2(*c);
-            else               o["c"] = nullptr;
-            arr.push_back(std::move(o));
-        }
-    }
+    const int diff = target - cur;
+    const int step = (diff > 0) ? std::min(diff, 5) : -std::min(-diff, 5);
+    return clamp01(cur + step);
+}
 
-    // Fans
-    if (fans_) {
-        auto& arr = j["fans"] = nlohmann::json::array();
-        for (const auto& f : *fans_) {
-            nlohmann::json o;
-            o["path"] = f.path_input;
-            o["rpm"]  = Hwmon::readRpm(f).value_or(0);
-            arr.push_back(std::move(o));
-        }
-    }
-
-    // PWMs
-    if (pwms_) {
-        auto& arr = j["pwms"] = nlohmann::json::array();
-        for (const auto& p : *pwms_) {
-            nlohmann::json o;
-            o["path"]    = p.path_pwm;
-            o["percent"] = Hwmon::readPercent(p).value_or(-1);
-            arr.push_back(std::move(o));
-        }
-    }
-
-    j["engine"]["enabled"] = enabled();
-    return j.dump();
+int Engine::clamp01(int v) const {
+    return v < 0 ? 0 : (v > 100 ? 100 : v);
 }
 
 } // namespace lfc

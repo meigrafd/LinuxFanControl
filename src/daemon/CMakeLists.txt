@@ -1,78 +1,152 @@
 cmake_minimum_required(VERSION 3.18)
-project(lfcd CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+# ==============================================================================
+# LinuxFanControl Daemon
+# ==============================================================================
+
+project(lfcd LANGUAGES CXX)
+
+# Build settings
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# Options for GPU SDKs
+option(WITH_AMDSMI "Enable AMD SMI support" OFF)
+option(WITH_NVML   "Enable NVIDIA NVML support" OFF)
+option(WITH_IGCL   "Enable Intel IGCL support" OFF)
 
-# Optional libsensors (headers + .so)
-find_path(SENSORS_INCLUDE_DIRS sensors/sensors.h)
-find_library(SENSORS_LIBRARIES sensors)
+set(AMDSMI_INCLUDE_DIR "" CACHE PATH "AMD SMI include dir")
+set(NVML_INCLUDE_DIR   "" CACHE PATH "NVIDIA NVML include dir")
+set(IGCL_INCLUDE_DIR   "" CACHE PATH "Intel IGCL include dir")
 
-if(SENSORS_INCLUDE_DIRS AND SENSORS_LIBRARIES)
-    message(STATUS "libsensors include: ${SENSORS_INCLUDE_DIRS}")
-    message(STATUS "libsensors libs   : ${SENSORS_LIBRARIES}")
-    add_compile_definitions(HAVE_SENSORS)
+# Accept and reference (use) lm-sensors hints to avoid the "manually-specified variables not used" warning.
+# These may be passed in via -DSENSORS_INCLUDE_DIRS=... -DSENSORS_LIBRARIES=...
+set(SENSORS_INCLUDE_DIRS "${SENSORS_INCLUDE_DIRS}" CACHE PATH   "lm-sensors include dirs")
+set(SENSORS_LIBRARIES    "${SENSORS_LIBRARIES}"    CACHE STRING "lm-sensors libraries")
+
+# Referencing them here marks them as 'used' at configure time.
+if(DEFINED SENSORS_INCLUDE_DIRS OR DEFINED SENSORS_LIBRARIES)
+  message(STATUS "lm-sensors include: ${SENSORS_INCLUDE_DIRS}")
+  message(STATUS "lm-sensors libs   : ${SENSORS_LIBRARIES}")
+endif()
+
+# ------------------------------------------------------------------------------
+# Generated AutoConfig.h
+# If template is missing, synthesize a minimal header so the build does not fail.
+# ------------------------------------------------------------------------------
+set(AUTOCONFIG_IN ${CMAKE_CURRENT_SOURCE_DIR}/include/AutoConfig.h.in)
+if (EXISTS ${AUTOCONFIG_IN})
+    configure_file(${AUTOCONFIG_IN} ${CMAKE_BINARY_DIR}/AutoConfig.h @ONLY)
 else()
-    message(WARNING "libsensors not found; falling back to /sys/class/hwmon only.")
+    file(WRITE ${CMAKE_BINARY_DIR}/AutoConfig.h
+"// Auto-generated fallback
+#pragma once
+#ifndef LFCD_VERSION
+#define LFCD_VERSION \"0.0.0-dev\"
+#endif
+")
 endif()
 
-add_executable(lfcd
-    ${SRC_DIR}/Log.cpp
-    ${SRC_DIR}/Config.cpp
-    ${SRC_DIR}/Profile.cpp
-    ${SRC_DIR}/CommandRegistry.cpp
-    ${SRC_DIR}/CommandIntrospection.cpp
-    ${SRC_DIR}/Detection.cpp
-    ${SRC_DIR}/FanControlImport.cpp
-    ${SRC_DIR}/UpdateChecker.cpp
-    ${SRC_DIR}/RpcTcpServer.cpp
-    ${SRC_DIR}/RpcHandlers.cpp
-    ${SRC_DIR}/Hwmon.cpp
-    ${SRC_DIR}/ShmTelemetry.cpp
-    ${SRC_DIR}/Engine.cpp
-    ${SRC_DIR}/Daemon.cpp
-    ${SRC_DIR}/main.cpp
-)
-
-target_include_directories(lfcd PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/include
-)
-
-# If libsensors was found, add its include dirs and link library to lfcd
-if (SENSORS_INCLUDE_DIRS AND SENSORS_LIBRARIES)
-    target_include_directories(lfcd PRIVATE ${SENSORS_INCLUDE_DIRS})
-    target_link_libraries(lfcd PRIVATE ${SENSORS_LIBRARIES})
-endif()
-
-# librt (optional on some platforms)
-find_library(LIBRT rt)
-if(LIBRT)
-    target_link_libraries(lfcd PRIVATE ${LIBRT})
-endif()
-
-# libcurl is required (UpdateChecker)
-find_package(CURL REQUIRED)
-if(CURL_FOUND)
-    message(STATUS "libcurl include: ${CURL_INCLUDE_DIRS}")
-    message(STATUS "libcurl libs   : ${CURL_LIBRARIES}")
-    target_include_directories(lfcd PRIVATE ${CURL_INCLUDE_DIRS})
-    target_link_libraries(lfcd PRIVATE ${CURL_LIBRARIES})
-else()
-    message(FATAL_ERROR "libcurl not found — required for UpdateChecker")
-endif()
-
-# pthreads
+# Dependencies
 find_package(Threads REQUIRED)
-target_link_libraries(lfcd PRIVATE Threads::Threads)
+find_package(CURL REQUIRED)  # UpdateChecker.cpp uses libcurl
+# find_package(nlohmann_json 3.10 QUIET) # header-only when not found
 
-set_target_properties(lfcd PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
+# Include directories
+set(DAEMON_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
+include_directories(
+    ${DAEMON_SRC_DIR}/include
+    ${CMAKE_BINARY_DIR}
+)
 
-if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(lfcd PRIVATE -Wall -Wextra -Wpedantic)
+if(SENSORS_INCLUDE_DIRS)
+  include_directories(${SENSORS_INCLUDE_DIRS})
 endif()
 
-# install hints (optional)
-# install(TARGETS lfcd RUNTIME DESTINATION bin)
+# Sources
+set(LFCD_SOURCES
+    # entry / core
+    ${DAEMON_SRC_DIR}/main.cpp
+    ${DAEMON_SRC_DIR}/Utils.cpp
+    ${DAEMON_SRC_DIR}/Daemon.cpp
+    ${DAEMON_SRC_DIR}/Engine.cpp
+    ${DAEMON_SRC_DIR}/Detection.cpp
+    ${DAEMON_SRC_DIR}/Hwmon.cpp
+    ${DAEMON_SRC_DIR}/Profile.cpp
+    ${DAEMON_SRC_DIR}/ShmTelemetry.cpp
+    ${DAEMON_SRC_DIR}/GpuMonitor.cpp
+    ${DAEMON_SRC_DIR}/UpdateChecker.cpp
+    ${DAEMON_SRC_DIR}/Log.cpp
+    ${DAEMON_SRC_DIR}/CommandIntrospection.cpp
+    ${DAEMON_SRC_DIR}/CommandRegistry.cpp
+    ${DAEMON_SRC_DIR}/Config.cpp
+    ${DAEMON_SRC_DIR}/FanControlImport.cpp
+    ${DAEMON_SRC_DIR}/VendorMapping.cpp
+
+    # RPC server core
+    ${DAEMON_SRC_DIR}/RpcTcpServer.cpp
+    ${DAEMON_SRC_DIR}/rpc/RpcCore.cpp
+    ${DAEMON_SRC_DIR}/rpc/RpcHandlers.cpp
+
+    # RPC feature modules
+    ${DAEMON_SRC_DIR}/rpc/RpcDaemon.cpp
+    ${DAEMON_SRC_DIR}/rpc/RpcEngine.cpp
+    ${DAEMON_SRC_DIR}/rpc/RpcHwmonList.cpp
+    ${DAEMON_SRC_DIR}/rpc/RpcTelemetry.cpp
+    ${DAEMON_SRC_DIR}/rpc/RpcConfig.cpp
+    ${DAEMON_SRC_DIR}/rpc/RpcProfile.cpp
+    ${DAEMON_SRC_DIR}/rpc/RpcDetect.cpp
+    ${DAEMON_SRC_DIR}/rpc/RpcImportAs.cpp
+    ${DAEMON_SRC_DIR}/rpc/RpcImportJobs.cpp
+    ${DAEMON_SRC_DIR}/rpc/RpcImportStatus.cpp
+    ${DAEMON_SRC_DIR}/rpc/RpcImportCancel.cpp
+    ${DAEMON_SRC_DIR}/rpc/RpcImportCommit.cpp
+
+    # Header-only for IDE visibility
+    ${DAEMON_SRC_DIR}/rpc/ImportJobs.hpp
+)
+
+add_executable(lfcd ${LFCD_SOURCES})
+
+# Include paths
+target_include_directories(lfcd PRIVATE
+    ${DAEMON_SRC_DIR}                    # local headers: "Config.hpp", "Profile.hpp", ...
+    ${CMAKE_CURRENT_SOURCE_DIR}/include  # public headers: "include/CommandRegistry.h", etc.
+    ${CMAKE_BINARY_DIR}                  # generated AutoConfig.h
+)
+
+# Optional vendor SDK include dirs
+if (WITH_AMDSMI AND AMDSMI_INCLUDE_DIR)
+    target_include_directories(lfcd PRIVATE ${AMDSMI_INCLUDE_DIR})
+    target_compile_definitions(lfcd PRIVATE LFC_WITH_AMDSMI=1)
+endif()
+
+if (WITH_NVML AND NVML_INCLUDE_DIR)
+    target_include_directories(lfcd PRIVATE ${NVML_INCLUDE_DIR})
+    target_compile_definitions(lfcd PRIVATE LFC_WITH_NVML=1)
+endif()
+
+if (WITH_IGCL AND IGCL_INCLUDE_DIR)
+    target_include_directories(lfcd PRIVATE ${IGCL_INCLUDE_DIR})
+    target_compile_definitions(lfcd PRIVATE LFC_WITH_IGCL=1)
+endif()
+
+# Linking
+target_link_libraries(lfcd PRIVATE
+    Threads::Threads
+    CURL::libcurl
+)
+
+# Warnings / defines
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(lfcd PRIVATE
+        -Wall -Wextra -Wpedantic
+        -Wno-unused-parameter
+        -Wno-missing-field-initializers
+    )
+endif()
+
+# Consistent JSON choice
+target_compile_definitions(lfcd PRIVATE LFC_USE_NLOHMANN_JSON=1)
