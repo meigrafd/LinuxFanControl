@@ -1,130 +1,122 @@
 /*
  * Linux Fan Control — Profile (implementation)
- * - JSON serialization/deserialization and helpers
  * (c) 2025 LinuxFanControl contributors
  */
 #include "include/Profile.hpp"
-#include "include/Hwmon.hpp"
+#include "include/Version.hpp"
 
-#include <nlohmann/json.hpp>
 #include <fstream>
-#include <stdexcept>
-#include <vector>
+#include <filesystem>
+
+namespace fs = std::filesystem;
+using nlohmann::json;
 
 namespace lfc {
 
-using nlohmann::json;
-
-// --- JSON for low-level hwmon structs (needed for HwmonDeviceMeta.pwms) -----
-
-void to_json(json& j, const HwmonTemp& t) {
-    j = json{
-        {"chip_path",  t.chipPath},
-        {"path_input", t.path_input},
-        {"label",      t.label}
-    };
-}
-
-void from_json(const json& j, HwmonTemp& t) {
-    t.chipPath  = j.value("chip_path",  std::string{});
-    t.path_input = j.value("path_input", std::string{});
-    t.label      = j.value("label",      std::string{});
-}
-
-void to_json(json& j, const HwmonFan& f) {
-    j = json{
-        {"chip_path",  f.chipPath},
-        {"path_input", f.path_input},
-        {"label",      f.label}
-    };
-}
-
-void from_json(const json& j, HwmonFan& f) {
-    f.chipPath  = j.value("chip_path",  std::string{});
-    f.path_input = j.value("path_input", std::string{});
-    f.label      = j.value("label",      std::string{});
-}
-
-void to_json(json& j, const HwmonPwm& p) {
-    j = json{
-        {"chip_path",   p.chipPath},
-        {"path_pwm",    p.path_pwm},
-        {"path_enable", p.path_enable},
-        {"pwm_max",     p.pwm_max},
-        {"label",       p.label}
-    };
-}
-
-void from_json(const json& j, HwmonPwm& p) {
-    p.chipPath   = j.value("chip_path",   std::string{});
-    p.path_pwm    = j.value("path_pwm",    std::string{});
-    p.path_enable = j.value("path_enable", std::string{});
-    p.pwm_max     = j.value("pwm_max",     255);
-    p.label       = j.value("label",       std::string{});
-}
-
-// --- JSON for profile model ---------------------------------------------------
+/* ------------------ CurvePoint ------------------ */
 
 void to_json(json& j, const CurvePoint& p) {
-    j = json{{"tempC", p.tempC}, {"percent", p.percent}};
+    j = json{
+        {"tempC",   p.tempC},
+        {"percent", p.percent}
+    };
 }
 
 void from_json(const json& j, CurvePoint& p) {
-    p.tempC = j.value("tempC", 0.0);
+    p.tempC   = j.value("tempC", 0.0);
     p.percent = j.value("percent", 0);
+}
+
+/* ------------------ FanCurveMeta ------------------ */
+
+static std::string mixToString(MixFunction m) {
+    switch (m) {
+        case MixFunction::Min: return "min";
+        case MixFunction::Avg: return "avg";
+        case MixFunction::Max: return "max";
+    }
+    return "avg";
+}
+
+static MixFunction mixFromString(const std::string& s) {
+    if (s == "min") return MixFunction::Min;
+    if (s == "max") return MixFunction::Max;
+    return MixFunction::Avg;
 }
 
 void to_json(json& j, const FanCurveMeta& f) {
     j = json{
-        {"name", f.name},
-        {"type", f.type},
-        {"mix", (f.mix == MixFunction::Min ? "Min" :
-                 f.mix == MixFunction::Max ? "Max" : "Avg")},
+        {"name",        f.name},
+        {"type",        f.type},
+        {"mix",         mixToString(f.mix)},
         {"tempSensors", f.tempSensors},
-        {"points", f.points},
-        {"onC", f.onC},
-        {"offC", f.offC}
+        {"curveRefs",   f.curveRefs},
+        {"controlRefs", f.controlRefs},
+        {"points",      f.points},
+        {"onC",         f.onC},
+        {"offC",        f.offC}
     };
 }
 
 void from_json(const json& j, FanCurveMeta& f) {
-    f.name = j.value("name", "");
-    f.type = j.value("type", "graph");
-    std::string mixStr = j.value("mix", "Avg");
-    if (mixStr == "Min") f.mix = MixFunction::Min;
-    else if (mixStr == "Max") f.mix = MixFunction::Max;
-    else f.mix = MixFunction::Avg;
+    f.name = j.value("name", std::string{});
+    f.type = j.value("type", std::string{"graph"});
+    f.mix  = mixFromString(j.value("mix", std::string{"avg"}));
+
     f.tempSensors = j.value("tempSensors", std::vector<std::string>{});
-    f.points = j.value("points", std::vector<CurvePoint>{});
-    f.onC = j.value("onC", 0.0);
+    f.curveRefs   = j.value("curveRefs",   std::vector<std::string>{});
+    f.controlRefs = j.value("controlRefs", std::vector<std::string>{});
+
+    f.points.clear();
+    if (j.contains("points") && j.at("points").is_array()) {
+        for (const auto& it : j.at("points")) {
+            f.points.push_back(it.get<CurvePoint>());
+        }
+    }
+
+    f.onC  = j.value("onC",  0.0);
     f.offC = j.value("offC", 0.0);
 }
 
+/* ------------------ ControlMeta ------------------ */
+
 void to_json(json& j, const ControlMeta& c) {
-    j = json{{"name", c.name}, {"pwmPath", c.pwmPath}, {"curveRef", c.curveRef}};
+    j = json{
+        {"name",     c.name},
+        {"pwmPath",  c.pwmPath},
+        {"curveRef", c.curveRef},
+        {"nickName", c.nickName}
+    };
 }
 
 void from_json(const json& j, ControlMeta& c) {
-    c.name = j.value("name", "");
-    c.pwmPath = j.value("pwmPath", "");
-    c.curveRef = j.value("curveRef", "");
+    c.name     = j.value("name", std::string{});
+    c.pwmPath  = j.value("pwmPath", std::string{});
+    c.curveRef = j.value("curveRef", std::string{});
+    if (j.contains("nickName"))      c.nickName = j.at("nickName").get<std::string>();
+    else if (j.contains("nick"))     c.nickName = j.at("nick").get<std::string>();
+    else if (j.contains("nickname")) c.nickName = j.at("nickname").get<std::string>();
 }
+
+/* ------------------ HwmonDeviceMeta ------------------ */
 
 void to_json(json& j, const HwmonDeviceMeta& d) {
     j = json{
         {"hwmonPath", d.hwmonPath},
         {"name",      d.name},
-        {"vendor",    d.vendor},
-        {"pwms",      d.pwms}
+        {"vendor",    d.vendor}
     };
+    // 'pwms' omitted intentionally (runtime inventory provides pwm metadata)
 }
 
 void from_json(const json& j, HwmonDeviceMeta& d) {
-    d.hwmonPath = j.value("hwmonPath", "");
-    d.name      = j.value("name", "");
-    d.vendor    = j.value("vendor", "");
-    d.pwms      = j.value("pwms", std::vector<HwmonPwm>{});
+    d.hwmonPath = j.value("hwmonPath", std::string{});
+    d.name      = j.value("name", std::string{});
+    d.vendor    = j.value("vendor", std::string{});
+    // do not touch 'pwms' here; it is runtime-filled elsewhere
 }
+
+/* ------------------ Profile ------------------ */
 
 void to_json(json& j, const Profile& p) {
     j = json{
@@ -139,20 +131,29 @@ void to_json(json& j, const Profile& p) {
 }
 
 void from_json(const json& j, Profile& p) {
-    p.schema       = j.value("schema", "");
-    p.name         = j.value("name", "");
-    p.description  = j.value("description", "");
-    p.lfcdVersion  = j.value("lfcdVersion", "");
-    p.fanCurves    = j.value("fanCurves", std::vector<FanCurveMeta>{});
-    p.controls     = j.value("controls", std::vector<ControlMeta>{});
-    p.hwmons       = j.value("hwmons", std::vector<HwmonDeviceMeta>{});
-}
+    p.schema      = j.value("schema",      std::string{"lfc.profile/v1"});
+    p.name        = j.value("name",        std::string{});
+    p.description = j.value("description", std::string{});
+    p.lfcdVersion = j.value("lfcdVersion", std::string{LFCD_VERSION});
 
-// --- helpers ------------------------------------------------------------------
+    p.fanCurves.clear();
+    if (j.contains("fanCurves") && j.at("fanCurves").is_array()) {
+        for (const auto& it : j.at("fanCurves")) p.fanCurves.push_back(it.get<FanCurveMeta>());
+    }
+
+    p.controls.clear();
+    if (j.contains("controls") && j.at("controls").is_array()) {
+        for (const auto& it : j.at("controls")) p.controls.push_back(it.get<ControlMeta>());
+    }
+
+    p.hwmons.clear();
+    if (j.contains("hwmons") && j.at("hwmons").is_array()) {
+        for (const auto& it : j.at("hwmons")) p.hwmons.push_back(it.get<HwmonDeviceMeta>());
+    }
+}
 
 Profile loadProfileFromFile(const std::string& path) {
     std::ifstream f(path);
-    if (!f.is_open()) throw std::runtime_error("Cannot open profile: " + path);
     json j;
     f >> j;
     return j.get<Profile>();
@@ -160,9 +161,8 @@ Profile loadProfileFromFile(const std::string& path) {
 
 void saveProfileToFile(const Profile& p, const std::string& path) {
     json j = p;
-    std::ofstream f(path);
-    if (!f.is_open()) throw std::runtime_error("Cannot save profile: " + path);
-    f << j.dump(4);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out << j.dump(2) << "\n";
 }
 
 } // namespace lfc

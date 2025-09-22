@@ -3,54 +3,43 @@
  * (c) 2025 LinuxFanControl contributors
  */
 #include <nlohmann/json.hpp>
-#include <string>
-#include <vector>
 
 #include "include/Daemon.hpp"
 #include "include/CommandRegistry.hpp"
-#include "rpc/ImportJobs.hpp"
 #include "include/Log.hpp"
+#include "rpc/ImportJobs.hpp"
 
 namespace lfc {
 
 using nlohmann::json;
-
-static inline RpcResult ok_(const char* m, const json& d = json::object()) {
-    json o{{"method", m}, {"success", true}, {"data", d}};
-    return {true, o.dump()};
-}
-static inline RpcResult err_(const char* m, int c, const std::string& msg) {
-    json o{{"method", m}, {"success", false}, {"error", {{"code", c}, {"message", msg}}}};
-    return {false, o.dump()};
-}
 
 void BindRpcImportJobs(Daemon& self, CommandRegistry& reg) {
     (void)self;
 
     reg.add(
         "profile.importJobs",
-        "List all active import jobs",
+        "List profile import jobs",
         [&](const RpcRequest& rq) -> RpcResult {
-            (void)rq;
-            LOG_TRACE("rpc profile.importJobs");
+            try {
+                LOG_DEBUG("rpc profile.importJobs params=%s", rq.params.dump().c_str());
 
-            std::vector<ImportStatus> list = ImportJobManager::instance().list();
-            json arr = json::array();
-            for (const auto& st : list) {
-                arr.push_back(json{
-                    {"jobId", st.jobId},
-                    {"state", st.state},
-                    {"progress", st.progress},
-                    {"message", st.message},
-                    {"error", st.error},
-                    {"profileName", st.profileName},
-                    {"isFanControlRelease", st.isFanControlRelease}
-                });
+                const auto jobsVec = ImportJobManager::instance().list();
+
+                json jobs = json::array();
+                for (const auto& s : jobsVec) {
+                    jobs.push_back(json(s)); // relies on NLOHMANN_DEFINE_TYPE_INTRUSIVE in ImportStatus
+                }
+
+                return ok_(rq, "profile.importJobs", json{{"jobs", jobs}});
+            } catch (const std::exception& ex) {
+                LOG_ERROR("rpc profile.importJobs failed: %s", ex.what());
+                return err_(rq, "profile.importJobs", -32603, ex.what());
+            } catch (...) {
+                LOG_ERROR("rpc profile.importJobs failed: unknown error");
+                return err_(rq, "profile.importJobs", -32603, "internal error");
             }
-
-            LOG_DEBUG("profile.importJobs: count=%zu", arr.size());
-            return ok_("profile.importJobs", arr);
-        });
+        }
+    );
 }
 
 } // namespace lfc

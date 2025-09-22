@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <stdexcept>
 #include <nlohmann/json.hpp>
 
 namespace lfc {
@@ -33,39 +34,69 @@ struct RpcRequest {
 
 /* JSON-RPC result model */
 struct RpcResult {
-    // ok=true  -> result populated
-    // ok=false -> error.* populated (JSON-RPC error object fields)
     bool            ok{true};
     nlohmann::json  id;
     nlohmann::json  result;        // when ok=true
     int             code{0};       // when ok=false
     std::string     message;       // when ok=false
     nlohmann::json  data;          // optional when ok=false
+    std::string     method;        // needed to put method at top-level in error payload
 
+    // success: pass the final payload object via 'res'
     static inline RpcResult makeOk(const nlohmann::json& id, const nlohmann::json& res) {
         RpcResult r; r.ok = true; r.id = id; r.result = res; return r;
     }
-    static inline RpcResult makeError(const nlohmann::json& id, int code, const std::string& msg, const nlohmann::json& data = {}) {
-        RpcResult r; r.ok = false; r.id = id; r.code = code; r.message = msg; r.data = data; return r;
+
+    // error: capture method explicitly so we can surface it at top-level. 4-arg version
+    static inline RpcResult makeError(const nlohmann::json& id, const std::string& method, int code, const std::string& msg, const nlohmann::json& data = {}) {
+        RpcResult r; r.ok = false; r.id = id; r.method = method; r.code = code; r.message = msg; r.data = data; return r;
     }
+
     inline nlohmann::json toJson() const {
         if (ok) {
+            // JSON-RPC: put your envelope into "result"
             return nlohmann::json{
                 {"jsonrpc","2.0"},
                 {"id", id},
                 {"result", result}
             };
         } else {
-            nlohmann::json err{{"code", code}, {"message", message}};
-            if (!data.is_null() && !data.empty()) err["data"] = data;
+            // JSON-RPC: still use "result" and keep your envelope shape
+            nlohmann::json payload = {
+                {"success", false},
+                {"method",  method},
+                {"error",   nlohmann::json{{"code", code}, {"message", message}}}
+            };
+            if (!data.is_null() && !data.empty()) {
+                payload["data"] = data; // optional extra info
+            }
             return nlohmann::json{
                 {"jsonrpc","2.0"},
                 {"id", id},
-                {"error", err}
+                {"result", payload}
             };
         }
     }
 };
+
+// --- JSON-RPC convenience helpers (shared by all Rpc*.cpp) ------------------
+inline RpcResult ok_(const RpcRequest& rq,
+                     const char* method,
+                     const nlohmann::json& data = nlohmann::json::object()) {
+    return RpcResult::makeOk(rq.id, nlohmann::json{
+        {"success", true},
+        {"method",  method},
+        {"data",    data}
+    });
+}
+
+inline RpcResult err_(const RpcRequest& rq,
+                      const char* method,
+                      int code,
+                      const std::string& message,
+                      const nlohmann::json& extra = nlohmann::json::object()) {
+    return RpcResult::makeError(rq.id, method, code, message, extra);
+}
 
 /* Error thrown when a command is not found. */
 class CommandNotFound : public std::runtime_error {
@@ -120,5 +151,43 @@ private:
 
     void installBuiltins_();
 };
+
+/*
+ * Normalize RPC params to JSON and object-shape.
+ * Safe to include in headers (inline). No API changes to existing code.
+ */
+inline nlohmann::json paramsToJson(const RpcRequest& rq) {
+    // If your RpcRequest already stores JSON in rq.params, just return it.
+    return rq.params;
+}
+
+inline nlohmann::json paramsAsObject(const nlohmann::json& p) {
+    if (p.is_object()) {
+        return p;
+    }
+    // JSON-RPC allows array-style params: [ { ... } ]
+    if (p.is_array() && p.size() == 1 && p[0].is_object()) {
+        return p[0];
+    }
+    // Anything else → empty object to keep handlers robust
+    return nlohmann::json::object();
+}
+
+// Overload for convenience when a handler has the whole request:
+inline nlohmann::json paramsAsObject(const RpcRequest& rq) {
+    return paramsAsObject(paramsToJson(rq));
+}
+
+inline std::string paramsToString(const nlohmann::json& j) {
+    try {
+        return j.dump(); // compact for logging
+    } catch (...) {
+        return "{}";
+    }
+}
+
+inline std::string paramsToString(const RpcRequest& rq) {
+    return paramsToString(rq.params);
+}
 
 } // namespace lfc

@@ -227,7 +227,7 @@ JSON-RPC Test per netcat (eine Zeile pro Request):
 ```bash
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"version"}' | nc 127.0.0.1 8777 | jq
 printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"telemetry.json"}'   | nc 127.0.0.1 8777 | jq
-printf '%s\n' '[{"jsonrpc":"2.0","id":"a","method":"rpc.commands"},{"jsonrpc":"2.0","method":"engine.start"}]' | nc 127.0.0.1 8777 | jq
+printf '%s\n' '[{"jsonrpc":"2.0","id":"a","method":"commands"},{"jsonrpc":"2.0","method":"engine.start"}]' | nc 127.0.0.1 8777 | jq
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"config.set","params":{"key":"engine.deltaC","value":0.7}}' | nc 127.0.0.1 8777 | jq
 printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"config.set","params":{"key":"engine.forceTickMs","value":1500}}' | nc 127.0.0.1 8777 | jq
 ```

@@ -1,23 +1,21 @@
 /*
- * Linux Fan Control — RPC telemetry handlers
+ * Linux Fan Control — RPC: telemetry.json
  * (c) 2025 LinuxFanControl contributors
  */
-#include "include/Daemon.hpp"
-#include "include/CommandRegistry.hpp"
-#include "include/Log.hpp"
+
 #include <nlohmann/json.hpp>
 #include <string>
+
+#include "include/CommandRegistry.hpp"   // ok_ / err_
+#include "include/Daemon.hpp"
+#include "include/Log.hpp"
 
 namespace lfc {
 
 using nlohmann::json;
 
-static inline RpcResult ok(const char* m, const json& d = json::object()) {
-    json out{{"method",m},{"success",true},{"data",d}}; return {true,out.dump()};
-}
-
 void BindRpcTelemetry(Daemon& self, CommandRegistry& reg) {
-    reg.add("telemetry.json", "Return current SHM JSON blob", [&](const RpcRequest&) -> RpcResult {
+    reg.add("telemetry.json", "Return current SHM JSON blob", [&](const RpcRequest& rq) -> RpcResult {
         std::string blob;
         if (!self.telemetryGet(blob)) {
             LOG_WARN("telemetry.json: no SHM data, returning empty object");
@@ -30,8 +28,9 @@ void BindRpcTelemetry(Daemon& self, CommandRegistry& reg) {
             LOG_WARN("telemetry.json: parse failed, returning empty object");
             j = json::object();
         }
-        return ok("telemetry.json", j);
+        return ok_(rq, "telemetry.json", j);
     });
 }
+
 
 } // namespace lfc

@@ -6,7 +6,7 @@
 #include <nlohmann/json.hpp>
 #include <string>
 
-#include "include/CommandRegistry.hpp"
+#include "include/CommandRegistry.hpp"      // provides ok_ / err_
 #include "include/CommandIntrospection.hpp"
 #include "include/Version.hpp"
 #include "include/Log.hpp"
@@ -15,54 +15,59 @@ namespace lfc {
 
 using nlohmann::json;
 
-// Vorwärtsdeklaration reicht hier; der Parameter wird nicht verwendet.
+// Forward-declare; not needed here but keeps binder signature uniform.
 class Daemon;
 
-/*
- * BindRpcCore
- * Registriert Kernbefehle am CommandRegistry.
- * Signaturen sind auf RpcRequest/RpcResult angepasst.
- */
+static inline std::string param_name(const json& params) {
+    if (params.is_object() && params.contains("name") && params["name"].is_string())
+        return params["name"].get<std::string>();
+    if (params.is_string()) {
+        try {
+            json p = json::parse(params.get_ref<const std::string&>());
+            if (p.is_object() && p.contains("name") && p["name"].is_string())
+                return p["name"].get<std::string>();
+        } catch (...) {}
+    }
+    return {};
+}
+
 void BindRpcCore(Daemon& /*self*/, CommandRegistry& reg) {
-    // rpc.commands — Liste aller Befehle
     reg.add(
         "commands",
         "List available RPC commands",
         [&reg](const RpcRequest& rq) -> RpcResult {
             LOG_TRACE("rpc commands");
-            return RpcResult::makeOk(rq.id, reg.listJson());
+            return ok_(rq, "commands", reg.listJson());
         }
     );
 
-    // rpc.help — Hilfe zu einem Befehl: { "name": "<command>" }
+    // Show help for a command: { "name": "<command>" }
     reg.add(
         "help",
         "Show help for a command",
         [&reg](const RpcRequest& rq) -> RpcResult {
             LOG_TRACE("rpc help");
-            const std::string name = rq.params.value("name", std::string{});
-            if (name.empty()) {
-                return RpcResult::makeError(rq.id, -32602, "missing 'name'");
-            }
+            const std::string name = param_name(rq.params);
+            if (name.empty())
+                return err_(rq, "help", -32602, "missing 'name'");
             auto h = reg.help(name);
-            if (!h) {
-                return RpcResult::makeError(rq.id, -32601, "unknown command", {{"name", name}});
-            }
-            return RpcResult::makeOk(rq.id, json{{"name", name}, {"help", *h}});
+            if (!h)
+                return err_(rq, "help", -32601, "unknown command");
+            return ok_(rq, "help", json{{"name", name}, {"help", *h}});
         }
     );
 
-    // rpc.ping — Liveness-Probe
+    // Liveness probe
     reg.add(
         "ping",
         "Liveness probe",
         [](const RpcRequest& rq) -> RpcResult {
             LOG_TRACE("rpc ping");
-            return RpcResult::makeOk(rq.id, json{{"pong", true}});
+            return ok_(rq, "ping", json{{"pong", true}});
         }
     );
 
-    // rpc.version — Versionsinfo (ohne Abhängigkeit auf bestimmte Makros)
+    // Daemon/RPC version info
     reg.add(
         "version",
         "Return daemon/rpc version info",
@@ -70,12 +75,13 @@ void BindRpcCore(Daemon& /*self*/, CommandRegistry& reg) {
             LOG_TRACE("rpc version");
             json data{
                 {"name",    "LinuxFanControl"},
-                {"version",  LFCD_VERSION},
+                {"version", LFCD_VERSION},
                 {"rpc",     "2.0"}
             };
-            return RpcResult::makeOk(rq.id, data);
+            return ok_(rq, "version", data);
         }
     );
+
 }
 
 } // namespace lfc

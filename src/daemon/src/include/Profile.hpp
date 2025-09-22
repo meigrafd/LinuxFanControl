@@ -9,6 +9,8 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 
+#include "Hwmon.hpp"  // for lfc::HwmonPwm/HwmonTemp paths
+
 namespace lfc {
 
 struct CurvePoint {
@@ -26,19 +28,20 @@ struct FanCurveMeta {
     std::string name;
     std::string type;                  // "graph", "trigger", "mix"
     MixFunction mix{MixFunction::Avg};
-    std::vector<std::string> tempSensors;
-    std::vector<CurvePoint> points;
-    double onC{0.0};
-    double offC{0.0};
+    std::vector<std::string> tempSensors;     // sysfs temp input paths used by this curve (graphs/triggers)
+    std::vector<std::string> curveRefs;       // referenced curve names (for type=="mix")
+    std::vector<std::string> controlRefs;     // reverse refs: controls using this curve (from Controls[].SelectedFanCurve)
+    std::vector<CurvePoint> points;           // normalized 0..100% curve
+    double onC{0.0};                           // optional trigger ON threshold for imported trigger-style curves
+    double offC{0.0};                          // optional trigger OFF threshold for imported trigger-style curves
 };
 
 struct ControlMeta {
     std::string name;
     std::string pwmPath;
     std::string curveRef;
+    std::string nickName;   // imported from FanControl.Release "NickName"
 };
-
-struct HwmonPwm; // forward
 
 struct HwmonDeviceMeta {
     std::string hwmonPath;
@@ -74,7 +77,6 @@ void to_json(nlohmann::json& j, const Profile& p);
 void from_json(const nlohmann::json& j, Profile& p);
 
 // helpers (implemented in Profile.cpp)
-struct Profile;
 Profile loadProfileFromFile(const std::string& path);
 void    saveProfileToFile(const Profile& p, const std::string& path);
 

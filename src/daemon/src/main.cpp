@@ -124,6 +124,7 @@ static bool daemonize(bool foreground, const std::string& logfile, const std::st
 }
 
 // Pretty, aligned printing for `--cmds`
+/*
 static void print_commands_pretty(lfc::CommandRegistry& reg) {
     // The registry exposes a stable list() with name/help entries.
     const auto entries = reg.list();
@@ -142,6 +143,28 @@ static void print_commands_pretty(lfc::CommandRegistry& reg) {
 
     for (const auto& it : items) {
         std::printf("%-*s %s\n", int(width), it.first.c_str(), it.second.c_str());
+    }
+}
+*/
+// pretty-print available commands (uses CommandRegistry::listJson)
+static void print_commands_pretty(lfc::CommandRegistry& reg) {
+    const nlohmann::json arr = reg.listJson(); // [{ "name": "...", "help": "..." }, ...]
+    std::vector<std::pair<std::string,std::string>> entries;
+    entries.reserve(arr.size());
+
+    for (const auto& it : arr) {
+        if (!it.is_object()) continue;
+        const std::string name = it.value("name", "");
+        const std::string help = it.value("help", "");
+        if (!name.empty()) entries.emplace_back(name, help);
+    }
+
+    std::sort(entries.begin(), entries.end(),
+              [](const auto& a, const auto& b){ return a.first < b.first; });
+
+    fprintf(stdout, "Available RPC commands (%zu):\n", entries.size());
+    for (const auto& [name, help] : entries) {
+        fprintf(stdout, "  %-28s  %s\n", name.c_str(), help.c_str());
     }
 }
 

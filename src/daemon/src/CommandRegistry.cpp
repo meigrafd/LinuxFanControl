@@ -109,11 +109,13 @@ void CommandRegistry::installBuiltins_() {
         [this](const RpcRequest& rq) -> RpcResult {
             const auto name = rq.params.value("name", std::string{});
             if (name.empty()) {
-                return RpcResult::makeError(rq.id, -32602, "missing 'name'");
+                return err_(rq, "help", -32602, "missing 'name'");
+                //return RpcResult::makeError(rq.id, "help", -32602, "missing 'name'");
             }
             auto h = this->help(name);
             if (!h) {
-                return RpcResult::makeError(rq.id, -32601, "unknown command", {{"name", name}});
+                return err_(rq, "help", -32601, "unknown command", {"name", name});
+                //return RpcResult::makeError(rq.id, "help", -32601, "unknown command", {{"name", name}});
             }
             return RpcResult::makeOk(rq.id, nlohmann::json{{"name", name}, {"help", *h}});
         });

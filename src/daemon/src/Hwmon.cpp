@@ -33,6 +33,19 @@ HwmonInventory Hwmon::scan() {
         s.chips.push_back(meta);
         LOG_DEBUG("Hwmon: chip=%s vendor=%s", meta.name.c_str(), meta.vendor.c_str());
 
+        {
+            const auto aliases = VendorMapping::instance().chipAliasesFor(meta.name);
+            if (!aliases.empty()) {
+                std::string joined;
+                joined.reserve(64);
+                for (size_t i = 0; i < aliases.size(); ++i) {
+                    if (i) joined += ',';
+                    joined += aliases[i];
+                }
+                LOG_DEBUG("Hwmon: chip=%s aliases=[%s]", meta.name.c_str(), joined.c_str());
+            }
+        }
+
         // temps
         for (const auto& f : fs::directory_iterator(chipPath)) {
             const auto bn = f.path().filename().string();

@@ -70,7 +70,7 @@ Format: JSON-RPC-ähnliche Requests/Responses. Erfolgsantworten enthalten `{ "su
 ### Request
 
 ```json
-{ "method": "profile.importStatus", "params": { "jobId": "42" } }
+{"jsonrpc":"2.0","id":2,"method":"profile.importStatus","params":{"jobId":"42"}}
 ```
 
 ### Erfolgsantwort

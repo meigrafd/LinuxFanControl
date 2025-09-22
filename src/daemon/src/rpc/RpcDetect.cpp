@@ -1,40 +1,27 @@
 /*
- * Linux Fan Control — RPC: Detection
+ * Linux Fan Control — RPC: Detection API (start/status/abort/results)
+ * Singleton-style (no jobId in API)
  * (c) 2025 LinuxFanControl contributors
  */
+
 #include <nlohmann/json.hpp>
 #include <string>
-
-#include "rpc/ImportJobs.hpp"
+#include "include/CommandRegistry.hpp"   // ok_ / err_
 #include "include/Daemon.hpp"
-#include "include/Detection.hpp"
-#include "include/CommandRegistry.hpp"
 #include "include/Log.hpp"
 
 namespace lfc {
 
 using nlohmann::json;
 
-/* ------------------------------- helpers ---------------------------------- */
-static inline RpcResult ok_(const RpcRequest& rq, const char* method, const json& data = json::object()) {
-    return RpcResult::makeOk(
-        rq.id,
-        json{
-            {"method",  method},
-            {"success", true},
-            {"data",    data}
-        }
-    );
-}
+/*
+ * Expected Daemon surface (singleton):
+ *   void detectStart(const nlohmann::json& options);
+ *   bool detectStatus(nlohmann::json& outStatus) const;   // {state,progress,message,...}
+ *   bool detectAbort();                                   // true if aborted
+ *   bool detectResults(nlohmann::json& outResults) const; // final results
+ */
 
-static inline RpcResult err_(const RpcRequest& rq, const char* method, int code, const std::string& message, const json& data = json::object()) {
-    (void)method;
-    return RpcResult::makeError(
-        rq.id, code, message, data
-    );
-}
-
-/* -------------------------------- bindings -------------------------------- */
 void BindRpcDetect(Daemon& self, CommandRegistry& reg) {
     // detect.start — Start non-blocking detection
     reg.add(

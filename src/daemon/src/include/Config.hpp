@@ -1,6 +1,14 @@
 /*
  * Linux Fan Control — Configuration model and API (header)
  * (c) 2025 LinuxFanControl contributors
+ *
+ * Uses nlohmann::ordered_json to preserve insertion order on save.
+ * Key changes:
+ *   - profilesPath replaces legacy profilesDir
+ *   - log.level (trace/debug/info/warn/error/quiet)
+ *   - logfilePath replaces legacy logfile (legacy accepted on read; saved as logfilePath)
+ *   - vendorMapPath is read/write and persisted
+ *   - profileName is always updated when profile.setActive is called (RPC layer)
  */
 #pragma once
 
@@ -17,9 +25,13 @@ namespace lfc {
 struct DaemonConfig {
     // Files / paths (expanded at runtime)
     std::string configFile;   // e.g. ~/.config/LinuxFanControl/daemon.json
-    std::string profilesDir;  // directory with profile JSON files
-    std::string logfile;      // log file (rotated by Logger)
+    std::string profilesPath; // directory with profile JSON files
     std::string pidfile;      // pid file (e.g. /run/lfcd.pid or /tmp/lfcd.pid)
+
+    // logging
+    std::string logfilePath;   // default resolved in code if empty
+    std::string logLevel{"info"}; // "trace".."quiet"
+    std::string logfile;       // log file (rotated by Logger)
 
     // RPC endpoint
     std::string host{"127.0.0.1"};

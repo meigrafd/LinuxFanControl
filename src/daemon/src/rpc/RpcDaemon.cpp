@@ -7,33 +7,12 @@
 
 #include "include/Daemon.hpp"
 #include "include/UpdateChecker.hpp"
-#include "include/CommandRegistry.hpp"
+#include "include/CommandRegistry.hpp"   // ok_ / err_
 #include "include/Log.hpp"
 
 namespace lfc {
 
 using nlohmann::json;
-
-static inline RpcResult ok_(const RpcRequest& rq, const char* method, const json& data = json::object()) {
-    return RpcResult::makeOk(
-        rq.id,
-        json{
-            {"method",  method},
-            {"success", true},
-            {"data",    data}
-        }
-    );
-}
-
-static inline RpcResult err_(const RpcRequest& rq, const char* method, const std::string& message, const json& data = json::object()) {
-    (void)method; // method context is implicit in the message for now
-    return RpcResult::makeError(
-        rq.id,
-        -1,          // generic error code (kept compatible with existing clients)
-        message,
-        data
-    );
-}
 
 void BindRpcDaemon(Daemon& self, CommandRegistry& reg) {
     // daemon.shutdown — graceful stop
@@ -79,7 +58,7 @@ void BindRpcDaemon(Daemon& self, CommandRegistry& reg) {
 
             if (!UpdateChecker::fetchLatest(owner, name, info, fetchErr)) {
                 LOG_WARN("[update] fetch failed: %s", fetchErr.c_str());
-                return err_(rq, "daemon.update", fetchErr);
+                return err_(rq, "daemon.update", -32060, fetchErr.empty() ? "update fetch failed" : fetchErr);
             }
 
             if (!download) {
@@ -92,21 +71,18 @@ void BindRpcDaemon(Daemon& self, CommandRegistry& reg) {
             }
 
             if (target.empty()) {
-                const std::string m = "missing 'target' for download";
-                LOG_WARN("[update] %s", m.c_str());
-                return err_(rq, "daemon.update", m);
+                return err_(rq, "daemon.update", -32602, "missing 'target' for download");
             }
             if (info.assets.empty()) {
-                const std::string m = "no assets in latest release";
-                LOG_WARN("[update] %s", m.c_str());
-                return err_(rq, "daemon.update", m);
+                LOG_WARN("[update] no assets in latest release");
+                return err_(rq, "daemon.update", -32061, "no assets in latest release");
             }
 
             const std::string aurl = info.assets[0].url;
             std::string dlErr;
             if (!UpdateChecker::downloadToFile(aurl, target, dlErr)) {
                 LOG_ERROR("[update] download failed: %s", dlErr.c_str());
-                return err_(rq, "daemon.update", dlErr);
+                return err_(rq, "daemon.update", -32062, dlErr.empty() ? "download failed" : dlErr);
             }
 
             return ok_(rq, "daemon.update", json{

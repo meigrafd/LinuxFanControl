@@ -17,28 +17,6 @@ namespace lfc {
 
 using nlohmann::json;
 
-static inline RpcResult ok_(const RpcRequest& rq, const char* method, const json& data = json::object()) {
-    return RpcResult::makeOk(
-        rq.id,
-        json{
-            {"method",  method},
-            {"success", true},
-            {"data",    data}
-        }
-    );
-}
-
-static inline RpcResult err_(const RpcRequest& rq, const char* method, int code, const std::string& msg, const json& data = json::object()) {
-    (void)method;
-    return RpcResult::makeError(rq.id, code, msg, data);
-}
-
-static inline std::string paramsToString_(const json& p) {
-    if (p.is_string()) return p.get<std::string>();
-    if (p.is_null())   return "{}";
-    return p.dump();
-}
-
 void BindRpcConfig(Daemon& self, CommandRegistry& reg) {
     reg.add(
         "config.get",
@@ -68,7 +46,7 @@ void BindRpcConfig(Daemon& self, CommandRegistry& reg) {
         "config.save",
         "Save daemon configuration",
         [&](const RpcRequest& rq) -> RpcResult {
-            const std::string pstr = paramsToString_(rq.params);
+            const std::string pstr = paramsToString(rq.params);
             LOG_DEBUG("rpc config.save params=%s", pstr.c_str());
 
             try {
@@ -107,7 +85,7 @@ void BindRpcConfig(Daemon& self, CommandRegistry& reg) {
         "config.set",
         "Set a single config key",
         [&](const RpcRequest& rq) -> RpcResult {
-            const std::string pstr = paramsToString_(rq.params);
+            const std::string pstr = paramsToString(rq.params);
             LOG_DEBUG("rpc config.set params=%s", pstr.c_str());
 
             try {

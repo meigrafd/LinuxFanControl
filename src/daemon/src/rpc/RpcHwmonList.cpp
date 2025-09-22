@@ -1,41 +1,18 @@
 /*
- * Linux Fan Control — RPC: Hwmon listing
- * Release build — full file
+ * Linux Fan Control — RPC: HWMON inventory listing (chips/fans/pwms/sensors)
  * (c) 2025 LinuxFanControl contributors
  */
 
 #include <nlohmann/json.hpp>
-#include <string>
-
+#include "include/CommandRegistry.hpp"  // ok_ / err_
 #include "include/Daemon.hpp"
 #include "include/Hwmon.hpp"
-#include "include/CommandRegistry.hpp"
 #include "include/Log.hpp"
 
 namespace lfc {
 
 using nlohmann::json;
 
-/* ------------------------------- helpers ---------------------------------- */
-static inline RpcResult ok_(const RpcRequest& rq, const char* method, const json& data = json::object()) {
-    return RpcResult::makeOk(
-        rq.id,
-        json{
-            {"method",  method},
-            {"success", true},
-            {"data",    data}
-        }
-    );
-}
-
-static inline RpcResult err_(const RpcRequest& rq, const char* method, const std::string& message, const json& data = json::object()) {
-    (void)method;
-    return RpcResult::makeError(
-        rq.id, -1, message, data
-    );
-}
-
-/* -------------------------------- bindings -------------------------------- */
 void BindRpcHwmonList(Daemon& /*self*/, CommandRegistry& reg) {
     // list.sensor — list temperature inputs
     reg.add(
