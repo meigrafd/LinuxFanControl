@@ -5,7 +5,7 @@
 ### Unterstützte Quellformate
 
 1. **LinuxFanControl Profile (.json)** — Erkennung via `schema` (z.B. `LinuxFanControl.Profile/v1`).
-2. **FanControl (Rem0o) – Release-Profile (.json)** — Heuristik über Felder wie `Computers`, `Controls`, `Curves`, `Version`.
+2. **FanControl (Rem0o) – Release-Profile (.json)** — Heuristik über Felder wie `Computers`, `Controls`, `Curves`, `Version`. Siehe dazu auch [import_fancontrol.md]
 
 ### Ablauf (asynchron)
 

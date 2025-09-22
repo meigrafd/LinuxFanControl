@@ -71,9 +71,18 @@ This document lists the exit status codes returned by the LinuxFanControl daemon
 
 |   Code | Where / Example        | Meaning                                                           |
 | -----: | ---------------------- | ----------------------------------------------------------------- |
+| -32002 | `profile.save`         | Persistierung fehlgeschlagen (z. B. IO/Serialisierung)            |
+| -32004 | `profile.delete`       | Profil nicht gefunden / Dateisystem-Fehler                        |
+| -32010 | `config.save`          | Speichern der Konfiguration fehlgeschlagen                        |
 | -32031 | `profile.importCancel` | Job not found (e.g., unknown `jobId`).                            |
 | -32032 | `profile.importCancel` | Job exists but is not cancelable (already finished/failed).       |
 | -32033 | `profile.importCommit` | Commit failed (save/apply step failed; message contains details). |
+| -32040 | `list.hwmon`           | HWMON-Inventar nicht verfügbar                                    |
+| -32050 | `telemetry.json`       | Telemetrie nicht verfügbar                                        |
+| -32060 | `daemon.update`        | Update-Fetch fehlgeschlagen (Netzwerk/HTTP/Parse)                 |
+| -32061 | `daemon.update`        | Kein Asset in der neuesten Release                                |
+| -32062 | `daemon.update`        | Download fehlgeschlagen                                           |
+
 
 > **Note:** Handlers may include additional contextual messages in `error.message` (e.g., validation failures, mapping errors). Keep the negative sign for error codes in JSON‑RPC responses.
 
