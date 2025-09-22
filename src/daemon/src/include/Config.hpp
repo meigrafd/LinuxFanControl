@@ -17,7 +17,7 @@ namespace lfc {
 struct DaemonConfig {
     // Files / paths (expanded at runtime)
     std::string configFile;   // e.g. ~/.config/LinuxFanControl/daemon.json
-    std::string profilesDir;  // directory with profile JSON files
+    std::string profilesPath; // directory with profile JSON files
     std::string logfile;      // log file (rotated by Logger)
     std::string pidfile;      // pid file (e.g. /run/lfcd.pid or /tmp/lfcd.pid)
 
@@ -32,7 +32,7 @@ struct DaemonConfig {
     bool    debug{false};
 
     // Active profile
-    std::string profileName{"Default"};
+    std::string profileName;
 
     // Telemetry shared memory name (POSIX SHM)
     // Use a simple name like "lfc.telemetry" (will become "/lfc.telemetry").

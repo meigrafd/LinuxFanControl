@@ -56,7 +56,7 @@ public:
     void   setEngineDeltaC(double dc) noexcept { if (dc >= 0.0) cfg_.deltaC = dc; }
 
     // Runtime config setters/getters (programmatic)
-    void setProfilesDir(const std::string& d) { cfg_.profilesDir = d; }
+    void setProfilesPath(const std::string& d) { cfg_.profilesPath = d; }
     void setActiveProfile(const std::string& n) { setActiveProfileName(n); }
     void setRpcHost(const std::string& h) { cfg_.host = h; }
     void setRpcPort(int p) { cfg_.port = p; }
@@ -80,7 +80,7 @@ public:
     CommandRegistry& rpcRegistry() noexcept { return *rpcRegistry_; }
     RpcTcpServer&    rpcServer()   noexcept { return *rpcServer_;  }
 
-    std::string profilesDirPath() const;
+    std::string profilesPath() const;
     std::string profilePathForName(const std::string& name) const;
     std::string activeProfileName() const { return cfg_.profileName; }
     void        setActiveProfileName(const std::string& n) { cfg_.profileName = n; }

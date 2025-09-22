@@ -168,7 +168,7 @@ void BindRpcProfile(Daemon& self, CommandRegistry& reg) {
             LOG_TRACE("rpc profile.list");
 
             json arr = json::array();
-            const std::string dir = self.profilesDirPath();
+            const std::string dir = self.profilesPath();
             try {
                 if (!dir.empty() && fs::exists(dir)) {
                     for (const auto& e : fs::directory_iterator(dir)) {

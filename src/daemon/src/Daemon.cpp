@@ -232,12 +232,12 @@ bool Daemon::telemetryGet(std::string& outJson) const {
     return true;
 }
 
-std::string Daemon::profilesDirPath() const {
-    return lfc::util::expandUserPath(cfg_.profilesDir);
+std::string Daemon::profilesPath() const {
+    return lfc::util::expandUserPath(cfg_.profilesPath);
 }
 
 std::string Daemon::profilePathForName(const std::string& name) const {
-    const std::string base = profilesDirPath();
+    const std::string base = profilesPath();
     fs::path dir(base);
     fs::path file = (name.empty() ? cfg_.profileName : name) + std::string(".json");
     return (dir / file).string();

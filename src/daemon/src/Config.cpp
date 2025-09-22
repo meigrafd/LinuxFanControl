@@ -80,7 +80,7 @@ static bool parent_writable(const std::string& path) {
 void to_json(json& j, const DaemonConfig& c) {
     j = json{
         {"configFile",           c.configFile},
-        {"profilesDir",          c.profilesDir},
+        {"profilesPath",         c.profilesPath},
         {"logfile",              c.logfile},
         {"shmPath",              c.shmPath},
         {"pidfile",              c.pidfile},
@@ -107,7 +107,7 @@ void from_json(const nlohmann::json& j, DaemonConfig& c) {
     if (j.contains("logfile"))              j.at("logfile").get_to(c.logfile);
     if (j.contains("debug"))                j.at("debug").get_to(c.debug);
     if (j.contains("profileName"))          j.at("profileName").get_to(c.profileName);
-    if (j.contains("profilesDir"))          j.at("profilesDir").get_to(c.profilesDir);
+    if (j.contains("profilesPath"))         j.at("profilesPath").get_to(c.profilesPath);
     if (j.contains("shmPath"))              j.at("shmPath").get_to(c.shmPath);
     if (j.contains("vendorMapPath"))        j.at("vendorMapPath").get_to(c.vendorMapPath);
     if (j.contains("vendorMapWatchMode"))   j.at("vendorMapWatchMode").get_to(c.vendorMapWatchMode);
@@ -129,10 +129,11 @@ DaemonConfig defaultConfig() {
     const std::string baseCfg   = cfgHome.empty()   ? std::string() : join(cfgHome, "LinuxFanControl");
     const std::string baseState = stateHome.empty() ? std::string() : join(stateHome, "LinuxFanControl");
 
-    c.configFile  = baseCfg.empty() ? "" : (fs::path(baseCfg) / "daemon.json").string();
-    c.profilesDir = baseCfg.empty() ? "" : join(baseCfg, "profiles");
-    c.logfile     = baseState.empty() ? "/tmp/daemon_lfc.log" : join(baseState, "daemon_lfc.log");
+    c.configFile   = baseCfg.empty() ? "" : (fs::path(baseCfg) / "daemon.json").string();
+    c.profilesPath = baseCfg.empty() ? "" : join(baseCfg, "profiles");
+    c.logfile      = baseState.empty() ? "/tmp/daemon_lfc.log" : join(baseState, "daemon_lfc.log");
 
+    // Prefer /run; fall back to /tmp if not writable.
     const std::string runPid = "/run/lfcd.pid";
     const std::string tmpPid = "/tmp/lfcd.pid";
     c.pidfile = parent_writable(runPid) ? runPid : tmpPid;
@@ -265,8 +266,8 @@ std::string defaultConfigPath() {
     return ::lfc::defaultConfig().configFile;
 }
 
-std::string defaultProfilesDir() {
-    return ::lfc::defaultConfig().profilesDir;
+std::string defaultProfilesPath() {
+    return ::lfc::defaultConfig().profilesPath;
 }
 
 std::string defaultLogfilePath() {

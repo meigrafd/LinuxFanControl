@@ -48,7 +48,7 @@ static void usage(const char* exe) {
         "Options:\n"
         "  --config PATH         Path to daemon.json (default: ~/.config/LinuxFanControl/daemon.json)\n"
         "  --profile NAME        Profile name to load (default: Default)\n"
-        "  --profiles DIR        Directory with profiles (default: ~/.config/LinuxFanControl/profiles)\n"
+        "  --profilesPath DIR    Path to profile-files (default: ~/.config/LinuxFanControl/profiles/)\n"
         "  --pidfile PATH        PID file path (default: /tmp/lfcd.pid)\n"
         "  --logfile PATH        Log file path (default: /tmp/daemon_lfc.log)\n"
         "  --host IP             RPC host (default: 127.0.0.1)\n"
@@ -195,7 +195,7 @@ int main(int argc, char** argv) {
         };
         if (a=="--config") cfgPath = next(a.c_str());
         else if (a=="--profile") { next(a.c_str()); }
-        else if (a=="--profiles") { next(a.c_str()); }
+        else if (a=="--profilesPath") { next(a.c_str()); }
         else if (a=="--pidfile")  { next(a.c_str()); }
         else if (a=="--logfile")  { next(a.c_str()); }
         else if (a=="--host")     { next(a.c_str()); }
@@ -299,7 +299,7 @@ int main(int argc, char** argv) {
     // Create daemon instance and initialize from cfg
     Daemon daemon;
     daemon.setConfigPath(cfgPath.empty() ? lfc::Config::defaultConfigPath() : cfgPath);
-    daemon.setProfilesDir(cfg.profilesDir);
+    daemon.setProfilesPath(cfg.profilesPath);
     daemon.setActiveProfile(cfg.profileName);
     daemon.setRpcHost(cfg.host);
     daemon.setRpcPort(cfg.port);
