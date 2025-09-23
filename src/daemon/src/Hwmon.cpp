@@ -1,273 +1,249 @@
 /*
- * Linux Fan Control — Hwmon (implementation)
+ * Linux Fan Control — hwmon scanner + I/O
  * (c) 2025 LinuxFanControl contributors
+ *
+ * Responsibilities:
+ *  - Enumerate /sys/class/hwmon/hwmonX into HwmonInventory
+ *  - Read temps/fans/PWM values
+ *  - Write PWM (raw or percent) and switch enable mode
+ *  - Never drop a PWM just because pwmN_enable is missing or unreadable
  */
+
 #include "include/Hwmon.hpp"
 #include "include/Utils.hpp"
-#include "include/VendorMapping.hpp"
 #include "include/Log.hpp"
+#include "include/VendorMapping.hpp"
 
-#include <filesystem>
 #include <algorithm>
-#include <cctype>
+#include <cerrno>
+#include <cinttypes>
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <system_error>
+#include <vector>
 
 namespace fs = std::filesystem;
 
 namespace lfc {
 
-HwmonInventory Hwmon::scan() {
-    HwmonInventory s;
-    if (!fs::exists("/sys/class/hwmon")) {
-        LOG_WARN("Hwmon: /sys/class/hwmon not found");
-        return s;
-    }
+/* ------------------------------ fs helpers -------------------------------- */
 
-    for (const auto& chip : fs::directory_iterator("/sys/class/hwmon")) {
-        if (!chip.is_directory()) continue;
-        const fs::path chipPath = chip.path();
-
-        HwmonChip meta;
-        meta.hwmonPath = chipPath.string();
-        meta.name   = util::read_first_line(chipPath / "name");
-        meta.vendor = Hwmon::chipVendorForName(meta.name);
-        s.chips.push_back(meta);
-        LOG_DEBUG("Hwmon: chip=%s vendor=%s", meta.name.c_str(), meta.vendor.c_str());
-
-        {
-            const auto aliases = VendorMapping::instance().chipAliasesFor(meta.name);
-            if (!aliases.empty()) {
-                std::string joined;
-                joined.reserve(64);
-                for (size_t i = 0; i < aliases.size(); ++i) {
-                    if (i) joined += ',';
-                    joined += aliases[i];
-                }
-                LOG_DEBUG("Hwmon: chip=%s aliases=[%s]", meta.name.c_str(), joined.c_str());
-            }
-        }
-
-        // temps
-        for (const auto& f : fs::directory_iterator(chipPath)) {
-            const auto bn = f.path().filename().string();
-            if (bn.rfind("temp", 0) == 0 && bn.find("_input") != std::string::npos) {
-                const std::string base = bn.substr(0, bn.find('_'));
-                const std::string lbl  = util::read_first_line(f.path().parent_path() / (base + "_label"));
-                s.temps.push_back({chipPath.string(), f.path().string(), lbl});
-            }
-        }
-        // fans
-        for (const auto& f : fs::directory_iterator(chipPath)) {
-            const auto bn = f.path().filename().string();
-            if (bn.rfind("fan", 0) == 0 && bn.find("_input") != std::string::npos) {
-                const std::string base = bn.substr(0, bn.find('_'));
-                const std::string lbl  = util::read_first_line(f.path().parent_path() / (base + "_label"));
-                s.fans.push_back({chipPath.string(), f.path().string(), lbl});
-            }
-        }
-        // pwms
-        for (const auto& f : fs::directory_iterator(chipPath)) {
-            const auto bn = f.path().filename().string();
-            if (bn.rfind("pwm", 0) == 0 && bn.find('_') == std::string::npos) {
-                const fs::path pwm    = f.path();
-                const fs::path enable = chipPath / (bn + "_enable");
-                int pwm_max = 255;
-                (void)util::read_int_file((chipPath / (bn + "_max")).string(), pwm_max);
-                const std::string lbl = util::read_first_line(chipPath / (bn + "_label"));
-                s.pwms.push_back({chipPath.string(), pwm.string(), enable.string(), pwm_max, lbl});
-            }
-        }
-    }
-    LOG_INFO("Hwmon: scan complete (chips=%zu temps=%zu fans=%zu pwms=%zu)",
-             s.chips.size(), s.temps.size(), s.fans.size(), s.pwms.size());
+static inline bool fileExists(const fs::path& p) {
+    std::error_code ec;
+    return fs::exists(p, ec);
+}
+static std::string readFirstLine(const fs::path& p) {
+    std::ifstream f(p);
+    std::string s;
+    if (f) std::getline(f, s);
     return s;
 }
-
-void Hwmon::refreshValues(HwmonInventory& s) {
-    // NOTE: This does *not* discover new hw. It only purges disappeared nodes
-    // and updates metadata like pwm_max if those files changed.
-    auto existsFile = [](const std::string& p) {
-        std::error_code ec;
-        return fs::exists(p, ec);
-    };
-
-    // Temps
-    {
-        std::vector<HwmonTemp> out;
-        out.reserve(s.temps.size());
-        for (const auto& t : s.temps) {
-            if (existsFile(t.path_input)) {
-                out.push_back(t); // nothing to "refresh" here; values are read on demand
-            } else {
-                LOG_DEBUG("Hwmon: drop temp (gone): %s", t.path_input.c_str());
-            }
-        }
-        s.temps.swap(out);
-    }
-
-    // Fans
-    {
-        std::vector<HwmonFan> out;
-        out.reserve(s.fans.size());
-        for (const auto& f : s.fans) {
-            if (existsFile(f.path_input)) {
-                out.push_back(f);
-            } else {
-                LOG_DEBUG("Hwmon: drop fan (gone): %s", f.path_input.c_str());
-            }
-        }
-        s.fans.swap(out);
-    }
-
-    // PWMs
-    {
-        std::vector<HwmonPwm> out;
-        out.reserve(s.pwms.size());
-        for (auto p : s.pwms) {
-            if (!existsFile(p.path_pwm) || !existsFile(p.path_enable)) {
-                LOG_DEBUG("Hwmon: drop pwm (gone): %s", p.path_pwm.c_str());
-                continue;
-            }
-            // Refresh pwm_max if file present (may differ across boots/drivers)
-            try {
-                fs::path base = fs::path(p.path_pwm).parent_path();
-                fs::path chip = base.parent_path();
-                int maxv = p.pwm_max;
-                (void)util::read_int_file((chip / (fs::path(p.path_pwm).filename().string() + "_max")).string(), maxv);
-                p.pwm_max = std::clamp(maxv, 1, 65535);
-            } catch (...) {
-                // keep previous pwm_max on any error
-            }
-            out.push_back(p);
-        }
-        s.pwms.swap(out);
-    }
-
-    // Chips: keep entries whose directory still exists; update vendor name if "name" changed
-    {
-        std::vector<HwmonChip> out;
-        out.reserve(s.chips.size());
-        for (auto c : s.chips) {
-            if (!existsFile(c.hwmonPath)) {
-                LOG_DEBUG("Hwmon: drop chip (gone): %s", c.hwmonPath.c_str());
-                continue;
-            }
-            std::string newName = chipNameForPath(c.hwmonPath);
-            if (!newName.empty() && newName != c.name) {
-                c.name = std::move(newName);
-                c.vendor = chipVendorForName(c.name);
-            }
-            out.push_back(c);
-        }
-            s.chips.swap(out);
-    }
-
-    LOG_TRACE("Hwmon: refreshValues done (chips=%zu temps=%zu fans=%zu pwms=%zu)",
-              s.chips.size(), s.temps.size(), s.fans.size(), s.pwms.size());
+static std::optional<long> readLong(const fs::path& p) {
+    std::ifstream f(p);
+    if (!f) return std::nullopt;
+    long v = 0;
+    f >> v;
+    if (!f) return std::nullopt;
+    return v;
+}
+static std::optional<int> readInt(const fs::path& p) {
+    auto v = readLong(p);
+    if (!v) return std::nullopt;
+    return static_cast<int>(*v);
+}
+static bool writeInt(const fs::path& p, int value) {
+    std::ofstream f(p);
+    if (!f) return false;
+    f << value;
+    return static_cast<bool>(f);
 }
 
-std::optional<double> Hwmon::readTempC(const HwmonTemp& t) {
-    int millideg = 0;
-    if (!util::read_int_file(t.path_input, millideg)) {
-        LOG_WARN("Hwmon: read temp failed: %s", t.path_input.c_str());
-        return std::nullopt;
+/* ------------------------------ helpers ----------------------------------- */
+
+static std::string chipName(const fs::path& base) {
+    // Prefer "name", else directory leaf
+    std::string n = readFirstLine(base / "name");
+    if (!n.empty()) return n;
+    return base.filename().string();
+}
+
+static std::string joinAliases(const std::vector<std::string>& v) {
+    std::string out;
+    for (size_t i = 0; i < v.size(); ++i) {
+        out += v[i];
+        if (i + 1 < v.size()) out += ",";
     }
-    return (double)millideg / 1000.0;
+    return out;
+}
+
+static std::string chipVendorPretty(const std::string& chipName) {
+    // Prefer pretty vendor mapping; fall back to chip name.
+    std::string pretty = VendorMapping::instance().vendorFor(chipName);
+    if (!pretty.empty()) return pretty;
+    return chipName;
+}
+
+/* ------------------------------ scanners ---------------------------------- */
+
+static void scanTemps(const fs::path& base, const std::string& chipPath, std::vector<HwmonTemp>& out) {
+    for (int i = 1; i <= 20; ++i) {
+        fs::path in  = base / ("temp" + std::to_string(i) + "_input");
+        if (!fileExists(in)) continue;
+        fs::path lbl = base / ("temp" + std::to_string(i) + "_label");
+        HwmonTemp t{};
+        t.chipPath   = chipPath;
+        t.path_input = in.string();
+        t.label      = fileExists(lbl) ? readFirstLine(lbl) : std::string();
+        out.push_back(std::move(t));
+    }
+}
+
+static void scanFans(const fs::path& base, const std::string& chipPath, std::vector<HwmonFan>& out) {
+    for (int i = 1; i <= 10; ++i) {
+        fs::path in  = base / ("fan" + std::to_string(i) + "_input");
+        if (!fileExists(in)) continue;
+        fs::path lbl = base / ("fan" + std::to_string(i) + "_label");
+        HwmonFan f{};
+        f.chipPath   = chipPath;
+        f.path_input = in.string();
+        f.label      = fileExists(lbl) ? readFirstLine(lbl) : std::string();
+        out.push_back(std::move(f));
+    }
+}
+
+static void scanPwms(const fs::path& base, const std::string& chipPath, std::vector<HwmonPwm>& out) {
+    for (int i = 1; i <= 10; ++i) {
+        fs::path p    = base / ("pwm" + std::to_string(i));
+        if (!fileExists(p)) continue;
+
+        fs::path pen  = base / ("pwm" + std::to_string(i) + "_enable");
+        fs::path pmax = base / ("pwm" + std::to_string(i) + "_max");
+
+        HwmonPwm w{};
+        w.chipPath    = chipPath;
+        w.path_pwm    = p.string();
+        w.path_enable = fileExists(pen) ? pen.string() : std::string();
+        w.pwm_max     = readInt(pmax).value_or(255);
+
+        LOG_DEBUG("Hwmon: pwm found chip=%s path=%s enable=%s max=%d",
+                  w.chipPath.c_str(), w.path_pwm.c_str(),
+                  w.path_enable.empty() ? "<none>" : w.path_enable.c_str(),
+                  w.pwm_max);
+
+        out.push_back(std::move(w));
+    }
+}
+
+/* --------------------------------- scan ----------------------------------- */
+
+HwmonInventory Hwmon::scan() {
+    HwmonInventory inv;
+    const fs::path root = "/sys/class/hwmon";
+
+    std::error_code ec;
+    if (!fs::exists(root, ec)) {
+        LOG_WARN("Hwmon: root missing: %s", root.string().c_str());
+        return inv;
+    }
+
+    for (const auto& dir : fs::directory_iterator(root, ec)) {
+        if (ec) break;
+        fs::path base = dir.path(); // .../hwmonX
+        if (!fs::is_directory(base)) continue;
+
+        HwmonChip chip{};
+        chip.hwmonPath = fs::canonical(base, ec).string();
+        const std::string n = chipName(base);
+        chip.name   = n;
+        chip.vendor = chipVendorPretty(n);
+
+        LOG_DEBUG("Hwmon: chip=%s vendor=%s", n.c_str(), chip.vendor.c_str());
+        const auto aliases = VendorMapping::instance().chipAliasesFor(n);
+        if (!aliases.empty()) {
+            LOG_DEBUG("Hwmon: chip=%s aliases=[%s]", n.c_str(), joinAliases(aliases).c_str());
+        }
+
+        inv.chips.push_back(chip);
+
+        const std::string chipPath = chip.hwmonPath; // for child entries
+        scanTemps(base, chipPath, inv.temps);
+        scanFans(base, chipPath, inv.fans);
+        scanPwms(base, chipPath, inv.pwms);
+    }
+
+    LOG_INFO("Hwmon: scan complete (chips=%zu temps=%zu fans=%zu pwms=%zu)",
+             inv.chips.size(), inv.temps.size(), inv.fans.size(), inv.pwms.size());
+
+    return inv;
+}
+
+/* ----------------------------- refresh values ----------------------------- */
+
+void Hwmon::refreshValues(HwmonInventory& inv) {
+    // Currently a no-op: values are read on demand by the read* functions.
+    (void)inv;
+}
+
+/* ------------------------------ read helpers ------------------------------ */
+
+std::optional<double> Hwmon::readTempC(const HwmonTemp& t) {
+    auto mv = readLong(t.path_input);
+    if (!mv) return std::nullopt;
+    // hwmon temps are millidegree Celsius
+    return static_cast<double>(*mv) / 1000.0;
 }
 
 std::optional<int> Hwmon::readRpm(const HwmonFan& f) {
-    int rpm = 0;
-    if (!util::read_int_file(f.path_input, rpm)) {
-        LOG_WARN("Hwmon: read rpm failed: %s", f.path_input.c_str());
-        return std::nullopt;
-    }
-    return rpm;
-}
-
-std::optional<int> Hwmon::readPercent(const HwmonPwm& p) {
-    int raw = 0;
-    if (!util::read_int_file(p.path_pwm, raw)) {
-        LOG_WARN("Hwmon: read pwm failed: %s", p.path_pwm.c_str());
-        return std::nullopt;
-    }
-    const int maxv = p.pwm_max > 0 ? p.pwm_max : 255;
-    return util::pwmPercentFromRaw(raw, maxv);
-}
-
-std::optional<int> Hwmon::readRaw(const HwmonPwm& p) {
-    int raw = 0;
-    if (!util::read_int_file(p.path_pwm, raw)) {
-        LOG_WARN("Hwmon: read raw failed: %s", p.path_pwm.c_str());
-        return std::nullopt;
-    }
-    return raw;
+    return readInt(f.path_input);
 }
 
 std::optional<int> Hwmon::readEnable(const HwmonPwm& p) {
-    int m = 0;
-    if (!util::read_int_file(p.path_enable, m)) {
-        LOG_WARN("Hwmon: read enable failed: %s", p.path_enable.c_str());
-        return std::nullopt;
-    }
-    return m;
+    if (p.path_enable.empty()) return std::nullopt; // unknown
+    return readInt(p.path_enable);
 }
 
-bool Hwmon::setPercent(const HwmonPwm& p, int percent) {
-    const int maxv = p.pwm_max > 0 ? p.pwm_max : 255;
-    const int pct = std::clamp(percent, 0, 100);
-    const int raw = (pct * maxv + 50) / 100;
-    const bool ok = util::write_int_file(p.path_pwm, raw);
+std::optional<int> Hwmon::readRaw(const HwmonPwm& p) {
+    return readInt(p.path_pwm);
+}
+
+/* ------------------------------ write helpers ----------------------------- */
+
+bool Hwmon::setEnable(const HwmonPwm& p, int mode) {
+    // Common modes: 0=auto, 1=manual (some drivers: 2=manual)
+    if (p.path_enable.empty()) {
+        LOG_WARN("Hwmon: setEnable ignored (no enable path) for %s", p.path_pwm.c_str());
+        return false;
+    }
+    const bool ok = writeInt(p.path_enable, mode);
     if (!ok) {
-        LOG_WARN("Hwmon: setPercent failed: %s <- %d%% (raw=%d)", p.path_pwm.c_str(), pct, raw);
+        LOG_WARN("Hwmon: setEnable failed path=%s errno=%d", p.path_enable.c_str(), errno);
     } else {
-        LOG_TRACE("Hwmon: setPercent: %s <- %d%% (raw=%d)", p.path_pwm.c_str(), pct, raw);
+        LOG_DEBUG("Hwmon: setEnable path=%s mode=%d", p.path_enable.c_str(), mode);
     }
     return ok;
 }
 
 bool Hwmon::setRaw(const HwmonPwm& p, int raw) {
-    const int maxv = p.pwm_max > 0 ? p.pwm_max : 255;
-    const int clamped = std::clamp(raw, 0, maxv);
-    const bool ok = util::write_int_file(p.path_pwm, clamped);
+    const int vmax = std::max(1, p.pwm_max);
+    const int v = std::clamp(raw, 0, vmax);
+    const bool ok = writeInt(p.path_pwm, v);
     if (!ok) {
-        LOG_WARN("Hwmon: setRaw failed: %s <- %d", p.path_pwm.c_str(), clamped);
+        LOG_WARN("Hwmon: setRaw failed path=%s errno=%d", p.path_pwm.c_str(), errno);
     } else {
-        LOG_TRACE("Hwmon: setRaw: %s <- %d", p.path_pwm.c_str(), clamped);
+        LOG_DEBUG("Hwmon: setRaw path=%s value=%d", p.path_pwm.c_str(), v);
     }
     return ok;
 }
 
-bool Hwmon::setEnable(const HwmonPwm& p, int mode) {
-    const bool ok = util::write_int_file(p.path_enable, mode);
-    if (!ok) {
-        LOG_WARN("Hwmon: setEnable failed: %s <- %d", p.path_enable.c_str(), mode);
-    } else {
-        LOG_TRACE("Hwmon: setEnable: %s <- %d", p.path_enable.c_str(), mode);
-    }
-    return ok;
-}
-
-bool Hwmon::writeRaw(const std::string& path, int raw) {
-    const bool ok = util::write_int_file(path, raw);
-    if (!ok) {
-        LOG_WARN("Hwmon: writeRaw failed: %s <- %d", path.c_str(), raw);
-    }
-    return ok;
-}
-
-bool Hwmon::writeEnable(const std::string& path, int mode) {
-    const bool ok = util::write_int_file(path, mode);
-    if (!ok) {
-        LOG_WARN("Hwmon: writeEnable failed: %s <- %d", path.c_str(), mode);
-    }
-    return ok;
-}
-
-std::string Hwmon::chipNameForPath(const std::string& chipPath) {
-    return util::read_first_line(fs::path(chipPath) / "name");
-}
-
-std::string Hwmon::chipVendorForName(const std::string& chipName) {
-    return VendorMapping::instance().vendorFor(chipName);
+bool Hwmon::setPercent(const HwmonPwm& p, int percent) {
+    const int pc = std::clamp(percent, 0, 100);
+    const int vmax = std::max(1, p.pwm_max);
+    const int v  = static_cast<int>(std::lround((pc / 100.0) * vmax));
+    return setRaw(p, v);
 }
 
 } // namespace lfc

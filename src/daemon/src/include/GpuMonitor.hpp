@@ -1,59 +1,57 @@
-/*
- * Linux Fan Control — GPU monitor (optional external tools + hwmon)
- * (c) 2025 LinuxFanControl contributors
- */
 #pragma once
+/*
+ * Linux Fan Control — GPU Monitor (public interface + data model)
+ * - Provides GPU discovery and metric refresh (temps, tach).
+ * - Keeps a minimal but complete public API used across the daemon.
+ */
+
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace lfc {
 
+/* Lightweight per-GPU snapshot for telemetry and control mapping. */
 struct GpuSample {
-    std::string vendor;       // AMD|NVIDIA|Intel|Unknown
-    std::string name;         // product name or hwmon 'amdgpu' etc.
-    std::string hwmonPath;    // /sys/class/hwmon/hwmonX (if known)
-    std::string pciBusId;     // 0000:bb:dd.f  (if known)
-    int         index{-1};    // GPU index if known (NVML)
-    int         tempC{-1};    // temperature
-    int         utilPct{-1};  // utilization percent if available
-    int         memPct{-1};   // vram usage if available
-    int         fanPct{-1};   // fan speed percent if available
-    int         fanRpm{-1};   // fan RPM if available
-    double      powerW{-1};   // optional
+    // identity
+    std::string vendor;        // "AMD", "NVIDIA", "Intel", ...
+    int         index{0};      // monotonic per-run index
+    std::string name;          // pretty device name if available
+    std::string pciBusId;      // "0000:03:00.0"
+    std::string drmCard;       // "card0", "card1"
+    std::string hwmonPath;     // base dir of hwmon for this GPU (may be empty)
+
+    // capabilities (discovered)
+    bool hasFanTach{false};
+    bool hasFanPwm{false};
+
+    // live metrics (refreshed)
+    std::optional<int>    fanRpm;        // tachometer RPM
+    std::optional<double> tempEdgeC;     // typical GPU edge temp
+    std::optional<double> tempHotspotC;  // junction/hotspot
+    std::optional<double> tempMemoryC;   // VRAM/memory temp
 };
 
 class GpuMonitor {
 public:
-    // One-shot inventory + initial metrics (deduplicated)
+    // One-shot discovery of GPUs. Fills 'out' with current devices.
+    static void discover(std::vector<GpuSample>& out);
+
+    // Refresh only the live metrics of already discovered GPUs.
+    static void refreshMetrics(std::vector<GpuSample>& gpus);
+
+    // Convenience: discover and return a copy (used by Daemon/FanControlImport).
     static std::vector<GpuSample> snapshot();
 
-    // Lightweight metrics refresh for an existing inventory (no re-discovery)
-    static void refreshMetrics(std::vector<GpuSample>& inOut);
+    // Map a temp "kind" to a hwmon file path under 'hwmonBase'.
+    // kind accepts case-insensitive: "edge", "hotspot", "junction", "mem", "memory".
+    static std::string resolveHwmonTempPath(const std::string& hwmonBase,
+                                            const std::string& kind);
 
-private:
-    // Collectors (kernel/sysfs)
-    static void collectFromHwmon(std::vector<GpuSample>& vec);
-    static void collectFromDrm(std::vector<GpuSample>& vec);
-
-    // Vendor enrich (update-or-merge, no duplicates)
-#ifdef HAVE_NVML
-    static void enrichNvml(std::vector<GpuSample>& vec);
-#endif
-#ifdef HAVE_AMDSMI
-    static void enrichAmdSmi(std::vector<GpuSample>& vec);
-#endif
-#ifdef HAVE_IGCL
-    static void enrichIntelIgcl(std::vector<GpuSample>& vec);
-#endif
-
-    // Helpers
-    static std::string toLower(std::string v);
-    static std::string pciFromDrmNode(const std::string& cardNode);
-    static std::string normBusId(std::string bus);
-    static int  findMatch(const std::vector<GpuSample>& vec,
-                          const std::string& pci, const std::string& hwmon,
-                          const std::string& vendor, const std::string& name);
-    static void mergeInto(GpuSample& dst, const GpuSample& src);
+    // Optional vendor enrichers. Implementations may be no-ops if libs unavailable.
+    static void enrichViaAMDSMI(std::vector<GpuSample>& vec);
+    static void enrichViaNVML (std::vector<GpuSample>& vec);
+    static void enrichViaIGCL (std::vector<GpuSample>& vec);
 };
 
 } // namespace lfc

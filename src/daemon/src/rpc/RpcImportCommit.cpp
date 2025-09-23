@@ -41,6 +41,8 @@ void BindRpcImportCommit(Daemon& self, CommandRegistry& reg) {
                         const std::string path = self.profilePathForName(prof.name);
                         saveProfileToFile(prof, path);
                         self.setActiveProfileName(prof.name);
+                        // load the active profile into runtime so SHM reflects it
+                        self.applyProfile(prof);
                         LOG_INFO("profile.importCommit: saved '%s' and set active", prof.name.c_str());
                         return true;
                     } catch (const std::exception& ex) {

@@ -10,8 +10,11 @@
 #include <vector>
 #include <filesystem>
 #include <system_error>
+#include <nlohmann/json.hpp>
 
 namespace lfc { namespace util {
+
+using json = nlohmann::json;
 
 /* ----------------------------------------------------------------------------
  * Environment helpers
@@ -35,6 +38,8 @@ std::string join(const std::vector<std::string>& parts, std::string_view sep);
 /** Lowercase copy (ASCII) */
 std::string to_lower(std::string_view sv);
 
+bool icontains(const std::string& hay, const std::string& needle);
+
 /* ----------------------------------------------------------------------------
  * Time helpers
  * ----------------------------------------------------------------------------*/
@@ -56,6 +61,8 @@ bool write_int_file(const std::filesystem::path& p, int value);
 /** Ensure parent directory of path exists (no-op if already exists). */
 void ensure_parent_dirs(const std::filesystem::path& p, std::error_code* ec = nullptr);
 
+std::optional<long long> read_json_file(const std::filesystem::path& p);
+
 /* ----------------------------------------------------------------------------
  * PWM helpers
  * ----------------------------------------------------------------------------*/
@@ -74,5 +81,18 @@ int pwmRawFromPercent(int percent, int maxRaw);
  *  - ${VAR} or $VAR -> environment variable
  * Returns the expanded string (no filesystem checks). */
 std::string expandUserPath(const std::string& path);
+
+
+/* ----------------------------------------------------------------------------
+ * Loose JSON number parsers (declarations only; implemented in Utils.cpp)
+ * ----------------------------------------------------------------------------*/
+
+json read_json_file(const std::string& path);
+
+/** Parse tolerant double (accepts JSON ints/floats and strings, comma decimal, optional '%'). */
+double parseDoubleLoose(const nlohmann::json& v, double dflt = 0.0);
+
+/** Parse tolerant int (accepts JSON ints/floats and strings; float strings truncated). */
+int    parseIntLoose(const nlohmann::json& v, int dflt = 0);
 
 }} // namespace lfc::util

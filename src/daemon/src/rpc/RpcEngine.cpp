@@ -7,6 +7,7 @@
 #include "include/CommandRegistry.hpp"  // ok_ / err_
 #include "include/Daemon.hpp"
 #include "include/Engine.hpp"
+#include "include/Profile.hpp"
 #include "include/Log.hpp"
 
 namespace lfc {

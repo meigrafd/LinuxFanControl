@@ -31,7 +31,8 @@ RPM_MIN=0                  # -r 800
 TIMEOUT_MS=0               # -T 4000
 
 DO_COMMIT=0                # -C
-POLL_MS=500                # -I 500
+DO_ENABLE=0                # -E
+POLL_MS=100                # -I 500
 ID_START=1                 # -i 1
 
 QUIET=0                    # -q
@@ -54,6 +55,7 @@ Options:
   -r RPM      Minimum RPM threshold check (default: 0 = disabled)
   -T ms       Timeout for RPM threshold check (default: 0 = disabled)
   -C          Commit the imported profile after success
+  -E          Enable the engine right after a successful commit
   -H HOST     Target host (default: 127.0.0.1)
   -p PORT     Target port (default: 8777)
   -I ms       Poll interval (default: 500)
@@ -76,6 +78,7 @@ while (( "$#" )); do
     -r) RPM_MIN="${2:-0}"; shift 2 ;;
     -T) TIMEOUT_MS="${2:-0}"; shift 2 ;;
     -C) DO_COMMIT=1; shift ;;
+    -E) DO_ENABLE=1; shift ;;
     -H) HOST="${2:-}"; shift 2 ;;
     -p) PORT="${2:-}"; shift 2 ;;
     -I) POLL_MS="${2:-500}"; shift 2 ;;
@@ -173,10 +176,14 @@ send_raw() {
 
 rpc_id="$ID_START"
 rpc_call() {
-  local method="$1"; local params="$2"; local id="$rpc_id"
+  local method="$1"; local params="${2:-}"; local id="$rpc_id"
   rpc_id=$((rpc_id+1))
   local req
-  req=$(printf '{"jsonrpc":"2.0","id":%s,"method":"%s","params":%s}' "$id" "$method" "$params")
+  if [[ -n "$params" ]]; then
+    req=$(printf '{"jsonrpc":"2.0","id":%s,"method":"%s","params":%s}' "$id" "$method" "$params")
+  else
+    req=$(printf '{"jsonrpc":"2.0","id":%s,"method":"%s"}' "$id" "$method")
+  fi
   send_raw "$req" "$HOST" "$PORT"
 }
 
@@ -288,6 +295,7 @@ while true; do
 done
 
 # ----------------------------- Commit (optional) -----------------------------
+
 if [[ "$DO_COMMIT" -eq 1 ]]; then
   log "${C_C}[$(ts)] Committing profile...${C_N}"
   resp_commit="$(rpc_call "profile.importCommit" "{\"jobId\":\"$jobId\"}" || true)"
@@ -297,4 +305,14 @@ if [[ "$DO_COMMIT" -eq 1 ]]; then
   fi
   print_resp_if_requested "$resp_commit"
   log "${C_G}[$(ts)] Commit done.${C_N}"
+  # enable engine after successful commit (optional)
+  if [[ $DO_ENABLE -eq 1 ]]; then
+    resp_engine="$(rpc_call "engine.enable")"
+    if [[ -z "${resp_engine:-}" ]]; then
+      echo "Error: no response from server (engine.enable)." >&2
+      exit 25
+    fi
+    print_resp_if_requested "$resp_engine"
+    log "${C_G}[$(ts)] Engine: enable${C_N}"
+  fi
 fi

@@ -11,6 +11,7 @@
 #include "include/Detection.hpp"
 #include "include/Log.hpp"
 #include "include/VendorMapping.hpp"
+#include "rpc/ImportJobs.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -187,6 +188,7 @@ void Daemon::shutdown() {
 void Daemon::refreshHwmon() {
     LOG_TRACE("daemon: refreshHwmon");
     hwmon_ = Hwmon::scan();
+    //ImportJobManager::instance().primeInventory(hwmon_.temps, hwmon_.pwms);
 }
 
 void Daemon::refreshGpus() {

@@ -1,50 +1,61 @@
+// src/daemon/src/Config.cpp
 /*
  * Linux Fan Control — Configuration model and API (implementation)
  * (c) 2025 LinuxFanControl contributors
+ *
+ * Scope limited to requested tasks (1,2,3,6) and to restoring legacy API overloads:
+ *  - Preserve key order on save (ordered_json; update in place, append new keys).
+ *  - Default logfile: prefer /var/log/lfc/daemon_lfc.log, fallback /tmp/daemon_lfc.log.
+ *  - Keep XDG helpers (xdg_state_home etc.) intact.
+ *  - Do NOT move vendor mapping logic here.
+ *  - Provide legacy overloads:
+ *      DaemonConfig loadDaemonConfig(std::string* err);
+ *      DaemonConfig loadDaemonConfig(const std::string& path, std::string* err);
+ *      bool saveDaemonConfig(const DaemonConfig& c, const std::string& path, std::string* err);
  */
 
 #include "include/Config.hpp"
 #include "include/Utils.hpp"
 
-#include <cstdlib>
-#include <fstream>
-#include <regex>
-#include <stdexcept>
-#include <system_error>
+#include <nlohmann/json.hpp>
 #include <filesystem>
+#include <fstream>
 #include <vector>
+#include <string>
+#include <system_error>
+#include <stdexcept>
+#include <cstdlib>
 #include <unistd.h>
 
 namespace fs = std::filesystem;
+using nlohmann::json;
+using nlohmann::ordered_json;
 
 namespace lfc {
 
-using nlohmann::json;
-
 /* ----------------------------------------------------------------------------
- * helpers
+ * helpers (env / fs)
  * ----------------------------------------------------------------------------*/
 
 static inline std::string getenv_str(const char* key) {
-    if (auto v = util::getenv_c(key)) return *v;
     const char* c = std::getenv(key);
     return c ? std::string(c) : std::string();
 }
 
-static inline std::string xdg_config_home() {
-    auto x = getenv_str("XDG_CONFIG_HOME");
-    if (!x.empty()) return x;
+static inline std::string xdg_home_fallback(const char* var, const char* defSuffix) {
+    auto v = getenv_str(var);
+    if (!v.empty()) return v;
     auto home = getenv_str("HOME");
-    if (!home.empty()) return (fs::path(home) / ".config").string();
+    if (!home.empty()) return (fs::path(home) / defSuffix).string();
     return {};
 }
 
+static inline std::string xdg_config_home() {
+    return xdg_home_fallback("XDG_CONFIG_HOME", ".config");
+}
+
 static inline std::string xdg_state_home() {
-    auto x = getenv_str("XDG_STATE_HOME");
-    if (!x.empty()) return x;
-    auto home = getenv_str("HOME");
-    if (!home.empty()) return (fs::path(home) / ".local" / "state").string();
-    return {};
+    return xdg_home_fallback("XDG_STATE_HOME", ".local/state");
 }
 
 static inline std::string xdg_runtime_dir() {
@@ -78,6 +89,7 @@ static bool parent_writable(const std::string& path) {
  * ----------------------------------------------------------------------------*/
 
 void to_json(json& j, const DaemonConfig& c) {
+    // Fixed write order for new files; existing files preserve order via saveDaemonConfig().
     j = json{
         {"configFile",           c.configFile},
         {"profilesPath",         c.profilesPath},
@@ -114,7 +126,6 @@ void from_json(const nlohmann::json& j, DaemonConfig& c) {
     if (j.contains("vendorMapThrottleMs"))  j.at("vendorMapThrottleMs").get_to(c.vendorMapThrottleMs);
 }
 
-
 /* ----------------------------------------------------------------------------
  * public API
  * ----------------------------------------------------------------------------*/
@@ -125,13 +136,18 @@ DaemonConfig defaultConfig() {
     const std::string cfgHome   = xdg_config_home();
     const std::string stateHome = xdg_state_home();
     const std::string runDir    = xdg_runtime_dir();
+    (void)stateHome; (void)runDir; // kept for compatibility; not used for logfile default per (6)
 
     const std::string baseCfg   = cfgHome.empty()   ? std::string() : join(cfgHome, "LinuxFanControl");
-    const std::string baseState = stateHome.empty() ? std::string() : join(stateHome, "LinuxFanControl");
+    // const std::string baseState = stateHome.empty() ? std::string() : join(stateHome, "LinuxFanControl");
 
     c.configFile   = baseCfg.empty() ? "" : (fs::path(baseCfg) / "daemon.json").string();
     c.profilesPath = baseCfg.empty() ? "" : join(baseCfg, "profiles");
-    c.logfile      = baseState.empty() ? "/tmp/daemon_lfc.log" : join(baseState, "daemon_lfc.log");
+
+    // Requirement (6): default logfile policy: prefer /var/log/lfc/daemon_lfc.log, else /tmp/daemon_lfc.log
+    const std::string logVar = "/var/log/lfc/daemon_lfc.log";
+    const std::string logTmp = "/tmp/daemon_lfc.log";
+    c.logfile = parent_writable(logVar) ? logVar : logTmp;
 
     // Prefer /run; fall back to /tmp if not writable.
     const std::string runPid = "/run/lfcd.pid";
@@ -141,12 +157,22 @@ DaemonConfig defaultConfig() {
     // POSIX SHM default is a name (normalized by ShmTelemetry to "/lfc.telemetry").
     c.shmPath     = "lfc.telemetry";
 
-    // No explicit vendor map by default; search defaults/env at runtime.
+    // No explicit vendor map by default; search defaults/env at runtime (VendorMapping subsystem).
     c.vendorMapPath.clear();
     c.vendorMapWatchMode = "mtime";
     c.vendorMapThrottleMs = 3000;
 
     return c;
+}
+
+/* Normalize paths (non-persistent) */
+static void expandPaths_(DaemonConfig& c) {
+    c.configFile     = lfc::util::expandUserPath(c.configFile);
+    c.profilesPath   = lfc::util::expandUserPath(c.profilesPath);
+    c.logfile        = lfc::util::expandUserPath(c.logfile);
+    c.pidfile        = lfc::util::expandUserPath(c.pidfile);
+    c.shmPath        = lfc::util::expandUserPath(c.shmPath);
+    c.vendorMapPath  = lfc::util::expandUserPath(c.vendorMapPath);
 }
 
 /* Style A: explicit path I/O (throws) */
@@ -174,6 +200,7 @@ void loadDaemonConfig(const std::string& path, DaemonConfig& out) {
             throw std::runtime_error("Config not found and cannot be created: " + p + " (" + werr + ")");
         }
         // Successfully created default config; keep 'out' as defaults and return
+        expandPaths_(out);
         return;
     }
 
@@ -182,14 +209,21 @@ void loadDaemonConfig(const std::string& path, DaemonConfig& out) {
     if (!f.is_open()) {
         throw std::runtime_error("Cannot open config: " + p);
     }
-    nlohmann::json j;
-    f >> j;
+
+    // Accept both plain object and wrapped forms; preserve order info if present.
+    ordered_json j = ordered_json::parse(f, nullptr, true);
+    const ordered_json* jobj = &j;
+    if (j.is_object() && j.contains("config") && j["config"].is_object()) {
+        jobj = &j["config"];
+    }
 
     DaemonConfig merged = out; // defaults
-    from_json(j, merged);      // overlay values from file
+    from_json(*jobj, merged);  // overlay values from file
     out = std::move(merged);
+    expandPaths_(out);
 }
 
+/* Style A: throwing save (pretty, preserves order) */
 void saveDaemonConfig(const std::string& path, const DaemonConfig& c) {
     const std::string p = lfc::util::expandUserPath(path);
 
@@ -199,34 +233,69 @@ void saveDaemonConfig(const std::string& path, const DaemonConfig& c) {
         throw std::runtime_error("Cannot create parent dirs for: " + p + " (" + ec.message() + ")");
     }
 
-    std::ofstream f(p);
+    // Load existing file (if any) to preserve insertion order
+    ordered_json existing = ordered_json::object();
+    {
+        std::ifstream in(p);
+        if (in) {
+            try { existing = ordered_json::parse(in, nullptr, true); }
+            catch (...) { existing = ordered_json::object(); }
+        }
+    }
+
+    // Merge: update existing keys in place, append new keys at tail
+    json jNew; to_json(jNew, c);
+
+    // If existing was wrapped { "config": {...}, "loaded": true }, unwrap for in-place editing
+    ordered_json* conf = &existing;
+    ordered_json wrapper;
+    bool wrapped = false;
+    if (existing.is_object() && existing.contains("config") && existing["config"].is_object()) {
+        conf = &existing["config"];
+        wrapped = true;
+    }
+
+    for (auto it = jNew.begin(); it != jNew.end(); ++it) {
+        const std::string& k = it.key();
+        if (conf->contains(k)) (*conf)[k] = *it; else (*conf)[k] = *it;
+    }
+
+    // If not wrapped, just write object; if wrapped, keep envelope with loaded=true
+    ordered_json outj;
+    if (wrapped) {
+        existing["loaded"] = true;
+        outj = existing;
+    } else {
+        outj = *conf;
+    }
+
+    std::ofstream f(p, std::ios::trunc);
     if (!f.is_open()) {
         throw std::runtime_error("Cannot write config: " + p);
     }
-
-    const json j = c;
-    f << j.dump(4);
+    f << outj.dump(2) << "\n";
 }
 
-/* Style B: convenience/legacy APIs */
+/* ----------------------------------------------------------------------------
+ * Style B: legacy/convenience APIs (used by various call sites)
+ * ----------------------------------------------------------------------------*/
+
 DaemonConfig loadDaemonConfig(std::string* err) {
     DaemonConfig cfg = defaultConfig();
-    if (err) err->clear();
-
-    if (!cfg.configFile.empty()) {
-        try {
+    if (err) *err = {};
+    try {
+        if (!cfg.configFile.empty()) {
             loadDaemonConfig(cfg.configFile, cfg);
-        } catch (const std::exception& ex) {
-            if (err) *err = ex.what();
         }
+    } catch (const std::exception& ex) {
+        if (err) *err = ex.what();
     }
     return cfg;
 }
 
 DaemonConfig loadDaemonConfig(const std::string& path, std::string* err) {
     DaemonConfig cfg = defaultConfig();
-    if (err) err->clear();
-
+    if (err) *err = {};
     try {
         loadDaemonConfig(path, cfg);
     } catch (const std::exception& ex) {
@@ -236,14 +305,12 @@ DaemonConfig loadDaemonConfig(const std::string& path, std::string* err) {
 }
 
 bool saveDaemonConfig(const DaemonConfig& c, const std::string& path, std::string* err) {
-    if (err) err->clear();
-
-    std::string target = !path.empty() ? path : c.configFile;
-    if (target.empty()) {
-        target = defaultConfig().configFile;
-    }
-
+    if (err) *err = {};
     try {
+        std::string target = !path.empty() ? path : c.configFile;
+        if (target.empty()) {
+            target = defaultConfig().configFile;
+        }
         saveDaemonConfig(target, c);
         return true;
     } catch (const std::exception& ex) {
@@ -253,35 +320,14 @@ bool saveDaemonConfig(const DaemonConfig& c, const std::string& path, std::strin
 }
 
 /* ----------------------------------------------------------------------------
- * Compatibility namespace: lfc::Config
+ * Convenience namespace for callers expecting Config::*
  * ----------------------------------------------------------------------------*/
-
 namespace Config {
-
-DaemonConfig defaultConfig() {
-    return ::lfc::defaultConfig();
-}
-
-std::string defaultConfigPath() {
-    return ::lfc::defaultConfig().configFile;
-}
-
-std::string defaultProfilesPath() {
-    return ::lfc::defaultConfig().profilesPath;
-}
-
-std::string defaultLogfilePath() {
-    return ::lfc::defaultConfig().logfile;
-}
-
-std::string defaultShmPath() {
-    return ::lfc::defaultConfig().shmPath;
-}
-
-std::string defaultPidfilePath() {
-    return ::lfc::defaultConfig().pidfile;
-}
-
+std::string defaultConfigPath()   { return ::lfc::defaultConfig().configFile; }
+std::string defaultProfilesPath() { return ::lfc::defaultConfig().profilesPath; }
+std::string defaultLogfilePath()  { return ::lfc::defaultConfig().logfile; }
+std::string defaultShmPath()      { return ::lfc::defaultConfig().shmPath; }
+std::string defaultPidfilePath()  { return ::lfc::defaultConfig().pidfile; }
 } // namespace Config
 
 } // namespace lfc

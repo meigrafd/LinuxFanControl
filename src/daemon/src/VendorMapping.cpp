@@ -17,6 +17,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
 #include <nlohmann/json.hpp>
 #include "include/Log.hpp"
 #include "include/VendorMapping.hpp"
@@ -128,7 +129,9 @@ private:
             icase = true;
             pat.erase(0, 4);
         }
-        return std::regex(pat, std::regex::ECMAScript | (icase ? std::regex::icase : (std::regex_constants::syntax_option_type)0));
+        return std::regex(pat, std::regex::ECMAScript |
+                               (icase ? std::regex::icase
+                                      : (std::regex_constants::syntax_option_type)0));
     }
 
     bool parseObject_(const json& j, std::string& err,
@@ -162,7 +165,8 @@ private:
             for (auto it = j["chipAliases"].begin(); it != j["chipAliases"].end(); ++it) {
                 if (!it.value().is_array()) continue;
                 auto& vec = outAliases[it.key()];
-                for (const auto& v : it.value()) if (v.is_string()) vec.push_back(v.get<std::string>());
+                for (const auto& v : it.value())
+                    if (v.is_string()) vec.push_back(v.get<std::string>());
             }
         }
         return true;
@@ -280,6 +284,8 @@ private:
 
 static VendorMappingImpl& I() { return VendorMappingImpl::inst(); }
 
+/* --------------------------- Public forwarding ---------------------------- */
+
 VendorMapping& VendorMapping::instance() {
     static VendorMapping V;
     I().ensureLoaded();
@@ -295,5 +301,64 @@ void VendorMapping::ensureLoaded() { I().ensureLoaded(); }
 void VendorMapping::tryReloadIfChanged() { I().tryReloadIfChanged(); }
 std::string VendorMapping::vendorForChipName(const std::string& chip) const { return I().vendorForChipName(chip); }
 std::vector<std::string> VendorMapping::chipAliasesFor(const std::string& profileToken) const { return I().chipAliasesFor(profileToken); }
+
+/* ----------------------------- GPU helpers --------------------------------
+ * String-only mapping; keine Abhängigkeit von vendorMapping.json.
+ */
+
+static inline std::string toLower(std::string v) {
+    for (char& c : v) c = (char)std::tolower((unsigned char)c);
+    return v;
+}
+static inline std::string trim(std::string v) {
+    size_t i = 0, j = v.size();
+    while (i < j && std::isspace((unsigned char)v[i])) ++i;
+    while (j > i && std::isspace((unsigned char)v[j-1])) --j;
+    return v.substr(i, j - i);
+}
+
+std::string VendorMapping::gpuCanonicalVendor(std::string_view s) const {
+    const std::string v = toLower(trim(std::string(s)));
+    if (v == "nvidia" || v == "nvml" || v == "nvapi" || v == "nv") return "NVIDIA";
+    if (v == "amd" || v == "amdsmi" || v == "adlx" || v == "amdgpu") return "AMD";
+    if (v == "intel" || v == "igcl" || v == "xe" || v == "level zero" || v == "levelzero") return "Intel";
+    return "Unknown";
+}
+
+std::string VendorMapping::gpuCanonicalTempKind(std::string_view s) const {
+    const std::string k = toLower(trim(std::string(s)));
+    if (k == "gpu" || k == "edge" || k == "core" || k == "global") return "Edge";
+    if (k == "hotspot" || k == "junction") return "Hotspot";
+    if (k == "memory" || k == "mem" || k == "vram") return "Memory";
+    return "Unknown";
+}
+
+std::pair<std::string,std::string>
+VendorMapping::gpuVendorAndKindFromIdentifier(std::string_view identifier) const {
+    // tolerant split "<SDK>/<Name>/<Index>/temp/<Kind>"
+    std::vector<std::string> parts;
+    {
+        std::string s(identifier);
+        std::string cur;
+        for (char c : s) {
+            if (c == '/') { if (!cur.empty()) { parts.push_back(cur); cur.clear(); } }
+            else { cur.push_back(c); }
+        }
+        if (!cur.empty()) parts.push_back(cur);
+        for (auto& p : parts) p = trim(p);
+    }
+
+    const std::string sdk  = parts.size() >= 1 ? parts[0] : "";
+    const std::string name = parts.size() >= 2 ? parts[1] : "";
+    const std::string kind = parts.size() >= 5 ? parts[4] : "";
+
+    std::string vendor = gpuCanonicalVendor(sdk);
+    if (vendor == "Unknown") vendor = gpuCanonicalVendor(name);
+    const std::string k = gpuCanonicalTempKind(kind);
+
+    LOG_DEBUG("VendorMapping.gpu parse: sdk=%s name=%s kindRaw=%s -> vendor=%s kind=%s",
+              sdk.c_str(), name.c_str(), kind.c_str(), vendor.c_str(), k.c_str());
+    return {vendor, k};
+}
 
 } // namespace lfc

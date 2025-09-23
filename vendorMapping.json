@@ -37,7 +37,7 @@
     { "regex": "(?i)^acer[-_]?wmi",              "vendor": "Acer WMI",                "class": "EC",       "priority": 140 },
     { "regex": "(?i)^clevo|^sager",              "vendor": "Clevo EC",                "class": "EC",       "priority": 140 },
     { "regex": "(?i)^ideapad[-_]?laptop",        "vendor": "Lenovo IdeaPad EC",       "class": "EC",       "priority": 140 },
-    { "regex": "(?i)^nct67(75|76|77|78|79|80|85|86)|^nct55(80|85)|^nuvoton", "vendor": "Nuvoton Super-IO", "class": "SUPERIO", "priority": 150 },
+    { "regex": "(?i)^nct67(75|76|77|78|79|80|85|86)|^nuvoton", "vendor": "Nuvoton Super-IO", "class": "SUPERIO", "priority": 150 },
     { "regex": "(?i)^it8(6|7)\\d{2}|^it87",      "vendor": "ITE Super-IO",            "class": "SUPERIO",  "priority": 150 },
     { "regex": "(?i)^w83627|^w83667|^w83795",    "vendor": "Winbond Super-IO",        "class": "SUPERIO",  "priority": 140 },
     { "regex": "(?i)^f718(08|58|62|69|82|89|89a)", "vendor": "Fintek Super-IO",      "class": "SUPERIO",  "priority": 140 },
@@ -131,6 +131,24 @@
     "sch5027": ["sch5027","sch5127","sch5627","sch5636"],
     "sch5127": ["sch5027","sch5127","sch5627","sch5636"],
     "sch5627": ["sch5027","sch5127","sch5627","sch5636"],
-    "sch5636": ["sch5027","sch5127","sch5627","sch5636"]
+    "sch5636": ["sch5027","sch5127","sch5627","sch5636"],
+
+    "amdcpu":   ["k10temp","zenpower","zenpower3","k8temp"],
+    "adlx":     ["amdgpu"],
+    "nvapi":    ["nvidia"],
+    "igcl":     ["intel","xe","i915"],
+    "amd gpu":  ["amdgpu"],
+    "amdgpu_pci": ["amdgpu"],
+    "adlx":     ["amdgpu","gpu"],
+
+    "nct6796dr": ["nct6796","nct6798","nct6798d","nct6799","nct6799d","nuvoton","nct67"],
+    "nct6798":  ["nct6798","nct6798d","nct6799","nct6799d","nuvoton","nct67"],
+    "nct6799":  ["nct6799","nct6799d","nct6798","nct6798d","nuvoton","nct67"],
+    "nuvoton":  ["nct6799","nct6798","nct67","nct6799d","nct6798d"],
+
+    "spd5118":  ["spd5118"],
+    "nvme":     ["nvme"],
+    "r8169":    ["r8169"],
+    "r8169_0_a00:00": ["r8169"]
   }
 }

@@ -1,250 +1,448 @@
 #!/usr/bin/env python3
-# -----------------------------------------------------------------------------
-# Linux Fan Control — Live Telemetry Viewer (SHM-first, RPC-free)
-# (c) 2025 LinuxFanControl contributors
-#
-# Purpose:
-#   - Continuously read lfcd telemetry from SHM and render a live TUI.
-#   - Show temperatures and control outputs (percent/value) with resolved names.
-#   - Map PWM paths to Control nickName/name/curveRef from the active profile.
-#   - Optionally derive RPM from sysfs (fanN_input next to pwmN).
-#
-# Usage:
-#   python3 lfc_live.py [--interval 0.25] [--shm lfc.telemetry]
-#                       [--config ~/.config/LinuxFanControl/daemon.json]
-#                       [--profiles-path ~/.config/LinuxFanControl/profiles]
-#                       [--no-rpm]
-#
-# Keys:
-#   q = quit,  r = reload profile,  p = pause/resume,
-#   +/- = change refresh rate,  g = toggle group-by-chip
-#
-# Notes:
-#   - SHM path is taken from daemon.json (.shmPath) if present, else from --shm,
-#     else "lfc.telemetry".
-#   - Profile is resolved by SHM.profile.name and daemon.json(.profilesDir).
-#     You can override via --profiles-dir.
-#   - Robust JSON reader tolerates NUL bytes and partial writes by trimming to
-#     the outermost JSON object.
-# -----------------------------------------------------------------------------
+# Linux Fan Control — live telemetry viewer (SHM + sysfs reads for live values)
+# All comments in English; no placeholders.
 
-import argparse, curses, json, os, signal, sys, time
+import argparse
+import json
+import os
+import shutil
+import signal
+import sys
+import time
 from typing import Any, Dict, List, Optional, Tuple
-
-BUF_SIZE = 65536
-
-# ----------------------------- File helpers ----------------------------------
-
-def default_daemon_config_path() -> str:
-    home = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.environ.get("HOME",""), ".config")
-    return os.path.join(home, "LinuxFanControl", "daemon.json")
-
-def load_json_file(path: str) -> Optional[Dict[str, Any]]:
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return None
-
-def _get(obj: Dict[str, Any], *keys) -> Any:
-    cur: Any = obj
-    for k in keys:
-        if not isinstance(cur, dict) or k not in cur:
-            return None
-        cur = cur[k]
-    return cur
 
 # ----------------------------- SHM helpers -----------------------------------
 
-def shm_file_from_config(path_or_name: str) -> str:
+def shm_name_normalize(path_or_name: str) -> str:
+    """Normalize daemon shm name/path to a POSIX shm name starting with '/'."""
+    if not path_or_name:
+        return "/lfc.telemetry"
     base = os.path.basename(path_or_name) if "/" in path_or_name else path_or_name
-    if not base: base = "lfc.telemetry"
-    if not base.startswith("/"): base = "/" + base
-    return os.path.join("/dev/shm", base.lstrip("/"))
+    return base if base.startswith("/") else "/" + base
+
+def shm_file_from_name(path_or_name: str) -> str:
+    """Translate a POSIX shm name to its file under /dev/shm for read-only access."""
+    name = shm_name_normalize(path_or_name)
+    return os.path.join("/dev/shm", name.lstrip("/"))
 
 def read_shm_json(shm_file: str) -> Optional[Dict[str, Any]]:
+    """Read and parse a JSON blob from a SHM-backed file."""
     try:
+        if not os.path.exists(shm_file):
+            return None
+        size = max(131072, os.path.getsize(shm_file) or 0)
         with open(shm_file, "rb") as f:
-            buf = f.read(BUF_SIZE)
-        # Trim trailing zeros and parse
-        buf = buf.rstrip(b"\x00")
-        return json.loads(buf.decode("utf-8", errors="ignore")) if buf else None
+            buf = f.read(size).rstrip(b"\x00")
+        if not buf:
+            return None
+        return json.loads(buf.decode("utf-8", errors="ignore"))
     except Exception:
         return None
 
-# ----------------------------- PWM mapping -----------------------------------
+# ----------------------------- sysfs helpers ---------------------------------
 
-def load_active_profile_json(profiles_dir: str, profile_name: Optional[str]) -> Optional[Dict[str, Any]]:
-    if not profile_name:
+def read_int(path: str) -> Optional[int]:
+    try:
+        with open(path, "r") as f:
+            s = f.read().strip()
+        return int(s)
+    except Exception:
         return None
-    path = os.path.join(profiles_dir, f"{profile_name}.json")
-    return load_json_file(path)
 
-def build_pwm_name_map(profile: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, str]]:
-    """
-    Return mapping pwmPath -> { nickName, name, curveRef } based on profile.controls[].
-    """
-    result: Dict[str, Dict[str, str]] = {}
-    if not profile or not isinstance(profile.get("controls"), list):
-        return result
-    for c in profile["controls"]:
-        if not isinstance(c, dict):
+def read_text(path: str) -> Optional[str]:
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read().strip()
+    except Exception:
+        return None
+
+def read_temp_c_from_input(path: str) -> Optional[float]:
+    """Read millidegree value from *_input and convert to Celsius."""
+    v = read_int(path)
+    if v is None:
+        return None
+    # Common kernel ABI is millidegree C
+    if abs(v) > 2000:
+        return round(v / 1000.0, 1)
+    # Fallback: assume already in °C
+    return float(v)
+
+def rpm_path_for_pwm(pwm_path: str) -> Optional[str]:
+    """Best-effort: derive fanN_input from a pwmN path in the same directory."""
+    try:
+        base = os.path.dirname(pwm_path)
+        bn = os.path.basename(pwm_path)
+        if not bn.startswith("pwm"):
+            return None
+        idx = bn[3:]
+        cand = os.path.join(base, f"fan{idx}_input")
+        if os.path.exists(cand):
+            return cand
+        # fallback scan (first available)
+        for i in range(1, 10):
+            alt = os.path.join(base, f"fan{i}_input")
+            if os.path.exists(alt):
+                return alt
+    except Exception:
+        pass
+    return None
+
+def label_from_sysfs_neighbors(base_dir: str, index: str, prefer_pwm: bool = True) -> Optional[str]:
+    """Try pwmN_label and fanN_label."""
+    if prefer_pwm:
+        lp = os.path.join(base_dir, f"pwm{index}_label")
+        s = read_text(lp)
+        if s:
+            return s
+        lf = os.path.join(base_dir, f"fan{index}_label")
+        s = read_text(lf)
+        if s:
+            return s
+    else:
+        lf = os.path.join(base_dir, f"fan{index}_label")
+        s = read_text(lf)
+        if s:
+            return s
+        lp = os.path.join(base_dir, f"pwm{index}_label")
+        s = read_text(lp)
+        if s:
+            return s
+    return None
+
+# ----------------------------- extractors ------------------------------------
+
+def extract_engine(doc: Dict[str, Any]) -> Tuple[bool, str]:
+    enabled = bool(doc.get("engineEnabled", False))
+    version = str(doc.get("version") or "")
+    return enabled, version
+
+def extract_profile(doc: Dict[str, Any]) -> Dict[str, Any]:
+    prof = doc.get("profile") or {}
+    return {
+        "name": prof.get("name") or "",
+        "schema": prof.get("schema"),
+        "description": prof.get("description"),
+        "curveCount": prof.get("curveCount"),
+        "controlCount": prof.get("controlCount"),
+    }
+
+def extract_chips(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+    root = doc.get("hwmon") or {}
+    chips = root.get("chips") or []
+    return [c for c in chips if isinstance(c, dict)]
+
+def extract_temps(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+    root = doc.get("hwmon") or {}
+    temps = root.get("temps") or []
+    out: List[Dict[str, Any]] = []
+    for t in temps:
+        if not isinstance(t, dict):
             continue
-        pwm = c.get("pwmPath") or ""
-        if not pwm:
+        out.append({
+            "chipPath": t.get("chipPath") or "",
+            "path": t.get("path") or t.get("path_input") or "",
+            "label": t.get("label") or "",
+        })
+    return out
+
+def extract_fans(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+    root = doc.get("hwmon") or {}
+    fans = root.get("fans") or []
+    out: List[Dict[str, Any]] = []
+    for f in fans:
+        if not isinstance(f, dict):
             continue
-        entry = {
-            "nickName": c.get("nickName") or "",
-            "name": c.get("name") or "",
-            "curveRef": c.get("curveRef") or "",
-        }
-        result[pwm] = entry
-    return result
-
-def resolve_profiles_path(daemon_cfg: Optional[Dict[str, Any]], override: Optional[str]) -> str:
-    if override:
-        return override
-    if daemon_cfg and isinstance(_get(daemon_cfg, "config", "profilesPath"), str):
-        return _get(daemon_cfg, "config", "profilesPath")
-    if daemon_cfg and isinstance(daemon_cfg.get("profilesPath"), str):
-        return daemon_cfg["profilesPath"]
-    home = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.environ.get("HOME",""), ".config")
-    return os.path.join(home, "LinuxFanControl", "profiles")
-
-# ----------------------------- TUI -------------------------------------------
-
-def draw_table(stdscr, y: int, x: int, title: str, headers: List[str], rows: List[List[str]], width: int) -> int:
-    stdscr.addstr(y, x, title); y += 1
-    stdscr.addstr(y, x, " | ".join(headers)); y += 1
-    stdscr.addstr(y, x, "-" * min(width-1, len(" | ".join(headers)))); y += 1
-    for r in rows:
-        stdscr.addstr(y, x, " | ".join(r)[:width-1]); y += 1
-    return y
-
-def shorten_path(p: str, n: int = 32) -> str:
-    return p if len(p) <= n else ("…" + p[-(n-1):])
+        out.append({
+            "chipPath": f.get("chipPath") or "",
+            "path": f.get("path") or "",
+            "label": f.get("label") or "",
+        })
+    return out
 
 def extract_pwms(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
-    root = _get(doc, "hwmon") or {}
-    pwms = root.get("pwms")
-    if not isinstance(pwms, list):
-        pwms = doc.get("pwms") if isinstance(doc.get("pwms"), list) else []
+    root = doc.get("hwmon") or {}
+    pwms = root.get("pwms") or []
     out: List[Dict[str, Any]] = []
     for p in pwms:
         if not isinstance(p, dict):
             continue
-        path = p.get("path") or p.get("path_pwm") or p.get("pwmPath") or ""
-        chip = p.get("chip") or p.get("chipPath") or ""
-        percent = p.get("percent")
-        value = p.get("value")
-        enable = p.get("enable") or p.get("enabled") or p.get("mode")
+        chip_path   = p.get("chipPath") or ""
+        pwm_path    = p.get("path") or ""
+        enable_path = p.get("pathEnable") or ""
+        pwm_max     = p.get("pwmMax")
+        label       = p.get("label") or ""
+
+        # live reads
+        value  = read_int(pwm_path) if pwm_path else None
+        enable = read_int(enable_path) if enable_path else None
         try:
-            percent = int(percent) if percent is not None else None
+            mx = int(pwm_max) if pwm_max is not None else None
         except Exception:
-            percent = None
-        try:
-            value = int(value) if value is not None else None
-        except Exception:
-            value = None
-        out.append({"path": path, "chip": chip, "percent": percent, "value": value, "enable": enable})
+            mx = None
+        percent = None
+        if value is not None and mx not in (None, 0):
+            try:
+                percent = int(round(value * 100.0 / mx))
+            except Exception:
+                percent = None
+
+        rpm = None
+        if pwm_path:
+            base = os.path.dirname(pwm_path)
+            bn = os.path.basename(pwm_path)
+            if bn.startswith("pwm"):
+                idx = bn[3:]
+                cand = os.path.join(base, f"fan{idx}_input")
+                if os.path.exists(cand):
+                    rpm = read_int(cand)
+                else:
+                    rpm = read_int(rpm_path_for_pwm(pwm_path) or "")
+
+        # display label: prefer telemetry; fallback to sysfs neighbors
+        disp_label = label
+        if (not disp_label) and pwm_path:
+            base = os.path.dirname(pwm_path)
+            bn = os.path.basename(pwm_path)
+            if bn.startswith("pwm"):
+                idx = bn[3:]
+                got = label_from_sysfs_neighbors(base, idx, prefer_pwm=True)
+                if got:
+                    disp_label = got
+
+        out.append({
+            "chipPath": chip_path,
+            "pwmPath": pwm_path,
+            "enablePath": enable_path,
+            "pwmMax": mx,
+            "label": label,
+            "displayLabel": disp_label or os.path.basename(pwm_path),
+            "value": value,
+            "percent": percent,
+            "enable": enable,
+            "rpm": rpm,
+        })
     return out
 
-def layout(stdscr, doc: Dict[str, Any], pwm_names: Dict[str, Dict[str, str]], group_by_chip: bool = False):
-    stdscr.erase()
-    h, w = stdscr.getmaxyx()
-    # Header
-    en = _get(doc, "engine", "enabled")
-    tick = _get(doc, "engine", "tickMs")
-    prof = _get(doc, "profile", "name")
-    stdscr.addstr(0, 0, f"Engine={'on' if en else 'off'} tickMs={tick} profile={prof}")
+def extract_gpus(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+    gpus = doc.get("gpus") or []
+    return [g for g in gpus if isinstance(g, dict)]
 
-    # Controls table
-    rows: List[List[str]] = []
-    for p in extract_pwms(doc):
-        pwm_path = p["path"]; chip = p["chip"]
-        entry = pwm_names.get(pwm_path, {})
-        nm = entry.get("name", ""); nick = entry.get("nickName", ""); cref = entry.get("curveRef", "")
-        pct = p["percent"]; val = p["value"]; ena = p["enable"]
-        pct_s = f"{pct:3d}%" if isinstance(pct, int) else "  ?%"
-        val_s = f"{val}" if isinstance(val, int) else "?"
-        ena_s = str(ena) if ena is not None else "?"
-        if group_by_chip:
-            rows.append([f"{chip:>10}", f"{(nick or nm):24}", f"{pct_s:>4}", f"{val_s:>4}", f"{ena_s:>3}", shorten_path(pwm_path)])
-        else:
-            rows.append([f"{(nick or nm):28}", f"{pct_s:>4}", f"{val_s:>4}", f"{ena_s:>3}", shorten_path(pwm_path), cref])
+# ----------------------------- formatting ------------------------------------
 
-    if group_by_chip:
-        draw_table(stdscr, 2, 0, "Controls", ["CHIP", "NAME", "PCT", "VAL", "EN", "PWM PATH"], rows, w)
-    else:
-        draw_table(stdscr, 2, 0, "Controls", ["NAME", "PCT", "VAL", "EN", "PWM PATH", "CURVE"], rows, w)
-    stdscr.refresh()
+def mode_str(enable: Optional[int], has_enable_path: bool) -> str:
+    """
+    Map raw enable values to readable mode:
+      - 0 => AUTO
+      - 1/2 => MAN
+      - 3/4/5 => HW   (smart/hardware modes on some chipsets)
+      - unknown int => str(value)
+      - no enable path => 'N/A'
+      - unreadable => '—'
+    """
+    if not has_enable_path:
+        return "N/A"
+    if enable is None:
+        return "—"
+    if enable == 0:
+        return "AUTO"
+    if enable in (1, 2):
+        return "MAN"
+    if enable in (3, 4, 5):
+        return "HW"
+    return str(enable)
 
-# ----------------------------- Main loop ------------------------------------
+def fmt_none(x: Optional[int]) -> str:
+    return "-" if x is None else str(x)
 
-def main():
-    ap = argparse.ArgumentParser(argument_default=None)
-    ap.add_argument("--interval", type=float, default=0.5, help="Refresh interval in seconds")
-    ap.add_argument("--shm", type=str, default=None, help="Override shmPath (basename or full); read from /dev/shm/<basename>")
-    ap.add_argument("--config", type=str, default=None, help="Path to daemon.json (to discover shmPath/profilesPath)")
-    ap.add_argument("--profiles-path", type=str, default=None, help="Override profiles directory")
-    ap.add_argument("--no-rpm", action="store_true", help="Disable reading fanN_input RPM from sysfs")
+def fmt_none_f(x: Optional[float]) -> str:
+    return "-" if x is None else f"{x:.1f}"
+
+def draw_rule(widths: List[int]) -> str:
+    parts = []
+    for w in widths:
+        parts.append("-" * w)
+    return "  " + "-+-".join(parts)
+
+def ell(s: str, w: int) -> str:
+    if len(s) <= w:
+        return s
+    return s[: w - 1] + "…"
+
+# ----------------------------- renderers -------------------------------------
+
+def print_header(doc: Dict[str, Any]) -> None:
+    enabled, version = extract_engine(doc)
+    prof = extract_profile(doc)
+    cols = shutil.get_terminal_size((120, 20)).columns
+
+    print("\n" + "=" * cols)
+    print(f"LinuxFanControl Telemetry  |  version={version}  |  engine={'ENABLED' if enabled else 'disabled'}")
+    if prof["name"]:
+        extra = f"schema={prof['schema']}  curves={prof['curveCount']}  controls={prof['controlCount']}"
+        print(f"Active profile: {prof['name']}  ({extra})")
+    print("-" * cols)
+
+def print_gpus(doc: Dict[str, Any]) -> None:
+    rows = extract_gpus(doc)
+    if not rows:
+        return
+    W_VEND = 8
+    W_IDX  = 5
+    W_PCI  = 12
+    W_DRM  = 14
+    W_CAP  = 7
+    W_RPM  = 7
+    W_T    = 8
+    print("GPUs:")
+    hdr = ["Vendor", "Idx", "PCI", "DRM", "Fan", "RPM", "Edge °C", "Hotspot °C", "Mem °C", "Hwmon"]
+    print("  " + f"{hdr[0]:<{W_VEND}} | {hdr[1]:>{W_IDX}} | {hdr[2]:<{W_PCI}} | {hdr[3]:<{W_DRM}} | {hdr[4]:<{W_CAP}} | {hdr[5]:>{W_RPM}} | {hdr[6]:>{W_T}} | {hdr[7]:>{W_T}} | {hdr[8]:>{W_T}} | {hdr[9]}")
+    print(draw_rule([W_VEND, W_IDX, W_PCI, W_DRM, W_CAP, W_RPM, W_T, W_T, W_T, 10]))
+    for g in rows:
+        vend = (g.get("vendor") or "")[:W_VEND]
+        idx  = g.get("index")
+        pci  = g.get("pci") or ""
+        drm  = g.get("drm") or ""
+        hasT = "tach" if g.get("hasFanTach") else "-"
+        hasP = "pwm"  if g.get("hasFanPwm")  else "-"
+        cap  = (hasT + "/" + hasP)
+        rpm  = g.get("fanRpm")
+        tE   = g.get("tempEdgeC")
+        tH   = g.get("tempHotspotC")
+        tM   = g.get("tempMemoryC")
+        hw   = g.get("hwmon") or ""
+        print("  " + f"{vend:<{W_VEND}} | {idx:>{W_IDX}} | {ell(pci, W_PCI):<{W_PCI}} | {ell(drm, W_DRM):<{W_DRM}} | {cap:<{W_CAP}} | {fmt_none(rpm):>{W_RPM}} | {fmt_none_f(tE):>{W_T}} | {fmt_none_f(tH):>{W_T}} | {fmt_none_f(tM):>{W_T}} | {hw}")
+
+def print_chips(doc: Dict[str, Any]) -> None:
+    chips = extract_chips(doc)
+    if not chips:
+        return
+    print("\nHWMon Chips:")
+    for c in chips:
+        name = c.get("name") or ""
+        vendor = c.get("vendor") or ""
+        path = c.get("hwmonPath") or ""
+        print(f"  {name:<12}  {vendor:<14}  {path}")
+
+def print_temps(doc: Dict[str, Any]) -> None:
+    rows = extract_temps(doc)
+    if not rows:
+        print("\nTemperatures: none")
+        return
+    W_CHIP = 14
+    W_LBL  = 24
+    W_VAL  = 8
+    print("\nTemperatures:")
+    hdr = ["Chip", "Label", "Value °C", "Path"]
+    print("  " + f"{hdr[0]:<{W_CHIP}} | {hdr[1]:<{W_LBL}} | {hdr[2]:>{W_VAL}} | {hdr[3]}")
+    print(draw_rule([W_CHIP, W_LBL, W_VAL, 10]))
+    for t in rows:
+        chip = os.path.basename(t["chipPath"]) or t["chipPath"]
+        lbl  = t["label"] or os.path.basename(t["path"])
+        val  = read_temp_c_from_input(t["path"])
+        print("  " + f"{ell(chip, W_CHIP):<{W_CHIP}} | {ell(lbl, W_LBL):<{W_LBL}} | {fmt_none_f(val):>{W_VAL}} | {t['path']}")
+
+def print_fans(doc: Dict[str, Any]) -> None:
+    rows = extract_fans(doc)
+    if not rows:
+        print("\nFans: none")
+        return
+    W_CHIP = 14
+    W_LBL  = 24
+    W_RPM  = 7
+    print("\nFans (tach):")
+    hdr = ["Chip", "Label", "RPM", "Path"]
+    print("  " + f"{hdr[0]:<{W_CHIP}} | {hdr[1]:<{W_LBL}} | {hdr[2]:>{W_RPM}} | {hdr[3]}")
+    print(draw_rule([W_CHIP, W_LBL, W_RPM, 10]))
+    for f in rows:
+        chip = os.path.basename(f["chipPath"]) or f["chipPath"]
+        lbl  = f["label"] or os.path.basename(f["path"])
+        rpm  = read_int(f["path"])
+        print("  " + f"{ell(chip, W_CHIP):<{W_CHIP}} | {ell(lbl, W_LBL):<{W_LBL}} | {fmt_none(rpm):>{W_RPM}} | {f['path']}")
+
+def print_pwms(doc: Dict[str, Any]) -> None:
+    rows = extract_pwms(doc)
+    if not rows:
+        print("\nPWMs: none")
+        return
+    W_CHIP   = 14
+    W_LABEL  = 22
+    W_PCT    = 7
+    W_VAL    = 13
+    W_MODE   = 6
+    W_RPM    = 7
+    print("\nPWMs:")
+    hdr = ["Chip", "Label", "Percent", "Value/Max", "Mode", "RPM", "PWM Path"]
+    print("  " + f"{hdr[0]:<{W_CHIP}} | {hdr[1]:<{W_LABEL}} | {hdr[2]:>{W_PCT}} | {hdr[3]:<{W_VAL}} | {hdr[4]:<{W_MODE}} | {hdr[5]:>{W_RPM}} | {hdr[6]}")
+    print(draw_rule([W_CHIP, W_LABEL, W_PCT, W_VAL, W_MODE, W_RPM, 10]))
+    for r in rows:
+        chip  = os.path.basename(r["chipPath"]) or r["chipPath"]
+        label = r["displayLabel"] or os.path.basename(r["pwmPath"])
+        pct   = "-" if r["percent"] is None else f"{r['percent']}%"
+        val   = fmt_none(r["value"])
+        mx    = fmt_none(r["pwmMax"])
+        v_m   = f"{val}/{mx}" if mx != "-" else val
+        mode  = mode_str(r["enable"], bool(r["enablePath"]))
+        rpm   = fmt_none(r["rpm"])
+        print("  " + f"{ell(chip, W_CHIP):<{W_CHIP}} | {ell(label, W_LABEL):<{W_LABEL}} | {pct:>{W_PCT}} | {v_m:<{W_VAL}} | {mode:<{W_MODE}} | {rpm:>{W_RPM}} | {r['pwmPath']}")
+
+# ----------------------------- main ------------------------------------------
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Linux Fan Control — live telemetry viewer")
+    ap.add_argument("--shm", default="lfc.telemetry",
+                    help="POSIX shm name or path (default: lfc.telemetry)")
+    ap.add_argument("--once", action="store_true", help="Print once and exit")
+    ap.add_argument("--interval", type=float, default=1.0, help="Polling interval seconds (default 1.0)")
+    ap.add_argument("--json", action="store_true", help="Dump raw JSON instead of pretty view")
     args = ap.parse_args()
 
-    cfg_path = args.config or default_daemon_config_path()
-    daemon_cfg = load_json_file(cfg_path) or {}
+    shm_file = shm_file_from_name(args.shm)
 
-    shm_file = shm_file_from_config(args.shm or _get(daemon_cfg, "config", "shmPath") or daemon_cfg.get("shmPath") or "lfc.telemetry")
+    # handle signals for clean exit
+    stop = {"flag": False}
+    def _sig(*_a): stop["flag"] = True
+    signal.signal(signal.SIGINT, _sig)
+    signal.signal(signal.SIGTERM, _sig)
+
     if not os.path.exists(shm_file):
-        print(f"[ERR] SHM not found: {shm_file}")
-        sys.exit(2)
+        print(f"[!] Telemetry SHM file not found: {shm_file}", file=sys.stderr)
+        print("    Hint: run lfcd or specify --shm if you use a custom name.", file=sys.stderr)
+        return 2
 
-    profiles_override = args.profiles_path
-
-    last_doc: Optional[Dict[str, Any]] = None
-    last_profile_name: Optional[str] = None
-    active_profile: Optional[Dict[str, Any]] = None
-    pwm_names: Dict[str, Dict[str, str]] = {}
-    paused = False
-    group = False
-    interval = max(0.1, float(args.interval))
-
-    signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-
-    def reload_profile(current_profile_name: Optional[str]) -> None:
-        nonlocal active_profile, pwm_names
-        profiles_dir = resolve_profiles_path(daemon_cfg, profiles_override)
-        active_profile = load_active_profile_json(profiles_dir, current_profile_name)
-        pwm_names = build_pwm_name_map(active_profile)
-
-    def tick(stdscr):
-        nonlocal last_doc, last_profile_name, paused, group
-        if paused:
-            time.sleep(interval); return
+    def tick() -> bool:
         doc = read_shm_json(shm_file)
-        if not doc:
-            time.sleep(interval); return
-        prof = _get(doc, "profile", "name")
-        if prof != last_profile_name:
-            reload_profile(prof)
-            last_profile_name = prof
-        layout(stdscr, doc, pwm_names, group_by_chip=group)
-        time.sleep(interval)
-
-    def tui(stdscr):
-        curses.curs_set(0)
-        stdscr.nodelay(True)
-        while True:
+        if not isinstance(doc, dict):
+            print("[!] Could not parse telemetry JSON", file=sys.stderr)
+            return False
+        if args.json:
+            print(json.dumps(doc, indent=2, ensure_ascii=False))
+        else:
             try:
-                ch = stdscr.getch()
-                if ch == ord('q'): break
-                if ch == ord(' '): nonlocal paused; paused = not paused
-                if ch == ord('g'): nonlocal group; group = not group
+                os.system("clear")
             except Exception:
                 pass
-            tick(stdscr)
+            print_header(doc)
+            print_gpus(doc)
+            print_chips(doc)
+            print_temps(doc)
+            print_fans(doc)
+            print_pwms(doc)
+        sys.stdout.flush()
+        return True
 
-    curses.wrapper(tui)
+    if args.once:
+        ok = tick()
+        return 0 if ok else 3
+
+    last = 0.0
+    iv = max(0.1, float(args.interval))
+    while not stop["flag"]:
+        now = time.time()
+        if now - last >= iv:
+            tick()
+            last = now
+        time.sleep(0.05)
+    return 0
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

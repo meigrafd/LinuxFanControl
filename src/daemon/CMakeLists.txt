@@ -12,21 +12,23 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Options for GPU SDKs
-option(WITH_AMDSMI "Enable AMD SMI support" OFF)
-option(WITH_NVML   "Enable NVIDIA NVML support" OFF)
-option(WITH_IGCL   "Enable Intel IGCL support" OFF)
+# Options for GPU SDKs (original semantics kept)
+option(WITH_AMDSMI "Enable AMD SMI support (if found)" OFF)
+option(WITH_NVML   "Enable NVIDIA NVML support (if found)" OFF)
+option(WITH_IGCL   "Enable Intel IGCL support (if found)" OFF)
+
+# Optional hard-disable switches (default OFF)
+option(DISABLE_AMDSMI "Force-disable AMD SMI backend (ignore auto-detect)" OFF)
+option(DISABLE_NVML   "Force-disable NVIDIA NVML backend (ignore auto-detect)" OFF)
+option(DISABLE_IGCL   "Force-disable Intel IGCL backend (ignore auto-detect)" OFF)
 
 set(AMDSMI_INCLUDE_DIR "" CACHE PATH "AMD SMI include dir")
 set(NVML_INCLUDE_DIR   "" CACHE PATH "NVIDIA NVML include dir")
 set(IGCL_INCLUDE_DIR   "" CACHE PATH "Intel IGCL include dir")
 
 # Accept and reference (use) lm-sensors hints to avoid the "manually-specified variables not used" warning.
-# These may be passed in via -DSENSORS_INCLUDE_DIRS=... -DSENSORS_LIBRARIES=...
 set(SENSORS_INCLUDE_DIRS "${SENSORS_INCLUDE_DIRS}" CACHE PATH   "lm-sensors include dirs")
 set(SENSORS_LIBRARIES    "${SENSORS_LIBRARIES}"    CACHE STRING "lm-sensors libraries")
-
-# Referencing them here marks them as 'used' at configure time.
 if(DEFINED SENSORS_INCLUDE_DIRS OR DEFINED SENSORS_LIBRARIES)
   message(STATUS "lm-sensors include: ${SENSORS_INCLUDE_DIRS}")
   message(STATUS "lm-sensors libs   : ${SENSORS_LIBRARIES}")
@@ -34,7 +36,6 @@ endif()
 
 # ------------------------------------------------------------------------------
 # Generated AutoConfig.h
-# If template is missing, synthesize a minimal header so the build does not fail.
 # ------------------------------------------------------------------------------
 set(AUTOCONFIG_IN ${CMAKE_CURRENT_SOURCE_DIR}/include/AutoConfig.h.in)
 if (EXISTS ${AUTOCONFIG_IN})
@@ -51,21 +52,183 @@ endif()
 
 # Dependencies
 find_package(Threads REQUIRED)
-find_package(CURL REQUIRED)  # UpdateChecker.cpp uses libcurl
-# find_package(nlohmann_json 3.10 QUIET) # header-only when not found
+find_package(CURL REQUIRED)
 
 # Include directories
 set(DAEMON_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 include_directories(
     ${DAEMON_SRC_DIR}/include
-    ${CMAKE_BINARY_DIR}
+    ${CMAKE_BINARY_DIR}          # AutoConfig.h + ggf. Wrapper-Header
 )
-
 if(SENSORS_INCLUDE_DIRS)
   include_directories(${SENSORS_INCLUDE_DIRS})
 endif()
 
-# Sources
+# ------------------------------------------------------------------------------
+# SDK auto-detection (adds on top of the original options; no source/path changes)
+# ------------------------------------------------------------------------------
+find_package(PkgConfig QUIET)
+
+# Helper: find libraries if not set
+function(_lfc_find_library_out VAR_NAME)
+  if (NOT ${VAR_NAME})
+    if (VAR_NAME STREQUAL "AMDSMI_LIBRARY")
+      find_library(${VAR_NAME} NAMES amdsmi amd_smi amdsmi64
+                   PATHS /usr/lib64 /usr/lib /lib64 /lib /usr/local/lib64 /usr/local/lib
+                         /opt/amdsmi/lib /opt/rocm/lib)
+    elseif (VAR_NAME STREQUAL "NVML_LIBRARY")
+      find_library(${VAR_NAME} NAMES nvidia-ml
+                   PATHS /usr/lib64 /usr/lib /lib64 /lib /usr/lib64/nvidia /usr/lib/nvidia)
+    elseif (VAR_NAME STREQUAL "IGCL_LIBRARY")
+      find_library(${VAR_NAME} NAMES ze_loader level_zero
+                   PATHS /usr/lib64 /usr/lib /lib64 /lib)
+    endif()
+  endif()
+endfunction()
+
+# --- AMD SMI header detection --------------------------------------------------
+set(AMDSMI_NEEDS_WRAPPER OFF)
+
+if (NOT DISABLE_AMDSMI AND NOT AMDSMI_INCLUDE_DIR)
+  # Prefer native layout amdsmi/amdsmi.h
+  find_path(AMDSMI_INCLUDE_DIR amdsmi/amdsmi.h
+            PATHS /usr/include /usr/local/include /opt/amdsmi/include /opt/rocm/include
+            PATH_SUFFIXES amdsmi)
+  # Fedora layout: amd_smi/amdsmi.h
+  if (NOT AMDSMI_INCLUDE_DIR)
+    find_path(AMDSMI_INCLUDE_DIR amd_smi/amdsmi.h
+              PATHS /usr/include /usr/local/include /opt/amdsmi/include /opt/rocm/include)
+    if (AMDSMI_INCLUDE_DIR)
+      # Code includes "amdsmi/amdsmi.h" ⇒ provide wrapper so include continues to work
+      set(AMDSMI_NEEDS_WRAPPER ON)
+    endif()
+  endif()
+  # Direct fallback
+  if (NOT AMDSMI_INCLUDE_DIR AND EXISTS "/usr/include/amd_smi/amdsmi.h")
+    set(AMDSMI_INCLUDE_DIR "/usr/include")
+    set(AMDSMI_NEEDS_WRAPPER ON)
+  endif()
+endif()
+
+# NVML header
+if (NOT DISABLE_NVML AND NOT NVML_INCLUDE_DIR)
+  find_path(NVML_INCLUDE_DIR nvml.h
+            PATHS /usr/include /usr/local/include /usr/include/nvidia /usr/include/nvidia-ml)
+endif()
+
+# IGCL/Level Zero header
+if (NOT DISABLE_IGCL AND NOT IGCL_INCLUDE_DIR)
+  find_path(IGCL_INCLUDE_DIR level_zero/ze_api.h
+            PATHS /usr/include /usr/local/include)
+endif()
+
+# pkg-config hints
+if (PKG_CONFIG_FOUND)
+  if (NOT DISABLE_AMDSMI)
+    pkg_check_modules(PC_AMDSMI QUIET amdsmi)
+    if (PC_AMDSMI_FOUND)
+      if (NOT AMDSMI_INCLUDE_DIR AND PC_AMDSMI_INCLUDE_DIRS)
+        list(GET PC_AMDSMI_INCLUDE_DIRS 0 AMDSMI_INCLUDE_DIR)
+      endif()
+      if (NOT AMDSMI_LIBRARY AND PC_AMDSMI_LIBRARIES)
+        list(GET PC_AMDSMI_LIBRARIES 0 AMDSMI_LIBRARY)
+      endif()
+    endif()
+  endif()
+  if (NOT DISABLE_NVML)
+    pkg_check_modules(PC_NVML QUIET nvidia-ml)
+    if (PC_NVML_FOUND)
+      if (NOT NVML_INCLUDE_DIR AND PC_NVML_INCLUDE_DIRS)
+        list(GET PC_NVML_INCLUDE_DIRS 0 NVML_INCLUDE_DIR)
+      endif()
+      if (NOT NVML_LIBRARY AND PC_NVML_LIBRARIES)
+        list(GET PC_NVML_LIBRARIES 0 NVML_LIBRARY)
+      endif()
+    endif()
+  endif()
+  if (NOT DISABLE_IGCL)
+    pkg_check_modules(PC_LEVEL_ZERO QUIET level-zero)
+    if (PC_LEVEL_ZERO_FOUND)
+      if (NOT IGCL_INCLUDE_DIR AND PC_LEVEL_ZERO_INCLUDE_DIRS)
+        list(GET PC_LEVEL_ZERO_INCLUDE_DIRS 0 IGCL_INCLUDE_DIR)
+      endif()
+      if (NOT IGCL_LIBRARY AND PC_LEVEL_ZERO_LIBRARIES)
+        list(GET PC_LEVEL_ZERO_LIBRARIES 0 IGCL_LIBRARY)
+      endif()
+    endif()
+  endif()
+endif()
+
+# libraries (falls pkg-config nichts fand)
+if (NOT DISABLE_AMDSMI AND NOT AMDSMI_LIBRARY)
+  _lfc_find_library_out(AMDSMI_LIBRARY)
+  if (NOT AMDSMI_LIBRARY AND EXISTS "/usr/lib64/libamdsmi.so")
+    set(AMDSMI_LIBRARY "/usr/lib64/libamdsmi.so")
+  endif()
+endif()
+if (NOT DISABLE_NVML AND NOT NVML_LIBRARY)
+  _lfc_find_library_out(NVML_LIBRARY)
+endif()
+if (NOT DISABLE_IGCL AND NOT IGCL_LIBRARY)
+  _lfc_find_library_out(IGCL_LIBRARY)
+endif()
+
+# Wenn Fedora-Layout erkannt wurde, erzeuge Wrapper-Header: amdsmi/amdsmi.h
+if (AMDSMI_NEEDS_WRAPPER)
+  file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/amdsmi)
+  file(WRITE ${CMAKE_BINARY_DIR}/amdsmi/amdsmi.h
+"#pragma once
+#include <amd_smi/amdsmi.h>
+")
+  # ${CMAKE_BINARY_DIR} ist bereits in include_directories -> Include wird gefunden
+  message(STATUS "AMDSMI: generating wrapper header at ${CMAKE_BINARY_DIR}/amdsmi/amdsmi.h")
+endif()
+
+# Enable decisions
+set(USE_AMDSMI OFF)
+set(USE_NVML   OFF)
+set(USE_IGCL   OFF)
+
+if (NOT DISABLE_AMDSMI)
+  if (WITH_AMDSMI)
+    if (AMDSMI_INCLUDE_DIR AND AMDSMI_LIBRARY)
+      set(USE_AMDSMI ON)
+    else()
+      message(WARNING "WITH_AMDSMI=ON but AMD SMI not found (headers or library missing)")
+    endif()
+  elseif (AMDSMI_INCLUDE_DIR AND AMDSMI_LIBRARY)
+    set(USE_AMDSMI ON)
+    message(STATUS "AMDSMI detected — enabling automatically")
+  endif()
+endif()
+
+if (NOT DISABLE_NVML)
+  if (WITH_NVML)
+    if (NVML_INCLUDE_DIR AND NVML_LIBRARY)
+      set(USE_NVML ON)
+    else()
+      message(WARNING "WITH_NVML=ON but NVML not found (headers or library missing)")
+    endif()
+  elseif (NVML_INCLUDE_DIR AND NVML_LIBRARY)
+    set(USE_NVML ON)
+    message(STATUS "NVML detected — enabling automatically")
+  endif()
+endif()
+
+if (NOT DISABLE_IGCL)
+  if (WITH_IGCL)
+    if (IGCL_INCLUDE_DIR AND IGCL_LIBRARY)
+      set(USE_IGCL ON)
+    else()
+      message(WARNING "WITH_IGCL=ON but IGCL/Level Zero not found (headers or library missing)")
+    endif()
+  elseif (IGCL_INCLUDE_DIR AND IGCL_LIBRARY)
+    set(USE_IGCL ON)
+    message(STATUS "IGCL (Level Zero) detected — enabling automatically")
+  endif()
+endif()
+
+# Sources (original list, unchanged)
 set(LFCD_SOURCES
     # entry / core
     ${DAEMON_SRC_DIR}/main.cpp
@@ -84,6 +247,11 @@ set(LFCD_SOURCES
     ${DAEMON_SRC_DIR}/Config.cpp
     ${DAEMON_SRC_DIR}/FanControlImport.cpp
     ${DAEMON_SRC_DIR}/VendorMapping.cpp
+
+    # GPU monitor (modular – diese Dateien existieren im Repo)
+    ${DAEMON_SRC_DIR}/GpuMonitor.NVIDIA.cpp
+    ${DAEMON_SRC_DIR}/GpuMonitor.AMD.cpp
+    ${DAEMON_SRC_DIR}/GpuMonitor.INTEL.cpp
 
     # RPC server core
     ${DAEMON_SRC_DIR}/RpcTcpServer.cpp
@@ -112,25 +280,45 @@ add_executable(lfcd ${LFCD_SOURCES})
 
 # Include paths
 target_include_directories(lfcd PRIVATE
-    ${DAEMON_SRC_DIR}                    # local headers: "Config.hpp", "Profile.hpp", ...
-    ${CMAKE_CURRENT_SOURCE_DIR}/include  # public headers: "include/CommandRegistry.h", etc.
-    ${CMAKE_BINARY_DIR}                  # generated AutoConfig.h
+    ${DAEMON_SRC_DIR}                    # local headers
+    ${CMAKE_CURRENT_SOURCE_DIR}/include  # public headers
+    ${CMAKE_BINARY_DIR}                  # generated AutoConfig.h + wrapper header
 )
 
-# Optional vendor SDK include dirs
+# Original options (compatibility)
 if (WITH_AMDSMI AND AMDSMI_INCLUDE_DIR)
     target_include_directories(lfcd PRIVATE ${AMDSMI_INCLUDE_DIR})
     target_compile_definitions(lfcd PRIVATE LFC_WITH_AMDSMI=1)
 endif()
-
 if (WITH_NVML AND NVML_INCLUDE_DIR)
     target_include_directories(lfcd PRIVATE ${NVML_INCLUDE_DIR})
     target_compile_definitions(lfcd PRIVATE LFC_WITH_NVML=1)
 endif()
-
 if (WITH_IGCL AND IGCL_INCLUDE_DIR)
     target_include_directories(lfcd PRIVATE ${IGCL_INCLUDE_DIR})
     target_compile_definitions(lfcd PRIVATE LFC_WITH_IGCL=1)
+endif()
+
+# Auto-detected SDKs
+if (USE_AMDSMI)
+  target_include_directories(lfcd PRIVATE ${AMDSMI_INCLUDE_DIR})
+  target_compile_definitions(lfcd PRIVATE LFC_WITH_AMDSMI=1)
+  target_link_libraries(lfcd PRIVATE ${AMDSMI_LIBRARY})
+  message(STATUS "AMDSMI include: ${AMDSMI_INCLUDE_DIR}")
+  message(STATUS "AMDSMI library: ${AMDSMI_LIBRARY}")
+  message(STATUS "Link AMDSMI: ${AMDSMI_LIBRARY}")
+endif()
+if (USE_NVML)
+  target_include_directories(lfcd PRIVATE ${NVML_INCLUDE_DIR})
+  target_compile_definitions(lfcd PRIVATE LFC_WITH_NVML=1)
+  target_link_libraries(lfcd PRIVATE ${NVML_LIBRARY})
+  message(STATUS "Link NVML: ${NVML_LIBRARY}")
+endif()
+if (USE_IGCL)
+  target_include_directories(lfcd PRIVATE ${IGCL_INCLUDE_DIR})
+  target_compile_definitions(lfcd PRIVATE LFC_WITH_IGCL=1)
+  target_link_libraries(lfcd PRIVATE ${IGCL_LIBRARY})
+  message(STATUS "Link IGCL: ${IGCL_LIBRARY}")
 endif()
 
 # Linking

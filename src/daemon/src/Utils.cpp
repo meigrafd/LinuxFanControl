@@ -2,6 +2,8 @@
  * Linux Fan Control — Utility helpers (implementation; Linux-only)
  * (c) 2025 LinuxFanControl contributors
  */
+
+#include <nlohmann/json.hpp>
 #include "include/Utils.hpp"
 
 #include <cerrno>
@@ -21,6 +23,8 @@
 namespace fs = std::filesystem;
 
 namespace lfc { namespace util {
+
+using json = nlohmann::json;
 
 /* ----------------------------------------------------------------------------
  * Environment helpers
@@ -81,6 +85,12 @@ std::string to_lower(std::string_view sv) {
     return s;
 }
 
+bool icontains(const std::string& hay, const std::string& needle) {
+    const auto H = to_lower(hay);
+    const auto N = to_lower(needle);
+    return H.find(N) != std::string::npos;
+}
+
 /* ----------------------------------------------------------------------------
  * Time helpers
  * ----------------------------------------------------------------------------*/
@@ -106,6 +116,20 @@ long long now_ms()
 /* ----------------------------------------------------------------------------
  * Filesystem helpers
  * ----------------------------------------------------------------------------*/
+
+bool readFile(const std::filesystem::path& path, std::string& out) {
+    std::error_code ec;
+    std::filesystem::path p = path;
+    std::ifstream ifs(p, std::ios::binary);
+    if (!ifs) return false;
+    ifs.seekg(0, std::ios::end);
+    std::streamoff sz = ifs.tellg();
+    if (sz < 0) sz = 0;
+    out.resize(static_cast<size_t>(sz));
+    ifs.seekg(0, std::ios::beg);
+    if (!out.empty()) ifs.read(&out[0], static_cast<std::streamsize>(out.size()));
+    return static_cast<bool>(ifs);
+}
 
 std::string read_first_line(const fs::path& p) {
     std::ifstream f(p);
@@ -160,6 +184,143 @@ void ensure_parent_dirs(const fs::path& p, std::error_code* ec) {
     std::error_code tmp;
     fs::create_directories(dir, tmp);
     if (ec) *ec = tmp;
+}
+
+/*
+std::optional<long long> read_json_file(const std::string& path) {
+    std::ifstream f(path);
+    if (!f) return false;
+    return json::parse(f, nullptr, true, true); // allow comments
+}
+*/
+
+/* ----------------------------------------------------------------------------
+ * JSON helpers
+ * ----------------------------------------------------------------------------*/
+
+static inline void stripBomAndNulls_(std::string& s) {
+    // Strip UTF-8 BOM
+    if (s.size() >= 3 &&
+        static_cast<unsigned char>(s[0]) == 0xEF &&
+        static_cast<unsigned char>(s[1]) == 0xBB &&
+        static_cast<unsigned char>(s[2]) == 0xBF) {
+        s.erase(0, 3);
+    }
+    // Drop NUL bytes
+    std::string tmp;
+    tmp.reserve(s.size());
+    for (char ch : s) if (ch != '\0') tmp.push_back(ch);
+    s.swap(tmp);
+}
+
+static inline std::string stripCommentsAndTrailingCommas_(const std::string& in) {
+    // This is a heuristic best-effort sanitizer for common FanControl exports.
+    // It removes // line comments, /* block comments */, and trailing commas
+    // before '}' or ']'. It is NOT a full JSON5 parser and intentionally simple.
+    std::string s = in;
+
+    // Remove /* ... */ (non-greedy)
+    s = std::regex_replace(s, std::regex(R"(/\*.*?\*/)", std::regex::extended | std::regex::icase), "");
+
+    // Remove // ... (till end of line)
+    s = std::regex_replace(s, std::regex(R"(//[^\n\r]*)"), "");
+
+    // Remove trailing commas: ,   }
+    s = std::regex_replace(s, std::regex(R"(,\s*([}\]]))"), "$1");
+
+    return s;
+}
+
+json read_json_file(const std::string& path) {
+    std::string text;
+    if (!readFile(path, text)) {
+        std::fprintf(stderr, "[WARN] ReadJsonFile: cannot open '%s' (errno=%d)\n",
+                     path.c_str(), errno);
+        return json(); // discarded
+    }
+
+    stripBomAndNulls_(text);
+
+    // First attempt: strict parse (no exceptions)
+    json j = json::parse(text, /*cb=*/nullptr, /*allow_exceptions=*/false);
+    if (!j.is_discarded()) return j;
+
+    // Second attempt: heuristic sanitizer for comments/trailing commas
+    const std::string sanitized = stripCommentsAndTrailingCommas_(text);
+    if (sanitized != text) {
+        j = json::parse(sanitized, nullptr, /*allow_exceptions=*/false);
+        if (!j.is_discarded()) return j;
+    }
+
+    std::fprintf(stderr, "[WARN] ReadJsonFile: parse failed for '%s'\n", path.c_str());
+    return json(); // discarded
+}
+
+static inline bool parseIntFromString_(std::string_view sv, long long& out) {
+    std::string s = trim(sv);
+    if (s.empty()) return false;
+    if (!s.empty() && s.back() == '%') s.pop_back();
+    // Allow underscores as visual separators
+    s.erase(std::remove(s.begin(), s.end(), '_'), s.end());
+    // Reject non [+-0-9]
+    for (char c : s) {
+        if (!(c=='+' || c=='-' || (c>='0'&&c<='9'))) return false;
+    }
+    try {
+        size_t idx = 0;
+        long long v = std::stoll(s, &idx, 10);
+        if (idx != s.size()) return false;
+        out = v;
+        return true;
+    } catch (...) { return false; }
+}
+
+static inline bool parseDoubleFromString_(std::string_view sv, double& out) {
+    std::string s = trim(sv);
+    if (s.empty()) return false;
+    if (!s.empty() && s.back() == '%') s.pop_back();
+    // Replace comma decimal with dot
+    for (char& c : s) if (c == ',') c = '.';
+    // Allow underscores as visual separators
+    s.erase(std::remove(s.begin(), s.end(), '_'), s.end());
+    try {
+        size_t idx = 0;
+        double v = std::stod(s, &idx);
+        if (idx != s.size()) return false;
+        out = v;
+        return true;
+    } catch (...) { return false; }
+}
+
+long long parseIntLoose(const json& v, long long defValue) {
+    if (v.is_number_integer()) {
+        return v.get<long long>();
+    }
+    if (v.is_number_unsigned()) {
+        return static_cast<long long>(v.get<unsigned long long>());
+    }
+    if (v.is_number_float()) {
+        return static_cast<long long>(v.get<double>());
+    }
+    if (v.is_string()) {
+        long long out;
+        if (parseIntFromString_(v.get_ref<const std::string&>(), out)) return out;
+    }
+    return defValue;
+}
+
+double parseDoubleLoose(const json& v, double defValue) {
+    if (v.is_number_float()) {
+        return v.get<double>();
+    }
+    if (v.is_number_integer()) {
+        return static_cast<double>(v.get<long long>());
+    }
+    if (v.is_string()) {
+        double out;
+        if (parseDoubleFromString_(v.get_ref<const std::string&>(), out)) return out;
+    }
+    return defValue;
 }
 
 /* ----------------------------------------------------------------------------
