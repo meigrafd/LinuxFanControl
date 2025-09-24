@@ -116,13 +116,17 @@ void Daemon::runLoop() {
     LOG_INFO("daemon: runLoop enter");
     using clock = std::chrono::steady_clock;
 
-    auto nextTick   = clock::now();
-    auto lastForce  = clock::now();
-    auto lastGpu    = clock::now();
-    auto lastHwmon  = clock::now();
+    // Initial schedule anchors
+    auto nextTick  = clock::now();  // engine tick due
+    auto lastForce = clock::now();  // last forced telemetry publish
+    auto lastGpu   = clock::now();  // last lightweight GPU metrics refresh
+    auto lastHwmon = clock::now();  // last lightweight hwmon housekeeping
 
     // NOTE: No periodic hwmon rescan here. Inventory is static during runtime.
     //       Sensors/controls are read live by Engine/telemetry helpers.
+
+    constexpr int kSleepMinMs     = 1;   // avoid 0ms busy spin
+    constexpr int kSleepMaxMs     = 50;  // keep responsiveness for RPC & state changes
 
     while (running_.load(std::memory_order_relaxed) && !stop_.load(std::memory_order_relaxed)) {
         auto now = clock::now();
@@ -131,32 +135,47 @@ void Daemon::runLoop() {
         if (now >= nextTick) {
             if (enabled_.load(std::memory_order_relaxed) && engine_) {
                 (void)engine_->tick(cfg_.deltaC);
-                //bool ch = engine_->tick(cfg_.deltaC);
-                //if (ch) LOG_TRACE("daemon: engine tick applied");
             }
             nextTick = now + std::chrono::milliseconds(cfg_.tickMs);
         }
 
-        // Telemetry publish at forceTick cadence (values are read live)
+        // ---- Telemetry publish at forceTick cadence -------------------------
         if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastForce).count() >= cfg_.forceTickMs) {
             publishTelemetry();
             lastForce = now;
         }
 
-        // Lightweight GPU metrics refresh (inventory stays the same)
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastGpu).count() >= 1000) {
+        // ---- Lightweight GPU metrics refresh --------------------------------
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastGpu).count() >= cfg_.gpuRefreshMs) {
             GpuMonitor::refreshMetrics(gpus_);
             lastGpu = now;
         }
 
-        // Lightweight hwmon housekeeping (drop vanished files, refresh values)
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastHwmon).count() >= 500) {
+        // ---- Lightweight hwmon housekeeping ---------------------------------
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastHwmon).count() >= cfg_.hwmonRefreshMs) {
             Hwmon::refreshValues(hwmon_);
             lastHwmon = now;
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        // ---------------------- dynamic sleep ----------------------------
+        // Sleep until the earliest upcoming due time among all periodic tasks,
+        // clamped into [kSleepMinMs, kSleepMaxMs].
+        auto dueTick   = nextTick;
+        auto dueForce  = lastForce + std::chrono::milliseconds(cfg_.forceTickMs);
+        auto dueGpu    = lastGpu   + std::chrono::milliseconds(cfg_.gpuRefreshMs);
+        auto dueHwmon  = lastHwmon + std::chrono::milliseconds(cfg_.hwmonRefreshMs);
+
+        auto nextDue   = std::min({dueTick, dueForce, dueGpu, dueHwmon});
+        // If already due/past-due, sleep the minimum to yield.
+        long sleepMs   = std::chrono::duration_cast<std::chrono::milliseconds>(nextDue > now ? (nextDue - now) : std::chrono::milliseconds(kSleepMinMs)).count();
+
+        if (sleepMs < kSleepMinMs) sleepMs = kSleepMinMs;
+        if (sleepMs > kSleepMaxMs) sleepMs = kSleepMaxMs;
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
     }
+
+    LOG_INFO("daemon: run loop end");
 }
 
 void Daemon::shutdown() {
@@ -188,7 +207,6 @@ void Daemon::shutdown() {
 void Daemon::refreshHwmon() {
     LOG_TRACE("daemon: refreshHwmon");
     hwmon_ = Hwmon::scan();
-    //ImportJobManager::instance().primeInventory(hwmon_.temps, hwmon_.pwms);
 }
 
 void Daemon::refreshGpus() {

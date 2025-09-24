@@ -1,86 +1,84 @@
-# Changelog
+# LinuxFanControl — Daemon Changelog (English)
 
-All notable changes to **Linux Fan Control (daemon)** will be documented in this file.
+> This file tracks daemon-side changes only (build system, runtime, telemetry, RPC). GUI changes are tracked elsewhere.
 
-## \[0.3.0] — 2025-09-21
+---
 
-### Highlights
-
-* **One-time hardware discovery**: hwmon inventory is scanned once at startup; runtime now reads only live values. This removes noisy rescans and reduces I/O.
-* **GPU monitoring overhaul**: strict de-duplication across DRM/HWMon/Vendor SDKs and lightweight metrics refresh; no periodic re-inventory.
-* **POSIX shared memory telemetry**: telemetry is published to a real POSIX SHM object (e.g. `/lfc.telemetry`) with file fallback only on failure.
-* **Profile-aware startup**: engine remains disabled until a valid profile from `daemon.json` is loaded successfully.
-* **Quieter logs**: repeated informational spam removed or downgraded to TRACE; first-run info is retained.
+## 2025-09-24
 
 ### Added
 
-* `Hwmon::refreshValues(HwmonInventory&)`: updates values/metadata for discovered sensors and purges vanished nodes **without** rescanning inventory.
-* `GpuMonitor::refreshMetrics(std::vector<GpuSample>&)`: updates temps/RPM/PWM/power for known GPUs without re-discovery.
-* POSIX SHM implementation in `ShmTelemetry` using `shm_open`/`ftruncate`/`mmap`. Automatic fallback to a regular file if SHM is unavailable.
-* Deduplication logic in GPU monitoring with priority **PCI → HWMON path → Vendor+Name**.
-* Config defaults ensuring a proper SHM **name**: `shmPath` defaults to `"lfc.telemetry"` (normalized to `"/lfc.telemetry"`).
+* **GPU detection improvements**: `GpuMonitor` now performs more accurate identification (vendor, board name, PCI mapping). Enhancements integrated with extended `vendorMapping` database.
+
+* **ShmTelemetry guard**: Introduced lightweight guard logic to prevent redundant or excessive SHM writes, reducing contention and CPU overhead.
+
+* **FanControl profile import**: Reworked importer for Windows FanControl.Release profiles (`userConfig.json`), now preserving triggers, mixes, graphs, and nicknames more faithfully.
+
+* **SDK auto-detection** (CMake): NVML and IGCL/Level Zero are now detected automatically, mirroring the existing AMDSMI flow. Auto-enables when headers **and** libs are found; can be hard-disabled via `DISABLE_*`, or forced via `WITH_*`.
+
+* **GPU enrichment backends**:
+
+  * **NVML**: Edge/Hotspot (if exposed), fan RPM/percent, pretty name, PCI BDF mapping.
+  * **IGCL/Level Zero (ZES)**: Edge/Hotspot/Memory temps, fan RPM/percent, pretty name, PCI BDF mapping.
+
+* **Runtime-configurable refresh cadences**:
+
+  * `gpuRefreshMs` and `hwmonRefreshMs` in `daemon.json` (with ENV fallbacks `LFCD_GPU_REFRESH_MS`, `LFCD_HWMON_REFRESH_MS`).
+
+* **ENV fallback layer** for daemon configuration (strictly additive):
+
+  * Engine: `LFCD_TICK_MS`, `LFCD_FORCE_TICK_MS`, `LFCD_DELTA_C`, `LFCD_DEBUG`.
+  * RPC/Paths: `LFCD_HOST`, `LFCD_PORT`, `LFCD_SHM_PATH` (alias `LFC_SHM_PATH`), `LFCD_LOGFILE`, `LFCD_PIDFILE`, `LFCD_PROFILES_PATH`, `LFCD_PROFILE_NAME`, `LFCD_CONFIG_PATH`.
+  * Vendor mapping: `LFC_VENDOR_MAP`, `LFC_VENDOR_MAP_WATCH`, `LFC_VENDOR_MAP_THROTTLE_MS`.
+
+* **Telemetry dump script**: `scripts/lfc_telemetry_dump.py` — dumps SHM telemetry to a text file with pretty-printed JSON. Default output path: `/tmp/lfc_shm.txt`.
+
+* **Documentation**:
+
+  * `docs/ShmTelemetry.md` (bilingual DE/EN) — schema, semantics, client hints.
+  * `docs/env.md` (bilingual DE/EN) — full list of supported ENV variables and precedence.
 
 ### Changed
 
-* **Daemon run loop**:
-
-  * Removed periodic hwmon rescans; values are read live and `Hwmon::refreshValues` may run at a coarse cadence for housekeeping.
-  * GPU handling split into one-time `snapshot()` at init and periodic `refreshMetrics()` in the loop.
-  * Telemetry publishing unchanged in behavior but now targets POSIX SHM by default.
-* **Startup activation**: the engine is explicitly **disabled by default** and only enabled after loading the active profile from disk (if present & valid).
-* **Logging**:
-
-  * Repeated `INFO` logs like "gpu: snapshot complete" and "Hwmon: scan complete" are now emitted once; subsequent cycles use `TRACE`.
-  * Reduced log noise during steady-state polling.
+* **Daemon run loop**: replaced fixed `sleep_for(10ms)` with a **dynamic sleep** to the earliest next due event (engine tick, forced publish, GPU refresh, hwmon refresh). Responsiveness guardrails: min 1 ms / max 50 ms.
+* **`lfc_live.py`** now reads **SHM only** (no direct sysfs reads). Output formatting clarified; SHM name normalization kept.
 
 ### Fixed
 
-* Duplicate GPU entries when data came from multiple sources (e.g., DRM `cardX`, hwmon, NVML/AMDSMI). The dedup now resolves `cardX` → PCI and merges consistently.
-* Erroneous DRM entries with `pci: "cardN"` are normalized to a real PCI bus id (e.g., `0000:03:00.0`).
+* **JSON ADL bindings** for `DaemonConfig`: ensured `to_json(json&, const DaemonConfig&)` and `from_json(const json&, DaemonConfig&)` are defined **in `namespace lfc`** with exact signatures. This resolves initializer issues in RPC (e.g., `json{{"config", cfg}}`).
+* **Header/implementation cohesion**: kept field defaults in the header; `defaultConfig()` defines platform paths and does not silently alter engine timing fields.
 
-### Breaking / Potentially Impactful Changes
+### Performance
 
-* **Telemetry transport** now prefers POSIX SHM. Consumers that previously tailed a file under `/run/user/...` should read from the SHM object `/lfc.telemetry`. A file at the path in `daemon.json` is only written if SHM creation fails.
-* **Telemetry format** remains JSON, but the location changed (see above). A `version: "1"` field is included in the JSON root for forward compatibility.
+* **Lower idle CPU load** via dynamic sleep in the run loop.
+* **Optional reduction of I/O**: forced publish cadence remains configurable (`forceTickMs`), and GPU/HWMON refreshes can be tuned without rebuild.
 
-### Configuration
+### Migration Notes
 
-* `daemon.json` now expects (or defaults) `"shmPath": "lfc.telemetry"`.
-* `profileName` and `profilesDir` are honored at startup: if `<profilesDir>/<profileName>.json` exists and loads successfully, the engine is enabled; otherwise it stays disabled.
+* No breaking changes to public names or RPC endpoints.
+* To tune refresh cadence without rebuild:
 
-### Build & Integration Notes
-
-* On some systems you may need to link `-lrt` for `shm_open`. If the linker complains, add `target_link_libraries(lfcd PRIVATE rt)` to your CMake target.
-* Vendor SDKs (NVML/AMDSMI/IGCL) remain **optional**. Define `HAVE_NVML`, `HAVE_AMDSMI`, `HAVE_IGCL` and link their libraries to enable richer metrics. Without them, hwmon/DRM discovery still works.
-
-### Internal Refactors
-
-* `GpuMonitor` helpers consolidated and guarded with feature macros to avoid `-Wunused-function` warnings when vendor SDKs are disabled.
-* `Config` defaults modernized; paths are expanded via `~` where applicable; timing parameters clamped to sane ranges.
+  ```bash
+  LFCD_GPU_REFRESH_MS=1500 LFCD_HWMON_REFRESH_MS=750 ./lfcd
+  ```
+* ENV precedence is **Defaults → ENV → `daemon.json`**. If a key is present in `daemon.json`, it overrides the ENV value.
 
 ---
 
-## \[0.2.0] — 2025-08-xx
+## \[Earlier]
 
-(Previous release summary)
+* **\[0.2.x] — Pre‑0.3.0**
 
-* Periodic hwmon scans and GPU snapshots in the main loop.
-* Telemetry written as a regular JSON file (often under `$XDG_RUNTIME_DIR`).
-* Simpler GPU detection with occasional duplicates across information sources.
-* Engine activation behavior less strict at startup.
+  * DRM‑based GPU discovery with hwmon correlation (tachometer & PWM mapping), plus vendor backend hooks wired: AMDSMI, NVML and IGCL (enrichment calls present; activation gated by CMake detection).
+  * Introduced lightweight metrics refresh (`GpuMonitor::refreshMetrics`), keeping inventory static during runtime.
+  * Implemented `/sys/class/hwmon` scanner with temp/fan/PWM discovery and read/write helpers; added `Hwmon::refreshValues` placeholder (no re‑inventory at runtime).
+  * Added logger singleton with leveled output (Error..Trace), optional file logging and rotation; reduced default chatter in hot paths.
+  * Brought up RPC TCP server and basic config endpoints (get/set), along with profile‑aware startup in the engine.
+  * Initial run loop with fixed `sleep_for(10ms)` and periodic tasks (GPU: 1000 ms, hwmon: 500 ms, forced telemetry publish cadence).
+  * Telemetry publisher (JSON over POSIX SHM with file fallback) — initial schema for chips/temps/fans/PWMs/GPUs and compact profile summary.
+  * Build scripts for daemon and GUI artifacts (CMake+Ninja for daemon; `dotnet publish` for GUI), plus convenience wrappers.
 
----
+* **\[0.1.0] — Initial daemon**
 
-## Upgrade Guide: 0.2.0 → 0.3.0
-
-1. **Rebuild the daemon**. If you see `shm_open` link errors, add `rt` to link libraries.
-2. **Update `daemon.json`**: set `"shmPath": "lfc.telemetry"` (or another SHM name). Keep `profileName`/`profilesDir` consistent.
-3. **Update consumers/GUI** to read from POSIX SHM (`/lfc.telemetry`). Keep JSON parsing unchanged.
-4. Optional: enable vendor SDKs for richer GPU metrics.
-
----
-
-## Notes
-
-* If you still see duplicate GPUs, enable `TRACE` logging temporarily and share `pci` and `hwmon` fields from telemetry; the dedup keys on those.
-* To force re-inventory at runtime, trigger detection/RPC instead of polling-induced rescans.
+  * First public skeleton: engine core, hwmon scanning, basic RPC, profile loading, PID/logfile handling, SHM naming conventions.
+  * Baseline configuration defaults and `daemon.json` support established.

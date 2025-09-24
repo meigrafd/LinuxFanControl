@@ -1,352 +1,402 @@
 /*
- * Linux Fan Control — Telemetry (implementation)
- * Publishes a compact JSON snapshot of engine/gpu/hwmon state to shared memory.
+ * Linux Fan Control — SHM Telemetry Publisher (implementation)
+ * - Builds a compact JSON snapshot of hwmon + GPU + profile meta
+ * - Publishes to POSIX shared memory (shm) with /dev/shm fallback file
+ * - Lightweight write guard: skip writes if payload unchanged
+ * (c) 2025 LinuxFanControl contributors
  */
 
-#include <cerrno>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <filesystem>
-#include <fstream>
-#include <optional>
-#include <string>
-#include <system_error>
-#include <vector>
+#include "include/ShmTelemetry.hpp"
+#include "include/Hwmon.hpp"
+#include "include/GpuMonitor.hpp"
+#include "include/Profile.hpp"
+#include "include/Version.hpp"
+#include "include/Log.hpp"
 
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include <nlohmann/json.hpp>
+#include <cerrno>
+#include <cstring>
+#include <chrono>
+#include <cmath>
+#include <fstream>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+#include <memory>
+#include <algorithm>
+#include <functional>
 
-#include "include/Version.hpp"
-#include "include/Log.hpp"
-#include "include/Utils.hpp"
-#include "include/Hwmon.hpp"
-#include "include/GpuMonitor.hpp"
-#include "include/Profile.hpp"
-#include "include/ShmTelemetry.hpp"
+#include <nlohmann/json.hpp>
 
 namespace lfc {
 
 using nlohmann::json;
-namespace fs = std::filesystem;
 
-/* =============================== helpers ================================== */
+// ============================================================================
+// Small helpers
+// ============================================================================
 
-static std::string readSmallTextFile(const std::string& path) {
-    std::ifstream f(path);
-    if (!f) return {};
-    std::string s;
-    std::getline(f, s);
-    while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' ' || s.back() == '\t'))
-        s.pop_back();
-    return s;
+static inline std::string base_name(const std::string& p) {
+    auto pos = p.find_last_of("/\\");
+    return (pos == std::string::npos) ? p : p.substr(pos + 1);
 }
 
-static bool fileExists(const std::string& path) {
-    std::error_code ec;
-    return fs::exists(path, ec);
+static inline bool starts_with(const std::string& s, const char* prefix) {
+    const size_t n = std::strlen(prefix);
+    return s.size() >= n && std::memcmp(s.data(), prefix, n) == 0;
 }
 
-template <class T>
-static inline void jset(json& j, const char* key, const std::optional<T>& v) {
-    if (v.has_value()) j[key] = *v;
+static inline long long now_unix_ms() {
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 }
 
-// Extract N from basename matching prefix+N (e.g. "pwm7", "fan3_input")
-static std::optional<int> extractIndexFromNode(const std::string& nodePath, const char* prefix) {
-    auto pos = nodePath.find_last_of('/');
-    if (pos == std::string::npos) return std::nullopt;
-    const char* base = nodePath.c_str() + pos + 1;
-    const size_t preLen = std::strlen(prefix);
-    if (std::strncmp(base, prefix, preLen) != 0) return std::nullopt;
-
-    int idx = 0;
-    const char* p = base + preLen;
-    if (*p < '0' || *p > '9') return std::nullopt;
-    while (*p >= '0' && *p <= '9') {
-        idx = (idx * 10) + (*p - '0');
-        ++p;
-    }
-    return idx > 0 ? std::optional<int>(idx) : std::nullopt;
+// Optional→JSON setter (nur wenn vorhanden)
+template <typename T>
+static inline void jset(json& j, std::string key, const std::optional<T>& v) {
+    if (v) j[std::move(key)] = *v;
 }
 
-static std::string derivePwmLabel(const std::string& pwmPath) {
-    auto idxOpt = extractIndexFromNode(pwmPath, "pwm");
-    if (!idxOpt) return {};
-    int idx = *idxOpt;
-    const auto dir = fs::path(pwmPath).parent_path().string();
-
-    const std::string pwmLabel = dir + "/pwm" + std::to_string(idx) + "_label";
-    if (fileExists(pwmLabel)) {
-        auto s = readSmallTextFile(pwmLabel);
-        if (!s.empty()) return s;
-    }
-    const std::string fanLabel = dir + "/fan" + std::to_string(idx) + "_label";
-    if (fileExists(fanLabel)) {
-        auto s = readSmallTextFile(fanLabel);
-        if (!s.empty()) return s;
-    }
-    return {};
-}
-
-static std::string deriveFanLabel(const std::string& fanInputPath) {
-    auto idxOpt = extractIndexFromNode(fanInputPath, "fan");
-    if (!idxOpt) return {};
-    int idx = *idxOpt;
-    const auto dir = fs::path(fanInputPath).parent_path().string();
-
-    const std::string fanLabel = dir + "/fan" + std::to_string(idx) + "_label";
-    if (fileExists(fanLabel)) {
-        auto s = readSmallTextFile(fanLabel);
-        if (!s.empty()) return s;
-    }
-    return {};
-}
-
-/* ============================== json builders ============================== */
+// ============================================================================
+// JSON builders (nur Felder, die es laut Headers wirklich gibt)
+// ============================================================================
 
 static json jChip(const HwmonChip& c) {
-    return json{
-        {"name",      c.name},
-        {"vendor",    c.vendor},
-        {"hwmonPath", c.hwmonPath}
-    };
+    json j;
+    j["path"]   = c.hwmonPath;  // z.B. /sys/class/hwmon/hwmon4
+    if (!c.name.empty())   j["name"]   = c.name;
+    if (!c.vendor.empty()) j["vendor"] = c.vendor;
+    return j;
 }
 
 static json jHwmonTemp(const HwmonTemp& t) {
-    return json{
-        {"path",     t.path_input},
-        {"label",    t.label},
-        {"chipPath", t.chipPath}
-    };
+    json j;
+    j["chipPath"]   = t.chipPath;
+    j["inputPath"]  = t.path_input;
+    if (!t.label.empty()) j["label"] = t.label;
+
+    if (auto v = Hwmon::readTempC(t)) j["valueC"] = *v;
+    return j;
 }
 
 static json jHwmonFan(const HwmonFan& f) {
-    std::string label = f.label;
-    if (label.empty()) {
-        auto d = deriveFanLabel(f.path_input);
-        if (!d.empty()) label = std::move(d);
-    }
-    return json{
-        {"path",     f.path_input},
-        {"label",    label},
-        {"chipPath", f.chipPath}
-    };
+    json j;
+    j["chipPath"]   = f.chipPath;
+    j["inputPath"]  = f.path_input;
+    if (!f.label.empty()) j["label"] = f.label;
+
+    if (auto rpm = Hwmon::readRpm(f)) j["rpm"] = *rpm;
+    return j;
 }
 
-static json jHwmonPwm(const HwmonPwm& p) {
-    std::string label = p.label;
-    if (label.empty()) {
-        auto d = derivePwmLabel(p.path_pwm);
-        if (!d.empty()) label = std::move(d);
+static inline int parse_index_after_prefix(const std::string& base, const char* prefix) {
+    if (base.rfind(prefix, 0) != 0) return -1;
+    size_t i = std::strlen(prefix);
+    int idx = 0; bool any=false;
+    while (i < base.size() && std::isdigit((unsigned char)base[i])) { any=true; idx = idx*10 + (base[i]-'0'); ++i; }
+    return any ? idx : -1;
+}
+
+static std::optional<int> rpmForPwm(const HwmonPwm& p, const std::vector<HwmonFan>& fans) {
+    const std::string pwmBase = base_name(p.path_pwm); // "pwmN"
+    const int idx = parse_index_after_prefix(pwmBase, "pwm");
+    if (idx <= 0) return std::nullopt;
+
+    for (const auto& f : fans) {
+        if (f.chipPath != p.chipPath) continue;
+        const std::string fanBase = base_name(f.path_input); // "fanN_input"
+        const int findex = parse_index_after_prefix(fanBase, "fan");
+        if (findex == idx) {
+            if (auto rpm = Hwmon::readRpm(f)) return rpm;
+            break;
+        }
     }
-    return json{
-        {"path",       p.path_pwm},
-        {"pathEnable", p.path_enable},
-        {"pwmMax",     p.pwm_max},
-        {"label",      label},
-        {"chipPath",   p.chipPath}
-    };
+    return std::nullopt;
+}
+
+static json jHwmonPwm(const HwmonPwm& p, const std::vector<HwmonFan>& fans) {
+    json j;
+    j["chipPath"]  = p.chipPath;
+    j["pwmPath"]   = p.path_pwm;
+    if (!p.path_enable.empty()) j["enablePath"] = p.path_enable;
+    j["pwmMax"]    = p.pwm_max;
+
+    if (auto en  = Hwmon::readEnable(p)) j["enable"] = *en;
+    if (auto raw = Hwmon::readRaw(p)) {
+        j["raw"] = *raw;
+        const int vmax = std::max(1, p.pwm_max);
+        j["percent"] = (int)std::lround(100.0 * (double)*raw / (double)vmax);
+    }
+    if (auto rpm = rpmForPwm(p, fans)) j["fanRpm"] = *rpm;
+
+    return j;
 }
 
 static json jGpu(const GpuSample& g) {
-    json j{
-        {"vendor",     g.vendor},
-        {"index",      g.index},
-        {"name",       g.name},
-        {"pci",        g.pciBusId},
-        {"drm",        g.drmCard},
-        {"hwmon",      g.hwmonPath},
-        {"hasFanTach", g.hasFanTach ? 1 : 0},
-        {"hasFanPwm",  g.hasFanPwm  ? 1 : 0}
-    };
-    // Optionals
-    jset(j, "fanRpm",       g.fanRpm);       // std::optional<int>
-    jset(j, "tempEdgeC",    g.tempEdgeC);    // std::optional<double>
+    json j;
+    if (!g.vendor.empty())    j["vendor"] = g.vendor;
+    j["index"] = g.index;
+    if (!g.name.empty())      j["name"]   = g.name;
+    if (!g.pciBusId.empty())  j["pci"]    = g.pciBusId;
+    if (!g.drmCard.empty())   j["drm"]    = g.drmCard;
+    if (!g.hwmonPath.empty()) j["hwmon"]  = g.hwmonPath;
+
+    j["hasFanTach"] = g.hasFanTach;
+    j["hasFanPwm"]  = g.hasFanPwm;
+
+    jset(j, "fanRpm",       g.fanRpm);
+    jset(j, "tempEdgeC",    g.tempEdgeC);
     jset(j, "tempHotspotC", g.tempHotspotC);
     jset(j, "tempMemoryC",  g.tempMemoryC);
     return j;
 }
 
-/* ============================== top-level json ============================= */
-
-json ShmTelemetry::buildJson(const HwmonInventory& hw,
-                             const std::vector<GpuSample>& gpus,
-                             const Profile& profile,
-                             bool engineEnabled)
-{
+static json jProfileSummary(const Profile& p) {
     json j;
-    j["version"] = LFCD_VERSION;
-    j["engineEnabled"] = engineEnabled;
+    if (!p.name.empty()) j["name"] = p.name;
 
-    // hwmon
+    // Controls (PWM-Zuordnungen)
     {
-        json jchips = json::array();
-        for (const auto& c : hw.chips) jchips.push_back(jChip(c));
-        json jtemps = json::array();
-        for (const auto& t : hw.temps) jtemps.push_back(jHwmonTemp(t));
-        json jfans = json::array();
-        for (const auto& f : hw.fans)  jfans.push_back(jHwmonFan(f));
-        json jpwms = json::array();
-        for (const auto& p : hw.pwms)  jpwms.push_back(jHwmonPwm(p));
-
-        j["hwmon"] = json{
-            {"chips", jchips},
-            {"temps", jtemps},
-            {"fans",  jfans},
-            {"pwms",  jpwms}
-        };
+        json arr = json::array();
+        for (const auto& c : p.controls) {
+            json cj;
+            if (!c.name.empty())     cj["name"]     = c.name;
+            if (!c.pwmPath.empty())  cj["pwmPath"]  = c.pwmPath;
+            if (!c.curveRef.empty()) cj["curveRef"] = c.curveRef;
+            if (!c.nickName.empty()) cj["nick"]     = c.nickName;
+            arr.push_back(std::move(cj));
+        }
+        j["controls"]     = std::move(arr);
+        j["controlCount"] = p.controls.size();
     }
 
-    // gpus
+    // FanCurves (nur Meta, Felder laut FanCurveMeta)
     {
-        json jg = json::array();
-        for (const auto& g : gpus) jg.push_back(jGpu(g));
-        j["gpus"] = std::move(jg);
+        json arr = json::array();
+        for (const auto& fc : p.fanCurves) {
+            json cj;
+            if (!fc.name.empty()) cj["name"] = fc.name;
+            if (!fc.type.empty()) cj["type"] = fc.type;
+            if (!fc.tempSensors.empty()) cj["tempSensors"] = fc.tempSensors;
+            if (!fc.points.empty()) cj["pointsCount"] = fc.points.size();
+            // optional: trigger-Infos, falls gesetzt
+            if (fc.onC != 0.0 || fc.offC != 0.0) {
+                cj["trigger"] = json{{"onC", fc.onC}, {"offC", fc.offC}};
+            }
+            arr.push_back(std::move(cj));
+        }
+        j["fanCurves"]   = std::move(arr);
+        j["curveCount"]  = p.fanCurves.size();
     }
 
-    // profile summary (lightweight)
-    {
-        json jp{
-            {"name",         profile.name},
-            {"description",  profile.description},
-            {"schema",       profile.schema},
-            {"curveCount",   static_cast<int>(profile.fanCurves.size())},
-            {"controlCount", static_cast<int>(profile.controls.size())}
-        };
-        j["profile"] = std::move(jp);
+    // Profile-seitig bekannte Hwmon-Geräte
+    if (!p.hwmons.empty()) {
+        json arr = json::array();
+        for (const auto& h : p.hwmons) {
+            json hj;
+            if (!h.hwmonPath.empty()) hj["hwmonPath"] = h.hwmonPath;
+            if (!h.name.empty())      hj["name"]      = h.name;
+            if (!h.vendor.empty())    hj["vendor"]    = h.vendor;
+            if (!h.pwms.empty())      hj["pwmCount"]  = h.pwms.size();
+            arr.push_back(std::move(hj));
+        }
+        j["hwmons"] = std::move(arr);
     }
 
     return j;
 }
 
-/* =============================== SHM writer ================================ */
-
-static std::string normalizeShmName(const std::string& pathOrName) {
-    if (pathOrName.empty()) return "/lfc.telemetry";
-    if (pathOrName[0] != '/') return "/" + pathOrName;
-    if (pathOrName.rfind("/dev/shm/", 0) == 0) return {};
-    return pathOrName;
-}
-
-static std::string defaultFallbackForShm(const std::string& shmNameNormalized) {
-    std::string name = shmNameNormalized;
-    if (!name.empty() && name.front() == '/') name.erase(0,1);
-    if (name.empty()) name = "lfc.telemetry";
-    return "/dev/shm/" + name;
-}
+// ============================================================================
+// Impl — vollständig vor den Methoden (vermeidet incomplete-type Fehler)
+// ============================================================================
 
 struct ShmTelemetryImpl {
-    explicit ShmTelemetryImpl(const std::string& shmNameOrPath) {
-        if (!shmNameOrPath.empty() &&
-            shmNameOrPath[0] == '/' &&
-            shmNameOrPath.rfind("/dev/shm/", 0) != 0 &&
-            shmNameOrPath.find('/', 1) == std::string::npos) {
-            shmName_ = shmNameOrPath;
-            fallbackPath_ = defaultFallbackForShm(shmName_);
-        } else if (!shmNameOrPath.empty() && shmNameOrPath[0] != '/') {
-            shmName_ = "/" + shmNameOrPath;
-            fallbackPath_ = defaultFallbackForShm(shmName_);
+    std::string shmName;      // z.B. "/lfc.telemetry"
+    std::string fallbackPath; // z.B. "/dev/shm/lfc.telemetry"
+
+    // Lightweight write guard (Signatur basierend auf Payload ohne timestamp)
+    std::string lastSig;
+    size_t      lastSize{0};
+    size_t      lastHash{0};
+
+    static std::pair<std::string,std::string> normalize(const std::string& shmNameOrPath,
+                                                        const std::string& explicitFallback = {}) {
+        if (!explicitFallback.empty()) {
+            std::string nm = shmNameOrPath;
+            if (!nm.empty() && nm[0] != '/') nm.insert(nm.begin(), '/');
+            std::string fb = explicitFallback;
+            if (fb.empty()) fb = "/dev/shm/" + base_name(nm.substr(1));
+            return {nm, fb};
+        }
+
+        std::string nm;
+        std::string fb;
+
+        if (shmNameOrPath.empty()) {
+            nm = "/lfc.telemetry";
+            fb = "/dev/shm/lfc.telemetry";
+            return {nm, fb};
+        }
+
+        if (shmNameOrPath[0] == '/') {
+            if (starts_with(shmNameOrPath, "/dev/shm/")) {
+                fb = shmNameOrPath;
+                nm = "/" + base_name(fb);         // SHM-Name aus Basename
+            } else {
+                nm = shmNameOrPath;               // treat as shm name
+                fb = "/dev/shm/" + base_name(nm.substr(1));
+            }
         } else {
-            fallbackPath_ = shmNameOrPath.empty() ? defaultFallbackForShm("/lfc.telemetry") : shmNameOrPath;
+            nm = "/" + shmNameOrPath;             // shm name
+            fb = "/dev/shm/" + shmNameOrPath;
         }
-        LOG_INFO("telemetry: shm=%s fallback=%s",
-                 shmName_.empty() ? "<disabled>" : shmName_.c_str(),
-                 fallbackPath_.empty() ? "<disabled>" : fallbackPath_.c_str());
+        return {nm, fb};
     }
 
-    ShmTelemetryImpl(const std::string& shmName, const std::string& fallbackPath) {
-        shmName_     = normalizeShmName(shmName);
-        fallbackPath_ = fallbackPath.empty()
-                      ? defaultFallbackForShm(shmName_.empty() ? "/lfc.telemetry" : shmName_)
-                      : fallbackPath;
-        LOG_INFO("telemetry: shm=%s fallback=%s",
-                 shmName_.empty() ? "<disabled>" : shmName_.c_str(),
-                 fallbackPath_.empty() ? "<disabled>" : fallbackPath_.c_str());
-    }
+    bool writePayload(const std::string& payload, json* details) {
+        const size_t size = payload.size();
 
-    bool publishToShm(const std::string& text) {
-        if (shmName_.empty()) return false;
-
-        int fd = shm_open(shmName_.c_str(), O_CREAT | O_RDWR, 0660);
-        if (fd < 0) {
-            LOG_WARN("telemetry: shm_open(%s) failed: %s", shmName_.c_str(), std::strerror(errno));
-            return false;
+        // 1) POSIX SHM
+        int fd = shm_open(shmName.c_str(), O_CREAT | O_RDWR, 0660);
+        if (fd >= 0) {
+            bool ok = true;
+            if (ftruncate(fd, static_cast<off_t>(size)) != 0) {
+                ok = false;
+                if (details) (*details)["warn"] = std::string("ftruncate errno=") + std::to_string(errno);
+            } else {
+                ssize_t wrote = 0;
+                const char* p = payload.data();
+                ssize_t n = (ssize_t)size;
+                while (n > 0) {
+                    ssize_t w = ::write(fd, p, n);
+                    if (w < 0) {
+                        if (errno == EINTR) continue;
+                        ok = false;
+                        if (details) (*details)["warn"] = std::string("write errno=") + std::to_string(errno);
+                        break;
+                    }
+                    wrote += w; p += w; n -= w;
+                }
+                (void)wrote;
+            }
+            ::close(fd);
+            if (ok) return true;
+        } else {
+            if (details) (*details)["warn"] = std::string("shm_open errno=") + std::to_string(errno);
         }
 
-        const size_t size = text.size() + 1;
-        if (ftruncate(fd, size) != 0) {
-            LOG_WARN("telemetry: ftruncate failed: %s", std::strerror(errno));
-            close(fd);
+        // 2) Fallback: /dev/shm Datei (atomar via tmp + rename)
+        const std::string tmp = fallbackPath + ".tmp";
+        {
+            std::ofstream ofs(tmp, std::ios::binary | std::ios::trunc);
+            if (!ofs) { if (details) (*details)["error"] = "fallback open failed"; return false; }
+            ofs.write(payload.data(), (std::streamsize)payload.size());
+            if (!ofs) { if (details) (*details)["error"] = "fallback write failed"; return false; }
+        }
+        if (::rename(tmp.c_str(), fallbackPath.c_str()) != 0) {
+            if (details) (*details)["error"] = std::string("rename errno=") + std::to_string(errno);
             return false;
         }
-
-        void* addr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-        if (addr == MAP_FAILED) {
-            LOG_WARN("telemetry: mmap failed: %s", std::strerror(errno));
-            close(fd);
-            return false;
-        }
-
-        std::memcpy(addr, text.data(), text.size());
-        static_cast<char*>(addr)[text.size()] = '\0';
-
-        msync(addr, size, MS_SYNC);
-        munmap(addr, size);
-        close(fd);
         return true;
     }
 
-    bool publishToFile(const std::string& path, const std::string& text) {
-        if (path.empty()) return false;
-        std::error_code ec;
-        fs::path p(path);
-        if (p.has_parent_path()) fs::create_directories(p.parent_path(), ec);
-        std::ofstream f(path, std::ios::binary | std::ios::trunc);
-        if (!f) {
-            LOG_WARN("telemetry: write(%s) failed", path.c_str());
+    bool shouldWrite(const std::string& payload, json* details) {
+        const size_t sz = payload.size();
+        const size_t h  = std::hash<std::string_view>{}(std::string_view(payload));
+        if (sz == lastSize && h == lastHash && payload == lastSig) {
+            if (details) (*details)["skipped"] = "unchanged";
             return false;
         }
-        f.write(text.data(), static_cast<std::streamsize>(text.size()));
-        f.flush();
         return true;
     }
 
-    std::string shmName_;      // "/lfc.telemetry" or empty if path-only
-    std::string fallbackPath_; // "/dev/shm/lfc.telemetry" or explicit path
+    void remember(const std::string& payload) {
+        lastSig  = payload;
+        lastSize = payload.size();
+        lastHash = std::hash<std::string_view>{}(std::string_view(lastSig));
+    }
 };
 
-/* =============================== API impl ================================= */
+// ============================================================================
+// ShmTelemetry — public API
+// ============================================================================
 
-ShmTelemetry::ShmTelemetry(const std::string& shmNameOrPath)
-: impl_(new ShmTelemetryImpl(shmNameOrPath)) {}
+ShmTelemetry::ShmTelemetry(const std::string& shmNameOrPath) {
+    auto [nm, fb] = ShmTelemetryImpl::normalize(shmNameOrPath);
+    impl_ = std::make_unique<ShmTelemetryImpl>();
+    impl_->shmName      = std::move(nm);
+    impl_->fallbackPath = std::move(fb);
+}
 
-ShmTelemetry::ShmTelemetry(const std::string& shmName, const std::string& fallbackPath)
-: impl_(new ShmTelemetryImpl(shmName, fallbackPath)) {}
+ShmTelemetry::ShmTelemetry(const std::string& shmName, const std::string& fallbackPath) {
+    auto [nm, fb] = ShmTelemetryImpl::normalize(shmName, fallbackPath);
+    impl_ = std::make_unique<ShmTelemetryImpl>();
+    impl_->shmName      = std::move(nm);
+    impl_->fallbackPath = std::move(fb);
+}
 
 ShmTelemetry::~ShmTelemetry() = default;
 
-bool ShmTelemetry::publishSnapshot(const HwmonInventory& inv) {
-    return publishSnapshot(inv, static_cast<json*>(nullptr));
-}
+// ---- Snapshot Publisher (nur hwmon) ----------------------------------------
 
 bool ShmTelemetry::publishSnapshot(const HwmonInventory& inv, json* detailsOut) {
-    static const std::vector<GpuSample> kEmptyGpus;
-    static const Profile kEmptyProfile{};
-    return publishSnapshot(inv, kEmptyGpus, kEmptyProfile, false, detailsOut);
+    static const std::vector<GpuSample> emptyGpu;
+    static const Profile emptyProfile;
+    return publishSnapshot(inv, emptyGpu, emptyProfile, /*engineEnabled*/false, detailsOut);
 }
 
-bool ShmTelemetry::publishSnapshot(const HwmonInventory& inv,
-                                   const std::vector<GpuSample>& gpus,
-                                   const Profile& profile,
-                                   bool engineEnabled)
+// ---- Snapshot Publisher (hwmon + gpu + profile + engineEnabled) ------------
+
+static json build_top(const HwmonInventory& inv,
+                      const std::vector<GpuSample>& gpus,
+                      const Profile& profile,
+                      bool engineEnabled)
 {
-    return publishSnapshot(inv, gpus, profile, engineEnabled, static_cast<json*>(nullptr));
+    json j;
+    j["version"]      = LFCD_VERSION;
+    j["timestampMs"]  = now_unix_ms();
+    j["engineEnabled"] = engineEnabled;
+
+    // hwmon chips
+    {
+        json arr = json::array();
+        for (const auto& c : inv.chips) arr.push_back(jChip(c));
+        j["chips"] = std::move(arr);
+    }
+    // temps
+    {
+        json arr = json::array();
+        for (const auto& t : inv.temps) arr.push_back(jHwmonTemp(t));
+        j["temps"] = std::move(arr);
+    }
+    // fans
+    {
+        json arr = json::array();
+        for (const auto& f : inv.fans) arr.push_back(jHwmonFan(f));
+        j["fans"] = std::move(arr);
+    }
+    // pwms
+    {
+        json arr = json::array();
+        for (const auto& p : inv.pwms) arr.push_back(jHwmonPwm(p, inv.fans));
+        j["pwms"] = std::move(arr);
+    }
+    // gpus
+    {
+        json arr = json::array();
+        for (const auto& g : gpus) arr.push_back(jGpu(g));
+        j["gpus"] = std::move(arr);
+    }
+    // profile summary (kompakt – Details via RPC)
+    j["profile"] = jProfileSummary(profile);
+
+    return j;
 }
 
 bool ShmTelemetry::publishSnapshot(const HwmonInventory& inv,
@@ -355,19 +405,40 @@ bool ShmTelemetry::publishSnapshot(const HwmonInventory& inv,
                                    bool engineEnabled,
                                    json* detailsOut)
 {
-    json j = buildJson(inv, gpus, profile, engineEnabled);
-    if (detailsOut) *detailsOut = j;
+    json details;
+    // 1) JSON bauen
+    json j = build_top(inv, gpus, profile, engineEnabled);
 
-    std::string dump = j.dump();
+    // 2) Signatur ohne timestamp (Lightweight-Guard)
+    json sig = j;
+    sig.erase("timestampMs");
+    const std::string sigStr = sig.dump();
 
-    bool ok = false;
-    if (impl_->publishToShm(dump)) ok = true;
-    else LOG_INFO("telemetry: shm publish failed, trying file fallback");
-
-    if (!impl_->fallbackPath_.empty()) {
-        if (impl_->publishToFile(impl_->fallbackPath_, dump)) ok = true;
+    if (!impl_->shouldWrite(sigStr, &details)) {
+        if (detailsOut) *detailsOut = std::move(details);
+        return true;
     }
+
+    // 3) Finale Nutzlast
+    const std::string payload = j.dump(); // kompakt
+
+    const bool ok = impl_->writePayload(payload, &details);
+    if (ok) impl_->remember(sigStr);
+
+    if (detailsOut) *detailsOut = std::move(details);
     return ok;
+}
+
+// ============================================================================
+// Statische Build-JSON-API (wie in Header deklariert)
+// ============================================================================
+
+json ShmTelemetry::buildJson(const HwmonInventory& inv,
+                             const std::vector<GpuSample>& gpus,
+                             const Profile& profile,
+                             bool engineEnabled)
+{
+    return build_top(inv, gpus, profile, engineEnabled);
 }
 
 } // namespace lfc

@@ -9,7 +9,7 @@ Modernes, schnelles Fan Control mit GUI im Stil von [FanControl.Release](https:/
   - Backends:  
     - `sysfs` (lesen & schreiben; bevorzugt)  
     - `libsensors` (optional, nur lesen; aktiviert wenn eingecompiliert)  
-  - Hybrid Protokoll: [JSON-RPC 2.0 für Config/Control](docs/RPC-API.md). Telemetry läuft über POSIX Shared Memory (SHM) Ringbuffer - deutlich performanter, kein RPC-Polling.
+  - Hybrid Protokoll: [JSON-RPC 2.0 für Config/Control](docs/RPC-API.md). Telemetry läuft über [POSIX Shared Memory](docs/ShmTelemetry.md) (SHM) Ringbuffer - deutlich performanter, kein RPC-Polling.
 - Automatische Erkennung und Kalibrierung der verfügbaren Sensoren und Lüfter.
 - Steuerlogik: Mix, Trigger oder Graph.
 - FanControl.Release Config [importierbar](docs/import.md).

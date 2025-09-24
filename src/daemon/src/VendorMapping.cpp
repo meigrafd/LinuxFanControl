@@ -1,364 +1,464 @@
 /*
- * Linux Fan Control — Vendor mapping (implementation)
+ * Linux Fan Control — Vendor/Chip/PCI mapping helpers
  * (c) 2025 LinuxFanControl contributors
  */
+
+#include "include/VendorMapping.hpp"
+#include "include/Log.hpp"
+#include "include/Utils.hpp"
+
 #include <algorithm>
-#include <atomic>
-#include <chrono>
-#include <cstdlib>
+#include <cctype>
+#include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <mutex>
-#include <optional>
-#include <regex>
-#include <shared_mutex>
-#include <string>
-#include <thread>
-#include <unordered_map>
-#include <utility>
-#include <vector>
+#include <sstream>
 
-#include <nlohmann/json.hpp>
-#include "include/Log.hpp"
-#include "include/VendorMapping.hpp"
-
-#if defined(__linux__)
-#define LFC_HAS_INOTIFY 1
-#include <sys/inotify.h>
-#include <unistd.h>
-#else
-#define LFC_HAS_INOTIFY 0
-#endif
+namespace fs = std::filesystem;
+using nlohmann::json;
 
 namespace lfc {
 
-using json = nlohmann::json;
-namespace fs = std::filesystem;
+/* ============================== small utils ============================== */
 
-struct VMRule {
-    int priority{0};
-    std::string vendor;
-    std::string klass;
-    std::regex re;
-};
+static inline std::string to_lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+    return s;
+}
+static inline std::string trim(const std::string& s) {
+    size_t a = 0, b = s.size();
+    while (a < b && std::isspace((unsigned char)s[a])) ++a;
+    while (b > a && std::isspace((unsigned char)s[b-1])) --b;
+    return s.substr(a, b - a);
+}
+static inline bool hex4(const std::string& s, uint16_t& out) {
+    if (s.size() != 4) return false;
+    unsigned v = 0;
+    if (std::sscanf(s.c_str(), "%x", &v) != 1) return false;
+    out = (uint16_t)v;
+    return true;
+}
+static inline long long mtime_seconds(const std::string& path) {
+    std::error_code ec;
+    auto ft = fs::last_write_time(path, ec);
+    if (ec) return 0;
+    auto s = std::chrono::time_point_cast<std::chrono::seconds>(ft).time_since_epoch().count();
+    return (long long)s;
+}
 
-class VendorMappingImpl {
-public:
-    static VendorMappingImpl& inst() { static VendorMappingImpl I; return I; }
+std::string VendorMapping::joinCsv(const std::vector<std::string>& v, const char* sep) {
+    std::ostringstream oss;
+    for (size_t i = 0; i < v.size(); ++i) { if (i) oss << sep; oss << v[i]; }
+    return oss.str();
+}
+bool VendorMapping::containsI(std::string_view hay, std::string_view needle) {
+    auto H = to_lower(std::string(hay));
+    auto N = to_lower(std::string(needle));
+    return H.find(N) != std::string::npos;
+}
 
-    void setSearchPaths(const std::vector<fs::path>& p) {
-        std::unique_lock lk(mu_);
-        searchPaths_ = p;
-    }
-    void setOverridePath(const fs::path& p) {
-        std::unique_lock lk(mu_);
-        overridePath_ = p;
-    }
-    void setWatchMode(VendorMapping::WatchMode m) {
-        std::unique_lock lk(mu_);
-        watchMode_ = m;
-        restartWatchUnlocked_();
-    }
-    void setThrottleMs(int ms) {
-        std::unique_lock lk(mu_);
-        throttleMs_ = std::max(0, ms);
+/* ============================== JSON loading ============================= */
+
+bool VendorMapping::loadFromPath(const std::string& path) const {
+    std::error_code ec;
+    if (path.empty() || !fs::exists(path, ec) || ec) {
+        return false;
     }
 
-    void ensureLoaded() {
-        std::unique_lock lk(mu_);
-        if (loaded_) return;
-        lk.unlock();
-        reloadNow_();
+    json j;
+    try {
+        j = util::read_json_file(path);
+    } catch (...) {
+        LOG_WARN("vendorMap: failed to parse JSON: %s", path.c_str());
+        return false;
     }
 
-    void tryReloadIfChanged() {
-        std::unique_lock lk(mu_);
-        if (activePath_.empty()) return;
-        if (watchMode_ == VendorMapping::WatchMode::MTime) {
-            const auto now = std::chrono::steady_clock::now();
-            if (now - lastPoll_ < std::chrono::milliseconds(throttleMs_)) return;
-            lastPoll_ = now;
-            std::error_code ec;
-            auto mt = fs::last_write_time(activePath_, ec);
-            if (!ec && mt != activeMtime_) {
-                lk.unlock();
-                reloadNow_();
+    Data newData;
+
+    try {
+        if (j.contains("chipVendor") && j["chipVendor"].is_object()) {
+            for (auto& [k, v] : j["chipVendor"].items()) {
+                if (v.is_string()) newData.chipVendor[to_lower(k)] = v.get<std::string>();
             }
         }
-    }
-
-    std::string vendorForChipName(const std::string& chip) const {
-        std::shared_lock lk(mu_);
-        for (const auto& r : rules_) {
-            if (std::regex_search(chip, r.re)) return r.vendor.empty() ? chip : r.vendor;
+        if (j.contains("chipAliases") && j["chipAliases"].is_object()) {
+            for (auto& [k, v] : j["chipAliases"].items()) {
+                std::vector<std::string> al;
+                if (v.is_array()) {
+                    for (auto& a : v) if (a.is_string()) al.push_back(to_lower(a.get<std::string>()));
+                } else if (v.is_string()) {
+                    std::istringstream iss(v.get<std::string>());
+                    std::string tok;
+                    while (std::getline(iss, tok, ',')) {
+                        tok = trim(tok);
+                        if (!tok.empty()) al.push_back(to_lower(tok));
+                    }
+                }
+                newData.chipAliases[to_lower(k)] = std::move(al);
+            }
         }
-        return chip;
+        if (j.contains("chips") && j["chips"].is_object()) {
+            for (auto& [chip, obj] : j["chips"].items()) {
+                const std::string key = to_lower(chip);
+                if (!obj.is_object()) continue;
+                if (obj.contains("vendor") && obj["vendor"].is_string()) {
+                    newData.chipVendor[key] = obj["vendor"].get<std::string>();
+                }
+                if (obj.contains("aliases")) {
+                    std::vector<std::string> al;
+                    const auto& a = obj["aliases"];
+                    if (a.is_array()) {
+                        for (auto& e : a) if (e.is_string()) al.push_back(to_lower(e.get<std::string>()));
+                    } else if (a.is_string()) {
+                        std::istringstream iss(a.get<std::string>());
+                        std::string tok;
+                        while (std::getline(iss, tok, ',')) {
+                            tok = trim(tok);
+                            if (!tok.empty()) al.push_back(to_lower(tok));
+                        }
+                    }
+                    newData.chipAliases[key] = std::move(al);
+                }
+            }
+        }
+
+        // ---- Optional PCI maps -------------------------------------------
+        if (j.contains("pciVendors") && j["pciVendors"].is_object()) {
+            for (auto& [k, v] : j["pciVendors"].items()) {
+                if (!v.is_string()) continue;
+                uint16_t sv = 0;
+                if (hex4(to_lower(k), sv)) newData.pciVendorPretty[sv] = v.get<std::string>();
+            }
+        }
+        if (j.contains("pciSubsystems") && j["pciSubsystems"].is_object()) {
+            for (auto& [k, v] : j["pciSubsystems"].items()) {
+                if (!v.is_string()) continue;
+                uint16_t sv = 0;
+                if (hex4(to_lower(k), sv)) {
+                    if (!newData.pciVendorPretty.count(sv)) {
+                        newData.pciVendorPretty[sv] = v.get<std::string>();
+                    }
+                }
+            }
+        }
+        if (j.contains("pciVendorAliases") && j["pciVendorAliases"].is_object()) {
+            for (auto& [from, to] : j["pciVendorAliases"].items()) {
+                if (to.is_string()) newData.pciVendorAliases[trim(from)] = to.get<std::string>();
+            }
+        }
+        if (j.contains("pciSubsystemOverrides") && j["pciSubsystemOverrides"].is_object()) {
+            for (auto& [k, v] : j["pciSubsystemOverrides"].items()) {
+                if (!v.is_string()) continue;
+                auto pos = k.find(':');
+                if (pos == std::string::npos) continue;
+                uint16_t sv = 0, sd = 0;
+                if (!hex4(to_lower(k.substr(0, pos)), sv)) continue;
+                if (!hex4(to_lower(k.substr(pos + 1)), sd)) continue;
+                const uint32_t key = (uint32_t(sv) << 16) | sd;
+                newData.pciSubsystemOverrides[key] = v.get<std::string>();
+            }
+        }
+    } catch (...) {
+        // tolerate partial loads
     }
 
-    std::vector<std::string> chipAliasesFor(const std::string& token) const {
-        std::shared_lock lk(mu_);
-        auto it = chipAliases_.find(token);
-        if (it == chipAliases_.end()) return {};
+    // Swap into live state under lock (no I/O while locked).
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        data_ = std::move(newData);
+        loadedPath_ = path;
+        lastSeenMtime_ = mtime_seconds(path);
+    }
+    return true;
+}
+
+/* ============================== file watching ============================= */
+
+void VendorMapping::ensureLoadedLocked() const {
+    // mtx_ must already be held by caller
+    if (defaultPath_.empty()) {
+        defaultPath_ = util::expandUserPath("~/.config/LinuxFanControl/vendorMapping.json");
+    }
+    const std::string candidate = !overridePath_.empty() ? overridePath_ : defaultPath_;
+    if (!loadedPath_.empty() && loadedPath_ == candidate) {
+        return;
+    }
+    // Release lock while doing I/O
+    mtx_.unlock();
+    const bool ok = loadFromPath(candidate);
+    mtx_.lock();
+
+    if (!ok) {
+        loadedPath_ = candidate;
+        lastSeenMtime_ = mtime_seconds(candidate);
+    }
+}
+
+void VendorMapping::pollReloadIfNeededLocked() const {
+    // mtx_ must already be held by caller
+    if (watchMode_ != WatchMode::MTime) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (lastPoll_.time_since_epoch().count() != 0) {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastPoll_);
+        if (elapsed.count() < std::max(0, watchThrottleMs_)) return;
+    }
+    lastPoll_ = now;
+
+    if (loadedPath_.empty()) return;
+    const std::string path = loadedPath_; // copy while locked
+    const long long prev = lastSeenMtime_;
+
+    // Release lock for stat + potential load
+    mtx_.unlock();
+    const long long mt = mtime_seconds(path);
+    const bool changed = (mt > 0 && mt != prev);
+    if (changed) (void)loadFromPath(path);
+    mtx_.lock();
+
+    if (changed) {
+        LOG_DEBUG("vendorMap: reloaded: %s", path.c_str());
+    }
+}
+
+/* ============================== singleton/ctor ============================ */
+
+std::once_flag VendorMapping::s_pciOnce_;
+std::mutex     VendorMapping::s_pciMx_;
+bool           VendorMapping::s_pciLoaded_ = false;
+std::unordered_map<uint16_t, std::string> VendorMapping::s_pciVendorNames_;
+std::unordered_map<uint32_t, std::string> VendorMapping::s_pciSubsysNames_;
+
+VendorMapping& VendorMapping::instance() {
+    static VendorMapping s;
+    return s;
+}
+VendorMapping::VendorMapping() {
+    defaultPath_ = util::expandUserPath("~/.config/LinuxFanControl/vendorMapping.json");
+    loadedPath_.clear();
+    lastSeenMtime_ = 0;
+    lastPoll_ = {};
+}
+
+/* ============================== config ==================================== */
+
+void VendorMapping::setOverridePath(const std::string& path) {
+    std::lock_guard<std::mutex> lk(mtx_);
+    overridePath_ = util::expandUserPath(path);
+    loadedPath_.clear(); // force reload on next query
+}
+void VendorMapping::setWatchMode(WatchMode mode, int throttleMs) {
+    std::lock_guard<std::mutex> lk(mtx_);
+    watchMode_ = mode;
+    watchThrottleMs_ = std::max(0, throttleMs);
+}
+
+/* ============================== public lookups ============================ */
+
+std::string VendorMapping::vendorForChipName(const std::string& chip) {
+    std::lock_guard<std::mutex> lk(mtx_);
+    ensureLoadedLocked();
+    pollReloadIfNeededLocked();
+
+    if (chip.empty()) return {};
+    const std::string key = to_lower(chip);
+
+    if (auto it = data_.chipVendor.find(key); it != data_.chipVendor.end()) {
         return it->second;
     }
 
-private:
-    VendorMappingImpl() { restartWatchUnlocked_(); }
-
-    static std::vector<fs::path> defaultSearchPaths_() {
-        std::vector<fs::path> v;
-        if (const char* p = std::getenv("LFC_VENDOR_MAP")) v.emplace_back(fs::path(p));
-        if (const char* home = std::getenv("HOME"))
-            v.emplace_back(fs::path(home) / ".config" / "LinuxFanControl" / "vendorMapping.json");
-        v.emplace_back("/etc/LinuxFanControl/vendorMapping.json");
-        v.emplace_back("/usr/share/LinuxFanControl/vendorMapping.json");
-        return v;
+    for (const auto& kv : data_.chipAliases) {
+        const auto& canonical = kv.first;
+        const auto& aliases   = kv.second;
+        if (std::find(aliases.begin(), aliases.end(), key) != aliases.end()) {
+            if (auto it = data_.chipVendor.find(canonical); it != data_.chipVendor.end())
+                return it->second;
+            return canonical;
+        }
     }
 
-    static std::optional<fs::file_time_type> safeMTime_(const fs::path& p) {
-        std::error_code ec;
-        auto t = fs::last_write_time(p, ec);
-        if (ec) return std::nullopt;
-        return t;
-    }
+    if (containsI(key, "amdgpu"))  return "AMD GPU";
+    if (containsI(key, "nvidia"))  return "NVIDIA GPU";
+    if (containsI(key, "i915") || containsI(key, "intel") || containsI(key, "xe")) return "Intel GPU";
+    if (containsI(key, "nvme"))    return "NVMe Drive";
+    if (containsI(key, "k10temp")) return "AMD CPU (Zen/K10)";
 
-    static std::regex compileRegex_(const std::string& pattern) {
-        std::string pat = pattern;
-        bool icase = false;
-        if (pat.size() >= 4 && pat.compare(0, 4, "(?i)") == 0) {
-            icase = true;
-            pat.erase(0, 4);
-        }
-        return std::regex(pat, std::regex::ECMAScript |
-                               (icase ? std::regex::icase
-                                      : (std::regex_constants::syntax_option_type)0));
-    }
-
-    bool parseObject_(const json& j, std::string& err,
-                      std::vector<VMRule>& outRules,
-                      std::unordered_map<std::string,std::vector<std::string>>& outAliases)
-    {
-        if (!j.is_object()) { err = "vendorMapping.json must be an object"; return false; }
-        if (!j.contains("rules") || !j["rules"].is_array()) { err = "missing 'rules' array"; return false; }
-
-        for (const auto& r : j["rules"]) {
-            if (!r.is_object()) continue;
-            if (!r.contains("regex") || !r["regex"].is_string()) continue;
-            const std::string pat = r["regex"].get<std::string>();
-            const int pr  = (r.contains("priority") && r["priority"].is_number_integer()) ? r["priority"].get<int>() : 0;
-            const std::string ven = (r.contains("vendor") && r["vendor"].is_string()) ? r["vendor"].get<std::string>() : "";
-            const std::string cls = (r.contains("class")  && r["class"].is_string())  ? r["class"].get<std::string>()  : "";
-            try {
-                std::regex re = compileRegex_(pat);
-                outRules.push_back(VMRule{pr, ven, cls, std::move(re)});
-            } catch (...) {
-                LOG_WARN("VendorMapping: bad regex ignored: %s", pat.c_str());
-            }
-        }
-        std::sort(outRules.begin(), outRules.end(),
-                  [](const VMRule& a, const VMRule& b){
-                      if (a.priority != b.priority) return a.priority > b.priority;
-                      return a.vendor < b.vendor;
-                  });
-
-        if (j.contains("chipAliases") && j["chipAliases"].is_object()) {
-            for (auto it = j["chipAliases"].begin(); it != j["chipAliases"].end(); ++it) {
-                if (!it.value().is_array()) continue;
-                auto& vec = outAliases[it.key()];
-                for (const auto& v : it.value())
-                    if (v.is_string()) vec.push_back(v.get<std::string>());
-            }
-        }
-        return true;
-    }
-
-    bool loadFromPath_(const fs::path& p, std::string& why) {
-        std::ifstream f(p);
-        if (!f) { why = "open failed"; return false; }
-        json j = json::parse(f, nullptr, false);
-        if (j.is_discarded()) { why = "invalid json"; return false; }
-
-        std::vector<VMRule> newRules;
-        std::unordered_map<std::string,std::vector<std::string>> newAliases;
-        std::string err;
-        if (!parseObject_(j, err, newRules, newAliases)) { why = err; return false; }
-
-        auto mt = safeMTime_(p);
-        {
-            std::unique_lock lk(mu_);
-            rules_.swap(newRules);
-            chipAliases_.swap(newAliases);
-            activePath_ = p;
-            activeMtime_ = mt.value_or(fs::file_time_type{});
-            loaded_ = true;
-            lastPoll_ = std::chrono::steady_clock::now();
-        }
-        LOG_INFO("VendorMapping: loaded %s", p.string().c_str());
-        return true;
-    }
-
-    void reloadNow_() {
-        std::vector<fs::path> tryPaths;
-        fs::path override;
-        {
-            std::shared_lock lk(mu_);
-            tryPaths = searchPaths_.empty() ? defaultSearchPaths_() : searchPaths_;
-            override = overridePath_;
-        }
-
-        if (!override.empty()) {
-            std::string why;
-            if (loadFromPath_(override, why)) return;
-            LOG_WARN("VendorMapping: override failed: %s (%s)", why.c_str(), override.string().c_str());
-        }
-
-        for (const auto& p : tryPaths) {
-            std::string why;
-            if (loadFromPath_(p, why)) return;
-        }
-        LOG_WARN("VendorMapping: no usable vendorMapping.json found");
-    }
-
-    void restartWatchUnlocked_() {
-#if LFC_HAS_INOTIFY
-        if (watchThread_.joinable()) {
-            stopWatch_.store(true);
-            watchThread_.join();
-            stopWatch_.store(false);
-        }
-        if (watchMode_ == VendorMapping::WatchMode::Inotify) {
-            watchThread_ = std::thread([this]{
-                int fd = inotify_init1(IN_NONBLOCK);
-                if (fd < 0) return;
-                int wd = -1;
-                fs::path watched;
-                while (!stopWatch_.load()) {
-                    fs::path target;
-                    {
-                        std::shared_lock lk(mu_);
-                        target = activePath_;
-                    }
-                    if (!target.empty()) {
-                        fs::path dir = target.parent_path();
-                        if (dir != watched) {
-                            if (wd >= 0) { inotify_rm_watch(fd, wd); wd = -1; }
-                            wd = inotify_add_watch(fd, dir.c_str(), IN_MODIFY | IN_CREATE | IN_MOVE | IN_DELETE);
-                            watched = dir;
-                        }
-                    }
-                    char buf[4096];
-                    int n = read(fd, buf, sizeof(buf));
-                    if (n > 0) {
-                        tryReloadIfChanged();
-                    }
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                }
-                if (wd >= 0) inotify_rm_watch(fd, wd);
-                close(fd);
-            });
-        }
-#else
-        (void)stopWatch_;
-        if (watchThread_.joinable()) { stopWatch_ = true; watchThread_.join(); stopWatch_ = false; }
-#endif
-    }
-
-    mutable std::shared_mutex mu_;
-    std::vector<fs::path> searchPaths_;
-    fs::path overridePath_;
-
-    std::vector<VMRule> rules_;
-    std::unordered_map<std::string,std::vector<std::string>> chipAliases_;
-
-    fs::path activePath_;
-    fs::file_time_type activeMtime_{};
-    std::chrono::steady_clock::time_point lastPoll_{};
-    bool loaded_{false};
-
-    VendorMapping::WatchMode watchMode_{VendorMapping::WatchMode::MTime};
-    int throttleMs_{750};
-
-    std::thread watchThread_;
-    std::atomic<bool> stopWatch_{false};
-};
-
-static VendorMappingImpl& I() { return VendorMappingImpl::inst(); }
-
-/* --------------------------- Public forwarding ---------------------------- */
-
-VendorMapping& VendorMapping::instance() {
-    static VendorMapping V;
-    I().ensureLoaded();
-    return V;
+    return chip;
 }
 
-void VendorMapping::setSearchPaths(const std::vector<fs::path>& p) { I().setSearchPaths(p); }
-void VendorMapping::setOverridePath(const fs::path& p) { I().setOverridePath(p); }
-void VendorMapping::setWatchMode(WatchMode m) { I().setWatchMode(m); }
-void VendorMapping::setWatchMode(WatchMode m, int throttleMs) { I().setWatchMode(m); I().setThrottleMs(throttleMs); }
-void VendorMapping::setThrottleMs(int ms) { I().setThrottleMs(ms); }
-void VendorMapping::ensureLoaded() { I().ensureLoaded(); }
-void VendorMapping::tryReloadIfChanged() { I().tryReloadIfChanged(); }
-std::string VendorMapping::vendorForChipName(const std::string& chip) const { return I().vendorForChipName(chip); }
-std::vector<std::string> VendorMapping::chipAliasesFor(const std::string& profileToken) const { return I().chipAliasesFor(profileToken); }
+std::vector<std::string> VendorMapping::chipAliasesFor(const std::string& chip) {
+    std::lock_guard<std::mutex> lk(mtx_);
+    ensureLoadedLocked();
+    pollReloadIfNeededLocked();
 
-/* ----------------------------- GPU helpers --------------------------------
- * String-only mapping; keine Abhängigkeit von vendorMapping.json.
- */
+    std::vector<std::string> out;
+    if (chip.empty()) return out;
 
-static inline std::string toLower(std::string v) {
-    for (char& c : v) c = (char)std::tolower((unsigned char)c);
-    return v;
+    const std::string key = to_lower(chip);
+
+    if (auto it = data_.chipAliases.find(key); it != data_.chipAliases.end()) {
+        out = it->second;
+        out.insert(out.begin(), key);
+        return out;
+    }
+
+    for (const auto& kv : data_.chipAliases) {
+        const auto& canonical = kv.first;
+        const auto& aliases   = kv.second;
+        if (std::find(aliases.begin(), aliases.end(), key) != aliases.end()) {
+            out = aliases;
+            out.insert(out.begin(), canonical);
+            return out;
+        }
+    }
+
+    out.push_back(chip);
+    return out;
 }
-static inline std::string trim(std::string v) {
-    size_t i = 0, j = v.size();
-    while (i < j && std::isspace((unsigned char)v[i])) ++i;
-    while (j > i && std::isspace((unsigned char)v[j-1])) --j;
-    return v.substr(i, j - i);
+
+std::string VendorMapping::aliasesJoinForLog(const std::string& chip) const {
+    auto a = const_cast<VendorMapping*>(this)->chipAliasesFor(chip);
+    return joinCsv(a, ",");
 }
+
+/* ============================== GPU helpers =============================== */
 
 std::string VendorMapping::gpuCanonicalVendor(std::string_view s) const {
-    const std::string v = toLower(trim(std::string(s)));
-    if (v == "nvidia" || v == "nvml" || v == "nvapi" || v == "nv") return "NVIDIA";
-    if (v == "amd" || v == "amdsmi" || v == "adlx" || v == "amdgpu") return "AMD";
-    if (v == "intel" || v == "igcl" || v == "xe" || v == "level zero" || v == "levelzero") return "Intel";
+    if (containsI(s, "nvidia") || containsI(s, "nvml")) return "NVIDIA";
+    if (containsI(s, "intel")  || containsI(s, "igcl") || containsI(s, "level zero")) return "Intel";
+    if (containsI(s, "amd")    || containsI(s, "amdsmi") || containsI(s, "radeon"))   return "AMD";
     return "Unknown";
 }
 
-std::string VendorMapping::gpuCanonicalTempKind(std::string_view s) const {
-    const std::string k = toLower(trim(std::string(s)));
-    if (k == "gpu" || k == "edge" || k == "core" || k == "global") return "Edge";
-    if (k == "hotspot" || k == "junction") return "Hotspot";
-    if (k == "memory" || k == "mem" || k == "vram") return "Memory";
-    return "Unknown";
+std::pair<std::string, std::string>
+VendorMapping::gpuVendorAndKindFromIdentifier(const std::string& identifier) const {
+    const std::string ven  = gpuCanonicalVendor(identifier);
+    std::string kind = "Unknown";
+    const auto lid = to_lower(identifier);
+    if (lid.find("hotspot") != std::string::npos || lid.find("junction") != std::string::npos) kind = "Hotspot";
+    else if (lid.find("mem") != std::string::npos || lid.find("vram") != std::string::npos)   kind = "Memory";
+    else if (lid.find("edge") != std::string::npos || lid.find("/temp/gpu") != std::string::npos || lid.find("gpu") != std::string::npos) kind = "Edge";
+    return { ven, kind };
 }
 
-std::pair<std::string,std::string>
-VendorMapping::gpuVendorAndKindFromIdentifier(std::string_view identifier) const {
-    // tolerant split "<SDK>/<Name>/<Index>/temp/<Kind>"
-    std::vector<std::string> parts;
-    {
-        std::string s(identifier);
-        std::string cur;
-        for (char c : s) {
-            if (c == '/') { if (!cur.empty()) { parts.push_back(cur); cur.clear(); } }
-            else { cur.push_back(c); }
+/* ============================== pci.ids loader ============================ */
+
+static inline std::string trimLeftTabs(const std::string& s, size_t& tabsOut) {
+    size_t tabs = 0;
+    while (tabs < s.size() && s[tabs] == '\t') ++tabs;
+    tabsOut = tabs;
+    return s.substr(tabs);
+}
+
+void VendorMapping::ensurePciDbLoaded() {
+    std::call_once(s_pciOnce_, []{
+        std::lock_guard<std::mutex> lk(s_pciMx_);
+        const char* candidates[] = {
+            "/usr/share/hwdata/pci.ids",
+            "/usr/share/misc/pci.ids",
+            "/usr/share/libpci/pci.ids",
+            nullptr
+        };
+        std::ifstream f;
+        for (const char** p = candidates; *p; ++p) {
+            f.open(*p);
+            if (f.is_open()) break;
         }
-        if (!cur.empty()) parts.push_back(cur);
-        for (auto& p : parts) p = trim(p);
+        if (!f.is_open()) {
+            s_pciLoaded_ = true;
+            return;
+        }
+
+        std::string line;
+        uint16_t curVendor = 0;
+
+        while (std::getline(f, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            size_t tabs = 0;
+            std::string rest = trim(trimLeftTabs(line, tabs));
+
+            if (tabs == 0) {
+                std::istringstream iss(rest);
+                std::string vhex, name;
+                iss >> vhex;
+                std::getline(iss, name);
+                uint16_t v;
+                if (hex4(to_lower(vhex), v)) {
+                    curVendor = v;
+                    s_pciVendorNames_[v] = trim(name);
+                }
+            } else if (tabs == 2) {
+                std::istringstream iss(rest);
+                std::string svHex, sdHex;
+                iss >> svHex >> sdHex;
+                uint16_t sv = 0, sd = 0;
+                if (hex4(to_lower(svHex), sv) && hex4(to_lower(sdHex), sd)) {
+                    std::string subsysName;
+                    std::getline(iss, subsysName);
+                    const uint32_t key = (uint32_t(sv) << 16) | sd;
+                    s_pciSubsysNames_[key] = trim(subsysName);
+                }
+            }
+        }
+
+        s_pciLoaded_ = true;
+    });
+}
+
+std::string VendorMapping::pciIdsVendorName(uint16_t sv) {
+    ensurePciDbLoaded();
+    std::lock_guard<std::mutex> lk(s_pciMx_);
+    auto it = s_pciVendorNames_.find(sv);
+    if (it != s_pciVendorNames_.end()) return it->second;
+    char buf[16]; std::snprintf(buf, sizeof(buf), "sv%04x", sv);
+    return std::string(buf);
+}
+std::string VendorMapping::pciIdsSubsystemName(uint16_t sv, uint16_t sd) {
+    ensurePciDbLoaded();
+    std::lock_guard<std::mutex> lk(s_pciMx_);
+    const uint32_t key = (uint32_t(sv) << 16) | sd;
+    auto it = s_pciSubsysNames_.find(key);
+    if (it != s_pciSubsysNames_.end()) return it->second;
+    return {};
+}
+
+/* ============================== PCI helpers =============================== */
+
+std::string VendorMapping::pciVendorName(uint16_t subsystemVendorId) const {
+    // Avoid lock inversion: fetch pci.ids name first (locks s_pciMx_), then apply JSON/aliases under mtx_.
+    const std::string idsName = pciIdsVendorName(subsystemVendorId);
+
+    std::lock_guard<std::mutex> lk(mtx_);
+    ensureLoadedLocked();
+    pollReloadIfNeededLocked();
+
+    // JSON pretty override?
+    if (auto it = data_.pciVendorPretty.find(subsystemVendorId); it != data_.pciVendorPretty.end()) {
+        const std::string raw = it->second;
+        if (auto al = data_.pciVendorAliases.find(raw); al != data_.pciVendorAliases.end()) return al->second;
+        return raw;
     }
 
-    const std::string sdk  = parts.size() >= 1 ? parts[0] : "";
-    const std::string name = parts.size() >= 2 ? parts[1] : "";
-    const std::string kind = parts.size() >= 5 ? parts[4] : "";
+    // Apply alias on pci.ids name (if configured)
+    if (auto al = data_.pciVendorAliases.find(idsName); al != data_.pciVendorAliases.end()) return al->second;
+    return idsName;
+}
 
-    std::string vendor = gpuCanonicalVendor(sdk);
-    if (vendor == "Unknown") vendor = gpuCanonicalVendor(name);
-    const std::string k = gpuCanonicalTempKind(kind);
+std::string VendorMapping::boardForSubsystem(uint16_t subsystemVendorId,
+                                             uint16_t subsystemDeviceId) const {
+    // Avoid lock inversion: read pci.ids subsystem name first, then consult JSON overrides.
+    const std::string idsName = pciIdsSubsystemName(subsystemVendorId, subsystemDeviceId);
 
-    LOG_DEBUG("VendorMapping.gpu parse: sdk=%s name=%s kindRaw=%s -> vendor=%s kind=%s",
-              sdk.c_str(), name.c_str(), kind.c_str(), vendor.c_str(), k.c_str());
-    return {vendor, k};
+    std::lock_guard<std::mutex> lk(mtx_);
+    ensureLoadedLocked();
+    pollReloadIfNeededLocked();
+
+    const uint32_t key = (uint32_t(subsystemVendorId) << 16) | subsystemDeviceId;
+
+    if (auto it = data_.pciSubsystemOverrides.find(key); it != data_.pciSubsystemOverrides.end()) {
+        return it->second;
+    }
+    return idsName;
 }
 
 } // namespace lfc

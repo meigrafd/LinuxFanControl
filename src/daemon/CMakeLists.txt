@@ -92,37 +92,21 @@ set(AMDSMI_NEEDS_WRAPPER OFF)
 if (NOT DISABLE_AMDSMI AND NOT AMDSMI_INCLUDE_DIR)
   # Prefer native layout amdsmi/amdsmi.h
   find_path(AMDSMI_INCLUDE_DIR amdsmi/amdsmi.h
-            PATHS /usr/include /usr/local/include /opt/amdsmi/include /opt/rocm/include
-            PATH_SUFFIXES amdsmi)
-  # Fedora layout: amd_smi/amdsmi.h
+            PATH_SUFFIXES include
+            PATHS /usr /usr/local /opt /opt/amdsmi /opt/rocm)
+  # Fedora layout: header is <amd_smi/amdsmi.h>, we generate a wrapper amdsmi/amdsmi.h
   if (NOT AMDSMI_INCLUDE_DIR)
-    find_path(AMDSMI_INCLUDE_DIR amd_smi/amdsmi.h
-              PATHS /usr/include /usr/local/include /opt/amdsmi/include /opt/rocm/include)
-    if (AMDSMI_INCLUDE_DIR)
-      # Code includes "amdsmi/amdsmi.h" ⇒ provide wrapper so include continues to work
+    find_path(AMDSMI_FEDORA_INCLUDE_DIR amd_smi/amdsmi.h
+              PATH_SUFFIXES include
+              PATHS /usr /usr/local /opt /opt/amdsmi /opt/rocm)
+    if (AMDSMI_FEDORA_INCLUDE_DIR)
+      set(AMDSMI_INCLUDE_DIR ${AMDSMI_FEDORA_INCLUDE_DIR})
       set(AMDSMI_NEEDS_WRAPPER ON)
     endif()
   endif()
-  # Direct fallback
-  if (NOT AMDSMI_INCLUDE_DIR AND EXISTS "/usr/include/amd_smi/amdsmi.h")
-    set(AMDSMI_INCLUDE_DIR "/usr/include")
-    set(AMDSMI_NEEDS_WRAPPER ON)
-  endif()
 endif()
 
-# NVML header
-if (NOT DISABLE_NVML AND NOT NVML_INCLUDE_DIR)
-  find_path(NVML_INCLUDE_DIR nvml.h
-            PATHS /usr/include /usr/local/include /usr/include/nvidia /usr/include/nvidia-ml)
-endif()
-
-# IGCL/Level Zero header
-if (NOT DISABLE_IGCL AND NOT IGCL_INCLUDE_DIR)
-  find_path(IGCL_INCLUDE_DIR level_zero/ze_api.h
-            PATHS /usr/include /usr/local/include)
-endif()
-
-# pkg-config hints
+# pkg-config (headers+libs) for SDKs
 if (PKG_CONFIG_FOUND)
   if (NOT DISABLE_AMDSMI)
     pkg_check_modules(PC_AMDSMI QUIET amdsmi)
@@ -302,39 +286,36 @@ endif()
 # Auto-detected SDKs
 if (USE_AMDSMI)
   target_include_directories(lfcd PRIVATE ${AMDSMI_INCLUDE_DIR})
-  target_compile_definitions(lfcd PRIVATE LFC_WITH_AMDSMI=1)
+  target_compile_definitions(lfcd PRIVATE LFC_WITH_AMDSMI=1 HAVE_AMDSMI=1)
   target_link_libraries(lfcd PRIVATE ${AMDSMI_LIBRARY})
   message(STATUS "AMDSMI include: ${AMDSMI_INCLUDE_DIR}")
   message(STATUS "AMDSMI library: ${AMDSMI_LIBRARY}")
-  message(STATUS "Link AMDSMI: ${AMDSMI_LIBRARY}")
 endif()
+
 if (USE_NVML)
   target_include_directories(lfcd PRIVATE ${NVML_INCLUDE_DIR})
-  target_compile_definitions(lfcd PRIVATE LFC_WITH_NVML=1)
+  target_compile_definitions(lfcd PRIVATE LFC_WITH_NVML=1 HAVE_NVML=1)
   target_link_libraries(lfcd PRIVATE ${NVML_LIBRARY})
-  message(STATUS "Link NVML: ${NVML_LIBRARY}")
+  message(STATUS "NVML include: ${NVML_INCLUDE_DIR}")
+  message(STATUS "NVML library: ${NVML_LIBRARY}")
 endif()
+
 if (USE_IGCL)
   target_include_directories(lfcd PRIVATE ${IGCL_INCLUDE_DIR})
-  target_compile_definitions(lfcd PRIVATE LFC_WITH_IGCL=1)
+  target_compile_definitions(lfcd PRIVATE LFC_WITH_IGCL=1 HAVE_IGCL=1)
   target_link_libraries(lfcd PRIVATE ${IGCL_LIBRARY})
-  message(STATUS "Link IGCL: ${IGCL_LIBRARY}")
+  message(STATUS "IGCL include: ${IGCL_INCLUDE_DIR}")
+  message(STATUS "IGCL library: ${IGCL_LIBRARY}")
 endif()
 
-# Linking
-target_link_libraries(lfcd PRIVATE
-    Threads::Threads
-    CURL::libcurl
-)
+# Threads & CURL (required)
+target_link_libraries(lfcd PRIVATE Threads::Threads CURL::libcurl)
 
-# Warnings / defines
-if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(lfcd PRIVATE
-        -Wall -Wextra -Wpedantic
-        -Wno-unused-parameter
-        -Wno-missing-field-initializers
-    )
+# Sensors (optional)
+if (SENSORS_LIBRARIES)
+  target_compile_definitions(lfcd PRIVATE HAVE_SENSORS=1)
+  target_link_libraries(lfcd PRIVATE ${SENSORS_LIBRARIES})
 endif()
 
-# Consistent JSON choice
-target_compile_definitions(lfcd PRIVATE LFC_USE_NLOHMANN_JSON=1)
+# Install
+install(TARGETS lfcd RUNTIME DESTINATION bin)

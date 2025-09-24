@@ -1,3 +1,8 @@
+/*
+ * Linux Fan Control — Intel GPU enrichment via IGCL/Level Zero (ZES)
+ * (c) 2025 LinuxFanControl contributors
+ */
+
 // src/daemon/src/GpuMonitor.INTEL.cpp
 #include "include/GpuMonitor.hpp"
 #include "include/Log.hpp"
@@ -75,22 +80,26 @@ static void readTemps(zes_device_handle_t dev,
         p.stype = ZES_STRUCTURE_TYPE_TEMP_PROPERTIES;
         if (zesTemperatureGetProperties(h, &p) != ZE_RESULT_SUCCESS) continue;
 
-        double val = 0.0;
-        if (zesTemperatureGetState(h, &val) != ZE_RESULT_SUCCESS) continue;
-
-        switch (p.type) {
-            case ZES_TEMP_SENSORS_GLOBAL:  // GPU die temperature
-                if (!edgeC) edgeC = val;
-                break;
-            case ZES_TEMP_SENSORS_HOT_SPOT:
-                if (!hotspotC) hotspotC = val;
-                break;
-            case ZES_TEMP_SENSORS_MEMORY:
-                if (!memC) memC = val;
-                break;
-            default:
-                break;
+        double v = 0.0;
+        if (p.onSubdevice) {
+            // Ignore subdevice split for now; pick max per sensor type
         }
+        zes_temp_sensors_t type = p.type;
+        double valC = 0.0;
+        if (zesTemperatureGetState(h, &valC) != ZE_RESULT_SUCCESS) continue;
+
+        switch (type) {
+            case ZES_TEMP_SENSORS_GPU:       if (!edgeC || valC > *edgeC)    edgeC = valC; break;
+            case ZES_TEMP_SENSORS_GLOBAL:    if (!edgeC || valC > *edgeC)    edgeC = valC; break;
+#ifdef ZES_TEMP_SENSORS_GPU_MEMORY
+            case ZES_TEMP_SENSORS_GPU_MEMORY:if (!memC  || valC > *memC)     memC  = valC; break;
+#endif
+#ifdef ZES_TEMP_SENSORS_HOT_SPOT
+            case ZES_TEMP_SENSORS_HOT_SPOT:  if (!hotspotC || valC > *hotspotC) hotspotC = valC; break;
+#endif
+            default: break;
+        }
+        (void)v;
     }
 }
 
@@ -101,16 +110,10 @@ static std::optional<int> readFanRpm(zes_device_handle_t dev) {
     if (zesDeviceEnumFans(dev, &n, hs.data()) != ZE_RESULT_SUCCESS) return std::nullopt;
 
     for (auto h : hs) {
-        zes_fan_properties_t prop{};
-        prop.stype = ZES_STRUCTURE_TYPE_FAN_PROPERTIES;
-        if (zesFanGetProperties(h, &prop) != ZE_RESULT_SUCCESS) continue;
-
-        zes_fan_state_t st{};
-        st.mode = ZES_FAN_SPEED_MODE_DEFAULT;
-        if (zesFanGetState(h, &st) != ZE_RESULT_SUCCESS) continue;
-
-        if (st.speed.units == ZES_FAN_SPEED_UNITS_RPM && st.speed.rpm > 0) {
-            return static_cast<int>(st.speed.rpm);
+        zes_fan_speed_t sp{};
+        sp.mode = ZES_FAN_SPEED_MODE_RPM;
+        if (zesFanGetState(h, &sp) == ZE_RESULT_SUCCESS && sp.speed) {
+            return (int)sp.speed;
         }
     }
     return std::nullopt;

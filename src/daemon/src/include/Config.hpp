@@ -1,48 +1,56 @@
 /*
- * Linux Fan Control — Configuration model and API (header)
+ * Linux Fan Control — Daemon configuration (public interface)
  * (c) 2025 LinuxFanControl contributors
+ *
+ * NOTE:
+ *  - This header exposes the DaemonConfig model and file APIs.
+ *  - ENV fallbacks are applied in the .cpp (see loadDaemonConfig path).
  */
 #pragma once
-
 #include <string>
+#include <vector>
 #include <optional>
 #include <nlohmann/json.hpp>
 
 namespace lfc {
 
-/*
- * DaemonConfig — runtime configuration for the daemon.
- * Paths may contain "~", "$VAR" and "${VAR}" and are expanded at runtime.
- */
+/* ----------------------------------------------------------------------------
+ * Daemon configuration model
+ * ----------------------------------------------------------------------------*/
 struct DaemonConfig {
-    // Files / paths (expanded at runtime)
-    std::string configFile;   // e.g. ~/.config/LinuxFanControl/daemon.json
-    std::string profilesPath; // directory with profile JSON files
-    std::string logfile;      // log file (rotated by Logger)
-    std::string pidfile;      // pid file (e.g. /run/lfcd.pid or /tmp/lfcd.pid)
-
-    // RPC endpoint
+    // RPC server
     std::string host{"127.0.0.1"};
     int         port{8777};
 
-    // Engine behavior
-    int     tickMs{500};
-    int     forceTickMs{0};
-    double  deltaC{0.5};
-    bool    debug{false};
+    // Engine timing
+    int         tickMs{50};
+    int         forceTickMs{2000};
+    double      deltaC{0.7};
 
-    // Active profile
-    std::string profileName;
+    // GPU-Refresh (NVML/IGCL/AMDSMI)
+    int         gpuRefreshMs{1000};
+    // hwmon-Refresh/Housekeeping
+    int         hwmonRefreshMs{500};
 
-    // Telemetry shared memory name (POSIX SHM)
-    // Use a simple name like "lfc.telemetry" (will become "/lfc.telemetry").
+    // Files / paths
+    std::string pidfile;        // default computed in defaultConfig()
+    std::string logfile;        // default computed in defaultConfig()
+    std::string configFile;     // XDG-based default daemon.json
+    std::string profilesPath;   // XDG-based default profiles/
+
+    // Telemetry (POSIX SHM name; normalized by ShmTelemetry)
     std::string shmPath{"lfc.telemetry"};
 
-    // Optional vendor mapping JSON (regex→vendor). If empty:
-    // lookup will search default locations + LFC_VENDOR_MAP env.
-    std::string vendorMapPath{};             // optional explicit path
-    std::string vendorMapWatchMode{"mtime"}; // "mtime" or "inotify"
-    int         vendorMapThrottleMs{3000};   // only used in mtime mode
+    // Vendor mapping file/watch settings
+    std::string vendorMapPath;          // empty = search default
+    std::string vendorMapWatchMode{"mtime"};
+    int         vendorMapThrottleMs{3000};
+
+    // Other flags
+    bool        debug{false};
+
+    // Optional: active profile name at boot
+    std::string profileName;
 };
 
 // JSON (de)serialization
@@ -52,7 +60,9 @@ void from_json(const nlohmann::json& j, DaemonConfig& c);
 // Expand "~", "$VAR", "${VAR}" in a path
 std::string expandUserPath(const std::string& in);
 
-// Build platform defaults (XDG-aware)
+/* ----------------------------------------------------------------------------
+ * Build platform defaults (XDG-aware)
+ * ----------------------------------------------------------------------------*/
 DaemonConfig defaultConfig();
 
 /* ----------------------------------------------------------------------------
@@ -78,7 +88,7 @@ namespace Config {
 
     // Individual default paths derived from environment/XDG rules.
     std::string defaultConfigPath();
-    std::string defaultProfilesDir();
+    std::string defaultProfilesPath();
     std::string defaultLogfilePath();
     std::string defaultShmPath();
     std::string defaultPidfilePath();

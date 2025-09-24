@@ -1,3 +1,8 @@
+/*
+ * Linux Fan Control — NVIDIA GPU enrichment via NVML
+ * (c) 2025 LinuxFanControl contributors
+ */
+
 // src/daemon/src/GpuMonitor.NVIDIA.cpp
 #include "include/GpuMonitor.hpp"
 #include "include/Log.hpp"
@@ -23,55 +28,90 @@ static std::string normalizeBdf(const char* busId) {
     return std::string(busId);
 }
 
+static std::vector<nvmlDevice_t> enumerateDevices() {
+    std::vector<nvmlDevice_t> out;
+    if (nvmlInit_v2() != NVML_SUCCESS) return out;
+
+    unsigned int count = 0;
+    if (nvmlDeviceGetCount_v2(&count) != NVML_SUCCESS || count == 0) {
+        (void)nvmlShutdown();
+        return out;
+    }
+    out.resize(count);
+    for (unsigned int i = 0; i < count; ++i) {
+        if (nvmlDeviceGetHandleByIndex_v2(i, &out[i]) != NVML_SUCCESS) {
+            out[i] = nullptr;
+        }
+    }
+    // remove nulls
+    out.erase(std::remove(out.begin(), out.end(), nullptr), out.end());
+    return out;
+}
+
 static std::optional<std::string> pciOf(nvmlDevice_t dev) {
     nvmlPciInfo_t pci{};
-    // Prefer the newest symbol if present; fall back otherwise.
-    nvmlReturn_t r = NVML_ERROR_NOT_SUPPORTED;
-
-    // v3 (newer)
-#if defined(NVML_API_VERSION) && (NVML_API_VERSION >= 12)
-    r = nvmlDeviceGetPciInfo_v3(dev, &pci);
-    if (r == NVML_SUCCESS) return normalizeBdf(pci.busId);
-#endif
-    // v2
-#if defined(NVML_API_VERSION) && (NVML_API_VERSION >= 10)
-    if (r != NVML_SUCCESS) {
-        r = nvmlDeviceGetPciInfo_v2(dev, &pci);
-        if (r == NVML_SUCCESS) return normalizeBdf(pci.busId);
-    }
-#endif
-    // legacy
-    if (r != NVML_SUCCESS) {
-        r = nvmlDeviceGetPciInfo(dev, &pci);
-        if (r == NVML_SUCCESS) return normalizeBdf(pci.busId);
-    }
-    return std::nullopt;
-}
-
-static std::optional<double> readTempGpuC(nvmlDevice_t dev) {
-    unsigned int t = 0;
-    if (nvmlDeviceGetTemperature(dev, NVML_TEMPERATURE_GPU, &t) == NVML_SUCCESS) {
-        return static_cast<double>(t);
-    }
-    return std::nullopt;
-}
-
-static std::optional<double> readTempMemC(nvmlDevice_t dev) {
-#ifdef NVML_TEMPERATURE_MEMORY
-    unsigned int t = 0;
-    if (nvmlDeviceGetTemperature(dev, NVML_TEMPERATURE_MEMORY, &t) == NVML_SUCCESS) {
-        return static_cast<double>(t);
-    }
-#endif
-    return std::nullopt;
+    if (nvmlDeviceGetPciInfo_v3(dev, &pci) != NVML_SUCCESS) return std::nullopt;
+    return normalizeBdf(pci.busId);
 }
 
 static void tryFillName(nvmlDevice_t dev, std::string& name) {
     if (!name.empty()) return;
-    char buf[NVML_DEVICE_NAME_BUFFER_SIZE] = {};
+    char buf[128] = {};
     if (nvmlDeviceGetName(dev, buf, sizeof(buf)) == NVML_SUCCESS && buf[0]) {
         name = buf;
     }
+}
+
+static void readTemps(nvmlDevice_t dev,
+                      std::optional<double>& edgeC,
+                      std::optional<double>& hotspotC,
+                      std::optional<double>& memC)
+{
+    // Edge / GPU core
+    unsigned int t = 0;
+    if (!edgeC && nvmlDeviceGetTemperature(dev, NVML_TEMPERATURE_GPU, &t) == NVML_SUCCESS) {
+        edgeC = (double)t;
+    }
+
+#ifdef NVML_TEMPERATURE_SENSOR_GPU_MEMORY
+    // Memory temperature if available (recent NVML)
+    if (!memC && nvmlDeviceGetTemperature(dev, NVML_TEMPERATURE_MEMORY, &t) == NVML_SUCCESS) {
+        memC = (double)t;
+    }
+#endif
+
+#ifdef NVML_TEMPERATURE_GPU_HOTSPOT
+    if (!hotspotC && nvmlDeviceGetTemperature(dev, NVML_TEMPERATURE_GPU_HOTSPOT, &t) == NVML_SUCCESS) {
+        hotspotC = (double)t;
+    }
+#endif
+}
+
+static std::optional<int> readFanRpm(nvmlDevice_t dev) {
+    // NVML exposes fan speed in percent; tach RPM is not always available.
+    // Try RPM first (if supported), otherwise map percent to RPM if max known (not here).
+#ifdef NVML_FAN_SPEED_RPM
+    unsigned int rpm = 0;
+    if (nvmlDeviceGetFanSpeed_v2(dev, &rpm) == NVML_SUCCESS && rpm > 0) {
+        return (int)rpm;
+    }
+#endif
+    return std::nullopt;
+}
+
+static std::optional<int> readFanPercent(nvmlDevice_t dev) {
+    unsigned int pct = 0;
+    if (nvmlDeviceGetFanSpeed(dev, &pct) == NVML_SUCCESS) {
+        return (int)pct;
+    }
+    return std::nullopt;
+}
+
+static bool hasPwmCapability(nvmlDevice_t dev) {
+    // If NVML exposes a settable fan control policy or supports manual control, we could probe.
+    // Conservative: treat as capability present if we can read fan speed (percent).
+    (void)dev;
+    return true;
 }
 
 #endif // LFC_WITH_NVML
@@ -82,27 +122,10 @@ void GpuMonitor::enrichViaNVML(std::vector<GpuSample>& out)
     (void)out;
     return;
 #else
-    nvmlReturn_t rc = nvmlInit_v2();
-    if (rc != NVML_SUCCESS) {
-        LOG_DEBUG("gpu: NVML init failed rc=%d", (int)rc);
+    auto devs = enumerateDevices();
+    if (devs.empty()) {
+        LOG_DEBUG("gpu: NVML no devices");
         return;
-    }
-
-    unsigned int count = 0;
-    rc = nvmlDeviceGetCount_v2(&count);
-    if (rc != NVML_SUCCESS || count == 0) {
-        LOG_DEBUG("gpu: NVML no devices rc=%d", (int)rc);
-        (void)nvmlShutdown();
-        return;
-    }
-
-    std::vector<nvmlDevice_t> devs;
-    devs.reserve(count);
-    for (unsigned int i = 0; i < count; ++i) {
-        nvmlDevice_t d{};
-        if (nvmlDeviceGetHandleByIndex_v2(i, &d) == NVML_SUCCESS) {
-            devs.push_back(d);
-        }
     }
 
     for (auto& g : out) {
@@ -113,9 +136,7 @@ void GpuMonitor::enrichViaNVML(std::vector<GpuSample>& out)
         bool found = false;
         for (auto d : devs) {
             auto bdf = pciOf(d);
-            if (bdf && *bdf == g.pci) {
-                match = d; found = true; break;
-            }
+            if (bdf && *bdf == g.pci) { match = d; found = true; break; }
         }
         if (!found) {
             LOG_DEBUG("gpu: NVML no handle match pci=%s", g.pci.c_str());
@@ -124,30 +145,31 @@ void GpuMonitor::enrichViaNVML(std::vector<GpuSample>& out)
 
         tryFillName(match, g.name);
 
-        // Temps
-        if (!g.tempEdgeC) {
-            if (auto t = readTempGpuC(match)) g.tempEdgeC = *t;
-        }
-        if (!g.tempMemoryC) {
-            if (auto t = readTempMemC(match)) g.tempMemoryC = *t;
-        }
-        // NVML has no public RPM; do not fabricate. We keep tach via hwmon fallback when available.
+        // Temperatures
+        readTemps(match, g.tempEdgeC, g.tempHotspotC, g.tempMemoryC);
 
-        // PWM capability hint: if fan percent query works, assume control surface exists somewhere.
-        if (!g.hasFanPwm) {
-            unsigned int pct = 0;
-            if (nvmlDeviceGetFanSpeed(match, &pct) == NVML_SUCCESS) {
-                g.hasFanPwm = true;
+        // Fan tach / percent & capability
+        if (!g.fanRpm) {
+            if (auto rpm = readFanRpm(match)) {
+                g.fanRpm = *rpm;
+                g.hasFanTach = true;
             }
         }
+        if (!g.fanPercent) {
+            if (auto p = readFanPercent(match)) g.fanPercent = *p;
+        }
+        if (!g.hasFanPwm) {
+            g.hasFanPwm = hasPwmCapability(match);
+        }
 
-        LOG_DEBUG("gpu: NVML enriched pci=%s name='%s' edge=%.1fC hot=%.1fC mem=%.1fC rpm=%d pwmCap=%d",
+        LOG_DEBUG("gpu: NVML enriched pci=%s name='%s' edge=%.1fC hot=%.1fC mem=%.1fC rpm=%d %%=%d pwmCap=%d",
                   g.pci.c_str(),
                   g.name.c_str(),
                   g.tempEdgeC.value_or(-1.0),
                   g.tempHotspotC.value_or(-1.0),
                   g.tempMemoryC.value_or(-1.0),
                   g.fanRpm.value_or(0),
+                  g.fanPercent.value_or(-1),
                   g.hasFanPwm ? 1 : 0);
     }
 

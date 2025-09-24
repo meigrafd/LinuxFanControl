@@ -1,21 +1,10 @@
-// src/daemon/src/GpuMonitor.AMD.cpp
-//
-// AMD GPU enrichment using AMD SMI (AMDSMI) SDK.
-// This augments GpuMonitor’s sysfs discovery with:
-//   - board/marketing name,
-//   - temperatures (edge/junction),
-//   - fan tachometer RPM,
-//   - PWM capability hint.
-//
-// Sysfs/HWMON discovery remains the baseline and is never removed.
-// Matching is done by PCI BDF derived from the sample's hwmonPath,
-// which is stable across kernels and does not depend on extra fields.
-//
-// Build guard: LFC_WITH_AMDSMI is defined by CMake when AMDSMI was found.
+// AMD GPU enrichment using AMDSMI + PCI subsystem mapping.
+// Keeps sysfs baseline and adds: precise name (board), temps, tach, pwm capability.
 
 #include "include/GpuMonitor.hpp"
 #include "include/Log.hpp"
 #include "include/Utils.hpp"
+#include "include/VendorMapping.hpp"
 
 #include <vector>
 #include <string>
@@ -23,6 +12,7 @@
 #include <cstring>
 #include <algorithm>
 #include <cctype>
+#include <fstream>
 
 #ifdef LFC_WITH_AMDSMI
   #include <amd_smi/amdsmi.h>
@@ -34,20 +24,14 @@ namespace lfc {
 
 #ifdef LFC_WITH_AMDSMI
 
-// --- helpers ----------------------------------------------------------------
+// ---------------- path/BDF helpers ----------------
 
-// Scan a path and return the *last* substring that matches PCI BDF
-// format "dddd:bb:dd.f" (hex digits), which avoids picking "pci0000:00".
 static std::string pciFromResolvedPath(const std::string& path) {
     auto ishex = [](char c){ return std::isxdigit(static_cast<unsigned char>(c)) != 0; };
-
-    // Minimal BDF length is 12: "0000:03:00.0"
-    const size_t need = 12;
+    const size_t need = 12; // "0000:03:00.0"
     if (path.size() < need) return {};
-
     std::string last;
     for (size_t i = 0; i + need <= path.size(); ++i) {
-        // dddd:bb:dd.f
         if (!(ishex(path[i]) && ishex(path[i+1]) && ishex(path[i+2]) && ishex(path[i+3]))) continue;
         if (path[i+4] != ':') continue;
         if (!(ishex(path[i+5]) && ishex(path[i+6]))) continue;
@@ -55,18 +39,13 @@ static std::string pciFromResolvedPath(const std::string& path) {
         if (!(ishex(path[i+8]) && ishex(path[i+9]))) continue;
         if (path[i+10] != '.') continue;
         if (!ishex(path[i+11])) continue;
-
-        // Found a candidate; extend if there are more hex chars after function
         size_t j = i + need;
-        while (j < path.size() && ishex(path[j])) ++j; // unusually long funcs, still safe
+        while (j < path.size() && ishex(path[j])) ++j;
         last.assign(path.begin() + i, path.begin() + j);
-        // Keep scanning to prefer the last (deepest) BDF in the path
     }
     return last;
 }
 
-// Return PCI BDF string from a GpuSample using robust fallback.
-// We intentionally do not rely on optional struct members like "drm" or "pci".
 static std::string getPciBdf(const GpuSample& g) {
     if (!g.hwmonPath.empty()) {
         if (auto b = pciFromResolvedPath(g.hwmonPath); !b.empty()) return b;
@@ -74,7 +53,32 @@ static std::string getPciBdf(const GpuSample& g) {
     return {};
 }
 
-// Format BDF from AMDSMI structure to "dddd:bb:dd.f".
+static std::optional<std::pair<uint16_t,uint16_t>>
+readSubsystemIds(const std::string& bdf) {
+    if (bdf.empty()) return std::nullopt;
+    const std::string base = "/sys/bus/pci/devices/" + bdf + "/";
+    auto readHex = [](const std::string& p)->std::optional<uint16_t>{
+        std::ifstream f(p);
+        if (!f) return std::nullopt;
+        std::string s;
+        if (!(f >> s)) return std::nullopt;
+        // expected like "0x1849"
+        unsigned long v = 0;
+        try {
+            if (s.rfind("0x", 0) == 0 || s.rfind("0X", 0) == 0)
+                v = std::stoul(s.substr(2), nullptr, 16);
+            else
+                v = std::stoul(s, nullptr, 16);
+        } catch (...) { return std::nullopt; }
+        return static_cast<uint16_t>(v & 0xFFFFu);
+    };
+
+    auto sv = readHex(base + "subsystem_vendor");
+    auto sd = readHex(base + "subsystem_device");
+    if (sv && sd) return std::make_pair(*sv, *sd);
+    return std::nullopt;
+}
+
 static std::string bdfToString(const amdsmi_bdf_t& b) {
     char out[32];
     std::snprintf(out, sizeof(out),
@@ -101,8 +105,6 @@ static void logAmdSmiVersionsOnce() {
     }
 #endif
 }
-
-// --- enumeration ------------------------------------------------------------
 
 static std::vector<amdsmi_socket_handle> enumerateSockets() {
     uint32_t count = 0;
@@ -170,7 +172,6 @@ static std::vector<amdsmi_processor_handle> enumerateProcessors() {
     return procs;
 }
 
-// Match AMDSMI handle by PCI BDF.
 static amdsmi_processor_handle findHandleByBdf(const std::vector<amdsmi_processor_handle>& handles,
                                                const std::string& wantPci)
 {
@@ -186,7 +187,7 @@ static amdsmi_processor_handle findHandleByBdf(const std::vector<amdsmi_processo
     return nullptr;
 }
 
-// --- data readers -----------------------------------------------------------
+// ---------------- metric readers ----------------
 
 static std::optional<double> readTempC(amdsmi_processor_handle h,
                                        amdsmi_temperature_type_t type)
@@ -197,7 +198,6 @@ static std::optional<double> readTempC(amdsmi_processor_handle h,
     return static_cast<double>(milli_c) / 1000.0;
 }
 
-// Probe a few fan sensor indices and return the first valid RPM.
 static std::optional<int> readFanRpm(amdsmi_processor_handle h) {
     for (uint32_t idx = 0; idx < 8; ++idx) {
         int64_t rpm = 0;
@@ -229,6 +229,35 @@ static std::string queryMarketingName(amdsmi_processor_handle h) {
         if (board.product_name[0]) return std::string(board.product_name);
     }
     return {};
+}
+
+// ---------------- name refinement via PCI subsystem ----------------
+
+static std::string refineBoardName(const std::string& genericName,
+                                   const std::optional<std::pair<uint16_t,uint16_t>>& subsys)
+{
+    if (!subsys) return genericName;
+    auto [sv, sd] = *subsys;
+    auto& vm = VendorMapping::instance();
+    std::string vendor = vm.pciVendorName(sv);            // e.g. "ASRock"
+    std::string model  = vm.boardForSubsystem(sv, sd);    // e.g. "Taichi"
+
+    if (vendor.empty() && model.empty()) return genericName;
+
+    // Wenn genericName schon „AMD Radeon 9070 XT …“ enthält, ergänzen wir "Vendor Model".
+    std::string suffix;
+    if (!vendor.empty()) suffix = vendor;
+    if (!model.empty()) {
+        if (!suffix.empty()) suffix += " ";
+        suffix += model;
+    }
+    if (suffix.empty()) return genericName;
+
+    // Vermeide doppelte Anhänge.
+    if (genericName.find(suffix) != std::string::npos) return genericName;
+
+    if (genericName.empty()) return suffix;
+    return genericName + " " + suffix;
 }
 
 #endif // LFC_WITH_AMDSMI
@@ -271,16 +300,30 @@ void GpuMonitor::enrichViaAMDSMI(std::vector<GpuSample>& out)
             continue;
         }
 
-        if (g.name.empty()) {
+        // Name: erst Marketing/Board, dann ggf. mittels Subsystem-IDs verfeinern
+        std::string name = g.name;
+        if (name.empty()) {
             if (auto nm = queryMarketingName(h); !nm.empty()) {
-                g.name = std::move(nm);
-                LOG_DEBUG("gpu: AMDSMI name pci=%s -> '%s'", wantPci.c_str(), g.name.c_str());
+                name = std::move(nm);
+                LOG_DEBUG("gpu: AMDSMI name pci=%s -> '%s'", wantPci.c_str(), name.c_str());
             }
         }
+        auto subsys = readSubsystemIds(wantPci);
+        if (subsys) {
+            const auto refined = refineBoardName(name, subsys);
+            if (refined != name) {
+                name = refined;
+                LOG_DEBUG("gpu: AMDSMI refined name pci=%s -> '%s' (via subsystem %04x:%04x)",
+                          wantPci.c_str(), name.c_str(), subsys->first, subsys->second);
+            }
+        }
+        if (!name.empty()) g.name = std::move(name);
 
+        // Temps
         if (!g.tempEdgeC)    if (auto v = readTempC(h, AMDSMI_TEMPERATURE_TYPE_EDGE))     g.tempEdgeC    = *v;
         if (!g.tempHotspotC) if (auto v = readTempC(h, AMDSMI_TEMPERATURE_TYPE_JUNCTION)) g.tempHotspotC = *v;
 
+        // Fan tach + PWM capability
         if (!g.fanRpm) {
             if (auto rpm = readFanRpm(h)) {
                 g.fanRpm = *rpm;
