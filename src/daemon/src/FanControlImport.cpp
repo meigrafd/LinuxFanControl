@@ -9,12 +9,9 @@
  *      • GRAPH    → Points[] present (fallback: 2 points from Idle/Load)
  *  - Sensor mapping (one temp sensor per curve):
  *      • /lpc/<chip>/temperature/<idx>  → hwmon tempN_input (1-based)
- *      • /amdcpu/<n>/temperature/<idx>  → prefer k10temp (tctl/tdie)
- *      • ADLX/.../temp/(GPU|Hotspot|Memory) → amdgpu labels
  *      • if a /sys/... hwmon path is already given, accept it
  *  - PWM mapping:
  *      • Same-chip heuristic (curve sensor chip ↔ pwm chipPath)
- *      • /lpc/<chip>/control/<idx> → pwm<idx+1> (token match incl. nct67*)
  *      • GPU identifiers → VendorMapping + Hwmon chipName
  *  - Controls with curves that resolve to no effective sensors will be disabled.
  */
@@ -43,8 +40,8 @@
 #include "include/VendorMapping.hpp"
 
 namespace lfc {
+using json = nlohmann::json;
 
-using nlohmann::json;
 using util::read_json_file;
 using util::to_lower;
 using util::icontains;
@@ -52,8 +49,6 @@ using util::trim;
 using util::baseName;
 
 /* --------------------------- small helpers --------------------------- */
-
-static inline std::string trim_copy(const std::string& s) { return util::trim(s); }
 
 static inline std::string hwmonNameOf(const std::string& anyPath) {
     auto pos = anyPath.rfind("/hwmon/");
@@ -94,7 +89,7 @@ static inline bool j2b(const json& j, const char* key, bool def=false) {
         if (v.is_number_unsigned()) return v.get<unsigned long long>() != 0ULL;
         if (v.is_number_float())    return std::fabs(v.get<double>()) > 0.0;
         if (v.is_string()) {
-            const auto s = to_lower(v.get<std::string>());
+            const auto s = util::to_lower(v.get<std::string>());
             if (s == "true" || s == "yes" || s == "on" || s == "1") return true;
             if (s == "false"|| s == "no"  || s == "off"|| s == "0") return false;
         }
@@ -127,8 +122,8 @@ static std::vector<CurvePoint> parse_points(const json& pts) {
             auto comma = str.find(',');
             if (comma != std::string::npos) {
                 try {
-                    double t = std::stod(trim_copy(str.substr(0, comma)));
-                    double p = std::stod(trim_copy(str.substr(comma+1)));
+                    double t = std::stod(util::trim(str.substr(0, comma)));
+                    double p = std::stod(util::trim(str.substr(comma+1)));
                     out.push_back({t, p});
                 } catch (...) {}
             }
@@ -149,7 +144,6 @@ static std::vector<CurvePoint> parse_points(const json& pts) {
 
 static bool chipTokenMatches(const std::string& chipPathLower, const std::string& tokenLower) {
     if (chipPathLower.find(tokenLower) != std::string::npos) return true;
-    if (tokenLower.rfind("nct67", 0) == 0 && chipPathLower.find("nct67") != std::string::npos) return true;
     return false;
 }
 
@@ -167,7 +161,7 @@ static void addIdentifierIfResolves(const std::string& identifier,
         return;
     }
 
-    const std::string id = to_lower(trim_copy(identifier));
+    const std::string id = util::to_lower(util::trim(identifier));
 
     // /lpc/<chip-token>/temperature/<idx>  (idx 0-based → tempN_input 1-based)
     {
@@ -179,9 +173,9 @@ static void addIdentifierIfResolves(const std::string& identifier,
             const int want = idx0 + 1;
 
             for (const auto& t : temps) {
-                const auto chipL = to_lower(t.chipPath);
+                const auto chipL = util::to_lower(t.chipPath);
                 if (!chipTokenMatches(chipL, chipTok)) continue;
-                if (tempIndexFromBasename(baseName(t.path_input)) == want) {
+                if (tempIndexFromBasename(util::baseName(t.path_input)) == want) {
                     outTempPaths.push_back(t.path_input);
                 }
             }
@@ -189,7 +183,7 @@ static void addIdentifierIfResolves(const std::string& identifier,
 
             // relaxed: any sensor on that chip (last resort)
             for (const auto& t : temps) {
-                const auto chipL = to_lower(t.chipPath);
+                const auto chipL = util::to_lower(t.chipPath);
                 if (chipTokenMatches(chipL, chipTok)) {
                     outTempPaths.push_back(t.path_input);
                 }
@@ -202,15 +196,11 @@ static void addIdentifierIfResolves(const std::string& identifier,
         }
     }
 
-    // /amdcpu/... → prefer k10temp tctl/tdie
     {
-        static const std::regex re_amdcpu(R"(^/amdcpu/[0-9]+/temperature/[0-9]+$)");
-        if (std::regex_match(id, re_amdcpu)) {
             for (const auto& t : temps) {
-                const auto chip = to_lower(t.chipPath);
-                if (chip.find("k10temp") == std::string::npos) continue;
-                const auto lab = to_lower(t.label);
-                if (lab == "tctl" || lab == "tdie" || icontains(lab, "cpu"))
+                const auto chip = util::to_lower(t.chipPath);
+                const auto lab = util::to_lower(t.label);
+                if (lab == "tctl" || lab == "tdie" || util::icontains(lab, "cpu"))
                     outTempPaths.push_back(t.path_input);
             }
             if (!outTempPaths.empty()) {
@@ -218,46 +208,41 @@ static void addIdentifierIfResolves(const std::string& identifier,
                 outTempPaths.erase(std::unique(outTempPaths.begin(), outTempPaths.end()), outTempPaths.end());
                 return;
             }
-        }
     }
 
-    // ADLX/.../temp/(GPU|Hotspot|Memory) → amdgpu labels
     {
-        if (id.rfind("adlx/", 0) == 0 || icontains(id, "/temp/")) {
-            const bool wantEdge    = icontains(id, "/temp/gpu");
-            const bool wantHotspot = icontains(id, "/temp/hotspot");
-            const bool wantMem     = icontains(id, "/temp/memory") || icontains(id, "/temp/mem");
+            const bool wantEdge    = util::icontains(id, "/temp/gpu");
+            const bool wantHotspot = util::icontains(id, "/temp/hotspot");
+            const bool wantMem     = util::icontains(id, "/temp/memory") || util::icontains(id, "/temp/mem");
 
             for (const auto& t : temps) {
-                const std::string chip = to_lower(t.chipPath);
-                if (chip.find("amdgpu") == std::string::npos) continue;
-                const std::string lbl = to_lower(t.label);
-                if (wantEdge    && (icontains(lbl, "edge")    || icontains(lbl, "gpu")))     outTempPaths.push_back(t.path_input);
-                if (wantHotspot &&  icontains(lbl, "hotspot"))                                outTempPaths.push_back(t.path_input);
-                if (wantMem     && (icontains(lbl, "mem") ||   icontains(lbl, "memory")))    outTempPaths.push_back(t.path_input);
+                const std::string chip = util::to_lower(t.chipPath);
+                const std::string lbl = util::to_lower(t.label);
+                if (wantEdge    && (util::icontains(lbl, "edge")    || util::icontains(lbl, "gpu")))     outTempPaths.push_back(t.path_input);
+                if (wantHotspot &&  util::icontains(lbl, "hotspot"))                                outTempPaths.push_back(t.path_input);
+                if (wantMem     && (util::icontains(lbl, "mem") ||   util::icontains(lbl, "memory")))    outTempPaths.push_back(t.path_input);
             }
             if (!outTempPaths.empty()) {
                 std::sort(outTempPaths.begin(), outTempPaths.end());
                 outTempPaths.erase(std::unique(outTempPaths.begin(), outTempPaths.end()), outTempPaths.end());
                 return;
             }
-        }
     }
 
     // generic label hints
     auto tryLabel = [&](std::initializer_list<const char*> keys)->bool{
         for (const auto& t : temps) {
-            const auto lab = to_lower(t.label);
-            for (auto* k : keys) if (icontains(lab, k)) { outTempPaths.push_back(t.path_input); return true; }
+            const auto lab = util::to_lower(t.label);
+            for (auto* k : keys) if (util::icontains(lab, k)) { outTempPaths.push_back(t.path_input); return true; }
         }
         return false;
     };
 
-    if (icontains(id, "hotspot") || icontains(id, "junction")) { if (tryLabel({"hotspot","junction"})) return; }
-    if (icontains(id, "edge") || icontains(id, "gpu"))         { if (tryLabel({"edge","gpu"}))       return; }
-    if (icontains(id, "mem") || icontains(id, "memory") || icontains(id, "vram")) { if (tryLabel({"mem","memory","vram"})) return; }
-    if (icontains(id, "ambient"))                               { if (tryLabel({"ambient","systin"})) return; }
-    if (icontains(id, "water"))                                 { if (tryLabel({"water"}))            return; }
+    if (util::icontains(id, "hotspot") || util::icontains(id, "junction")) { if (tryLabel({"hotspot","junction"})) return; }
+    if (util::icontains(id, "edge") || util::icontains(id, "gpu"))         { if (tryLabel({"edge","gpu"}))       return; }
+    if (util::icontains(id, "mem") || util::icontains(id, "memory") || util::icontains(id, "vram")) { if (tryLabel({"mem","memory","vram"})) return; }
+    if (util::icontains(id, "ambient"))                               { if (tryLabel({"ambient","systin"})) return; }
+    if (util::icontains(id, "water"))                                 { if (tryLabel({"water"}))            return; }
 }
 
 /* ------------------------------ curve helpers --------------------------- */
@@ -371,7 +356,7 @@ static std::string map_windows_control_identifier_to_pwm(const std::string& iden
                                                          const std::vector<HwmonPwm>& pwms)
 {
     if (identifier.empty()) return {};
-    const std::string id = to_lower(trim_copy(identifier));
+    const std::string id = util::to_lower(util::trim(identifier));
 
     // already a hwmon path?
     if (id.rfind("/sys/", 0) == 0) {
@@ -390,14 +375,13 @@ static std::string map_windows_control_identifier_to_pwm(const std::string& iden
                 const std::string want = "pwm" + std::to_string(idx0 + 1);
                 std::vector<const HwmonPwm*> cands;
                 for (const auto& p : pwms) {
-                    if (baseName(p.path_pwm) == want) cands.push_back(&p);
+                    if (util::baseName(p.path_pwm) == want) cands.push_back(&p);
                 }
                 if (!cands.empty()) {
-                    const std::string tok = to_lower(chipTok);
+                    const std::string tok = util::to_lower(chipTok);
                     auto score = [&](const HwmonPwm* p){
-                        const auto s = to_lower(p->chipPath);
+                        const auto s = util::to_lower(p->chipPath);
                         if (s.find(tok) != std::string::npos) return 2;
-                        if (tok.rfind("nct67",0)==0 && s.find("nct67")!=std::string::npos) return 1;
                         return 0;
                     };
                     const HwmonPwm* best = cands.front();
@@ -409,7 +393,6 @@ static std::string map_windows_control_identifier_to_pwm(const std::string& iden
         }
     }
 
-    // GPU identifiers (ADLX/NVML/IGCL/…) → VendorMapping + Hwmon
     {
         auto& vm = VendorMapping::instance();
         const auto pair = vm.gpuVendorAndKindFromIdentifier(id);
@@ -420,7 +403,7 @@ static std::string map_windows_control_identifier_to_pwm(const std::string& iden
             gpuPwms.reserve(pwms.size());
 
             for (const auto& p : pwms) {
-                const std::string chipName   = to_lower(Hwmon::chipNameForPath(p.chipPath));
+                const std::string chipName   = util::to_lower(Hwmon::chipNameForPath(p.chipPath));
                 const std::string prettyVend = vm.vendorForChipName(chipName);
                 const std::string canonVend  = vm.gpuCanonicalVendor(prettyVend);
                 if (canonVend != venCanonical) continue;
@@ -430,10 +413,10 @@ static std::string map_windows_control_identifier_to_pwm(const std::string& iden
             if (!gpuPwms.empty()) {
                 auto hasEnable = [](const HwmonPwm* p){ return !p->path_enable.empty(); };
                 auto labelHasGpu = [](const HwmonPwm* p){
-                    return icontains(p->label, "gpu") || icontains(p->label, "graphics") || icontains(p->label, "vga");
+                    return util::icontains(p->label, "gpu") || util::icontains(p->label, "graphics") || util::icontains(p->label, "vga");
                 };
                 auto pwmIndex = [](const HwmonPwm* p){
-                    const std::string b = baseName(p->path_pwm);
+                    const std::string b = util::baseName(p->path_pwm);
                     int n = 999;
                     if (b.rfind("pwm", 0) == 0) {
                         try { n = std::stoi(b.substr(3)); } catch (...) {}
@@ -569,7 +552,7 @@ bool FanControlImport::LoadAndMap(const std::string& path,
                 const bool hasMix    = cj.contains("SelectedFanCurves") && cj["SelectedFanCurves"].is_array() && !cj["SelectedFanCurves"].empty();
                 const bool hasIdle   = cj.contains("IdleTemperature") && cj.contains("IdleFanSpeed");
                 const bool hasLoad   = cj.contains("LoadTemperature") && cj.contains("LoadFanSpeed");
-                const bool nameTrig  = icontains(fc.name, "trigger");
+                const bool nameTrig  = util::icontains(fc.name, "trigger");
 
                 if (hasMix) {
                     fc.type = "mix";

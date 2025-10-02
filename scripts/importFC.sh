@@ -1,28 +1,30 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# Linux Fan Control — FanControl.Release Import & Live Progress (raw JSON-RPC)
+# Linux Fan Control — FanControl.Release Import & Live Progress (persistent JSON-RPC)
 # (c) 2025 LinuxFanControl contributors
 # -----------------------------------------------------------------------------
 # Purpose:
 #   • Start import of a FanControl.Release profile via lfcd's JSON-RPC (raw TCP)
-#   • Poll and display live progress until finished (done/error)
-#   • Optionally commit the imported profile
+#   • Keep ONE TCP connection open for the whole import (status polling + commit)
+#   • Optionally commit and enable the engine
 #
-# Expected RPC methods (must exist on server):
+# Expected RPC methods on server:
 #   - profile.importAs     -> params: { path, name, validateDetect, rpmMin, timeoutMs } -> { jobId }
-#   - profile.importStatus -> params: { jobId } -> { state, progress, message, error, profileName, isFanControlRelease, ... }
+#   - profile.importStatus -> params: { jobId } -> { state, progress, message, error, ... }
 #   - profile.importCommit -> params: { jobId } -> persist profile
+#   - engine.enable        -> no params
 #
 # Transport:
-#   - Raw TCP JSON-RPC (newline-terminated, one JSON per line). No HTTP.
-#   - Uses /dev/tcp (preferred). Falls back to socat or nc if /dev/tcp is not available.
+#   - Raw TCP JSON-RPC (newline-delimited). One JSON per line.
+#   - Preferred: /dev/tcp with a single long-lived FD.
+#   - Fallback: socat/nc (non-persistent, only if /dev/tcp not available).
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
 
 # ----------------------------- Defaults --------------------------------------
 HOST="127.0.0.1"
-PORT="8777"                # set to your lfcd TCP port
+PORT="8777"
 
 FCR_PATH=""                # -f /path/to/FanControl.json
 PROFILE_NAME="Imported"    # -n "ProfileName"
@@ -37,15 +39,15 @@ ID_START=1                 # -i 1
 
 QUIET=0                    # -q
 COLOR=1                    # --no-color -> 0
-JQ_PRETTY=0                # -J (pretty-print raw responses with jq)
+JQ_PRETTY=0                # -J
 
-# ----------------------------- Usage (FULL) ----------------------------------
+# ----------------------------- Usage -----------------------------------------
 usage() {
   cat <<'USAGE'
-importFC.sh - FanControl.Release import & progress for Linux Fan Control (lfcd)
+importFC.sh - FanControl.Release import & progress (persistent TCP)
 
 Usage:
-  importFC.sh -f /path/to/userConfig.json [-n Name] [-V] [-r RPM] [-T ms] [-C]
+  importFC.sh -f /path/to/userConfig.json [-n Name] [-V] [-r RPM] [-T ms] [-C] [-E]
                [-H host] [-p port] [-I ms] [-i startId] [-q] [--no-color] [-J]
 
 Options:
@@ -54,18 +56,15 @@ Options:
   -V          Enable deterministic validation step
   -r RPM      Minimum RPM threshold check (default: 0 = disabled)
   -T ms       Timeout for RPM threshold check (default: 0 = disabled)
-  -C          Commit the imported profile after success
-  -E          Enable the engine right after a successful commit
+  -C          Commit imported profile after success
+  -E          Enable engine after commit
   -H HOST     Target host (default: 127.0.0.1)
   -p PORT     Target port (default: 8777)
-  -I ms       Poll interval (default: 500)
+  -I ms       Poll interval (default: 100)
   -i N        Starting JSON-RPC id (default: 1)
-  -q          Quiet mode (less logs)
+  -q          Quiet mode
   --no-color  Disable colored output
-  -J          Pretty-print raw JSON responses with jq (if available)
-
-Example:
-  importFC.sh -f ~/Downloads/FanControl.json -n "MyProfile" -V -r 900 -T 4000 -C
+  -J          Pretty-print raw JSON replies with jq
 USAGE
 }
 
@@ -81,140 +80,164 @@ while (( "$#" )); do
     -E) DO_ENABLE=1; shift ;;
     -H) HOST="${2:-}"; shift 2 ;;
     -p) PORT="${2:-}"; shift 2 ;;
-    -I) POLL_MS="${2:-500}"; shift 2 ;;
+    -I) POLL_MS="${2:-100}"; shift 2 ;;
     -i) ID_START="${2:-1}"; shift 2 ;;
     -q) QUIET=1; shift ;;
     --no-color) COLOR=0; shift ;;
     -J) JQ_PRETTY=1; shift ;;
+    --debug) DEBUG_RPC=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
   esac
 done
 
-if [[ -z "$FCR_PATH" ]]; then
-  echo "Error: -f /path/to/FCR.json is required." >&2
-  exit 2
-fi
-if [[ ! -r "$FCR_PATH" ]]; then
-  echo "Error: file not readable: $FCR_PATH" >&2
-  exit 2
-fi
+[[ -n "$FCR_PATH" && -r "$FCR_PATH" ]] || { echo "Error: readable -f FILE required." >&2; exit 2; }
 
-# ----------------------------- Helpers ---------------------------------------
 log() { [[ "$QUIET" -eq 0 ]] && echo -e "$*" >&2 || true; }
 has_jq() { command -v jq >/dev/null 2>&1; }
 ts() { date +"%H:%M:%S"; }
 
-# Colors
 if [[ "$COLOR" -eq 1 ]]; then
   C_B="\033[1m"; C_R="\033[31m"; C_G="\033[32m"; C_Y="\033[33m"; C_C="\033[36m"; C_N="\033[0m"
 else
   C_B=""; C_R=""; C_G=""; C_Y=""; C_C=""; C_N=""
 fi
 
-# Preferred: /dev/tcp (bidirectional; reliably reads server response)
-send_raw_devtcp() {
-  local data="$1" host="$2" port="$3"
-  # Ensure newline termination (line-delimited JSON on the server)
-  [[ "$data" == *$'\n' ]] || data="${data}"$'\n'
+# --------------------- Persistent /dev/tcp Session ---------------------------
+RPC_FD=3
+SESSION_OPEN=0
 
-  # Open bidirectional socket on FD 3
-  exec 3<>"/dev/tcp/${host}/${port}" || return 15
-
-  # Send request
-  printf '%s' "$data" >&3
-
-  # Read EXACTLY ONE LINE (server keeps the socket open for further requests)
-  # Add a safety timeout so we don't hang forever if something goes wrong.
-  local line=""
-  if ! IFS= read -r -t 10 line <&3; then
-    # Timeout or read error; still close the FD and propagate failure
-    exec 3>&- 3<&-
-    return 16
+open_session() {
+  if [[ "$SESSION_OPEN" -eq 1 ]]; then return 0; fi
+  if exec {RPC_FD}<>"/dev/tcp/${HOST}/${PORT}" 2>/dev/null; then
+    SESSION_OPEN=1
+    return 0
   fi
+  SESSION_OPEN=0
+  return 1
+}
 
+close_session() {
+  if [[ "$SESSION_OPEN" -eq 1 ]]; then
+    exec {RPC_FD}>&- {RPC_FD}<&- || true
+    SESSION_OPEN=0
+  fi
+}
+
+rpc_send_recv() {
+  local json="$1"
+  [[ "$SESSION_OPEN" -eq 1 ]] || return 99
+  [[ "$json" == *$'\n' ]] || json="${json}"$'\n'
+  [[ "$DEBUG_RPC" -eq 1 ]] && >&2 echo ">>> $json"
+  printf '%s' "$json" >&$RPC_FD || return 98
+
+  local line=""
+  if ! IFS= read -r -t 10 line <&$RPC_FD; then
+    return 97
+  fi
+  [[ "$DEBUG_RPC" -eq 1 ]] && >&2 echo "<<< $line"
   printf '%s\n' "$line"
-
-  # Close socket
-  exec 3>&- 3<&-
   return 0
 }
 
-
-# Fallbacks: socat / nc
-send_raw_fallback() {
-  local data="$1" host="$2" port="$3"
-  [[ "$data" == *$'\n' ]] || data="${data}"$'\n'
-
+rpc_send_recv_fallback() {
+  local json="$1"
+  [[ "$json" == *$'\n' ]] || json="${json}"$'\n'
+  [[ "$DEBUG_RPC" -eq 1 ]] && >&2 echo "(fb)>>> $json"
   if command -v socat >/dev/null 2>&1; then
-    printf '%s' "$data" | socat - TCP:"$host":"$port"
-    return $?
-  fi
-
-  if command -v nc >/dev/null 2>&1; then
-    local help; help="$(nc -h 2>&1 || true)"
-    if echo "$help" | grep -qi -- ' -N'; then
-      printf '%s' "$data" | nc -N "$host" "$port"
-    elif echo "$help" | grep -qi -- ' -q '; then
-      printf '%s' "$data" | nc -q 1 "$host" "$port"
-    else
-      printf '%s' "$data" | nc "$host" "$port"
-    fi
-    return $?
-  fi
-
-  return 14
-}
-
-send_raw() {
-  local data="$1" host="$2" port="$3"
-  if send_raw_devtcp "$data" "$host" "$port"; then
+    local resp; resp="$(printf '%s' "$json" | socat - TCP:"$HOST":"$PORT")" || return $?
+    [[ "$DEBUG_RPC" -eq 1 ]] && >&2 echo "(fb)<<< $resp"
+    printf '%s\n' "$resp"
     return 0
   fi
-  send_raw_fallback "$data" "$host" "$port"
+  if command -v nc >/dev/null 2>&1; then
+    local help; help="$(nc -h 2>&1 || true)"
+    local resp
+    if   echo "$help" | grep -qi -- ' -N'; then resp="$(printf '%s' "$json" | nc -N "$HOST" "$PORT")"
+    elif echo "$help" | grep -qi -- ' -q '; then resp="$(printf '%s' "$json" | nc -q 1 "$HOST" "$PORT")"
+    else resp="$(printf '%s' "$json" | nc "$HOST" "$PORT")"; fi
+    [[ "$DEBUG_RPC" -eq 1 ]] && >&2 echo "(fb)<<< $resp"
+    printf '%s\n' "$resp"
+    return 0
+  fi
+  echo "Error: neither /dev/tcp nor socat/nc available." >&2
+  return 96
 }
 
 rpc_id="$ID_START"
 rpc_call() {
   local method="$1"; local params="${2:-}"; local id="$rpc_id"
   rpc_id=$((rpc_id+1))
+
   local req
   if [[ -n "$params" ]]; then
     req=$(printf '{"jsonrpc":"2.0","id":%s,"method":"%s","params":%s}' "$id" "$method" "$params")
   else
     req=$(printf '{"jsonrpc":"2.0","id":%s,"method":"%s"}' "$id" "$method")
   fi
-  send_raw "$req" "$HOST" "$PORT"
-}
 
-# Extract helper with jq or minimal sed fallback
-json_get() {
-  local j="$1" filt="$2"
-  if has_jq; then
-    echo "$j" | jq -er "$filt" 2>/dev/null || return 1
-  else
-    case "$filt" in
-      .result.data.jobId)             sed -n 's/.*"jobId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$j" | head -n1 ;;
-      .result.data.state)             sed -n 's/.*"state"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$j" | head -n1 ;;
-      .result.data.progress)          sed -n 's/.*"progress"[[:space:]]*:[[:space:]]*\([0-9]\+\).*/\1/p' <<<"$j" | head -n1 ;;
-      .result.data.message)           sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$j" | head -n1 ;;
-      .result.data.error)             sed -n 's/.*"error"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$j" | head -n1 ;;
-      .result.data.profileName)       sed -n 's/.*"profileName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$j" | head -n1 ;;
-      .result.data.isFanControlRelease) sed -n 's/.*"isFanControlRelease"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' <<<"$j" | head -n1 ;;
-      *) return 1 ;;
-    esac
+  local resp=""
+  if [[ "$SESSION_OPEN" -eq 1 ]]; then
+    resp="$(rpc_send_recv "$req" || true)"
+    if [[ -z "$resp" ]]; then
+      close_session || true
+      if open_session; then
+        resp="$(rpc_send_recv "$req" || true)"
+      fi
+    fi   # <- hier war fälschlich 'end'
   fi
-}
 
-print_resp_if_requested() {
-  local resp="$1"
+  if [[ -z "$resp" ]]; then
+    resp="$(rpc_send_recv_fallback "$req" || true)"
+  fi
+
+  if [[ -z "$resp" ]]; then
+    echo ""
+    return 1
+  fi
+
   if [[ "$JQ_PRETTY" -eq 1 && $(has_jq; echo $?) -eq 0 ]]; then
-    echo "$resp" | jq .
+    echo "$resp" | jq . || echo "$resp"
+  else
+    echo "$resp"
   fi
 }
 
-# ----------------------------- Start Import ----------------------------------
-# Build params — IMPORTANT: server expects keys "name" and "validateDetect"
+# ------------------------ Robust JSON field extraction -----------------------
+json_try_paths() {
+  local j="$1"; shift
+  if command -v jq >/dev/null 2>&1; then
+    for p in "$@"; do
+      local out
+      out="$(jq -er "$p" <<<"$j" 2>/dev/null || true)"
+      [[ -n "$out" ]] && { echo "$out"; return 0; }
+    done
+    return 1
+  else
+    local out
+    for p in "$@"; do
+      case "$p" in
+        .result.data.jobId|.result.jobId)
+          out="$(sed -n 's/.*"jobId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$j" | head -n1)";;
+        .result.data.state|.result.state)
+          out="$(sed -n 's/.*"state"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$j" | head -n1)";;
+        .result.data.progress|.result.progress)
+          out="$(sed -n 's/.*"progress"[[:space:]]*:[[:space:]]*\([0-9]\+\).*/\1/p' <<<"$j" | head -n1)";;
+        .result.data.message|.result.message|.result.msg)
+          out="$(sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$j" | head -n1)"; [[ -z "$out" ]] && out="$(sed -n 's/.*"msg"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$j" | head -n1)";;
+        .result.data.error|.result.error)
+          out="$(sed -n 's/.*"error"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$j" | head -n1)";;
+        .error.message)
+          out="$(sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$j" | head -n1)";;
+        *) out="";;
+      esac
+      [[ -n "$out" ]] && { echo "$out"; return 0; }
+    done
+    return 1
+  fi
+}
+
+# ----------------------------- Build import params ---------------------------
 params_import="$(jq -cn --arg p "$FCR_PATH" \
                        --arg n "$PROFILE_NAME" \
                        --argjson v "$VALIDATE_DETECT" \
@@ -222,68 +245,46 @@ params_import="$(jq -cn --arg p "$FCR_PATH" \
                        --argjson t "$TIMEOUT_MS" \
                        '{path:$p, name:$n, validateDetect:($v==1), rpmMin:$r, timeoutMs:$t}' 2>/dev/null || true)"
 if [[ -z "$params_import" ]]; then
-  params_import="{\"path\":\"$FCR_PATH\",\"name\":\"$PROFILE_NAME\",\"validateDetect\":$([[ $VALIDATE_DETECT -eq 1 ]] && echo true || echo false),\"rpmMin\":$RPM_MIN,\"timeoutMs\":$TIMEOUT_MS}"
+  params_import="{\"path\":\"$FCR_PATH\",\"name\":\"$PROFILE_NAME\",\"validateDetect\":$([[ $VALIDATE_DETECT -eq 1 ]] && echo true || echo false),\"rpmMin\":${RPM_MIN},\"timeoutMs\":${TIMEOUT_MS}}"
 fi
 
-log "${C_C}[$(ts)] Starting import:${C_N} path=${FCR_PATH}, name=${PROFILE_NAME}, validateDetect=${VALIDATE_DETECT}, rpmMin=${RPM_MIN}, timeoutMs=${TIMEOUT_MS}"
+# -------------------------------- Run ----------------------------------------
+log "${C_C}[$(ts)] Connecting ${HOST}:${PORT}${C_N}"
+open_session || log "${C_Y}No persistent /dev/tcp; using fallback transport.${C_N}"
 
+log "${C_C}[$(ts)] Starting import${C_N}: path=${FCR_PATH}, name=${PROFILE_NAME}"
 resp_start="$(rpc_call "profile.importAs" "$params_import" || true)"
-if [[ -z "${resp_start:-}" ]]; then
-  echo "Error: no response from server (profile.importAs)." >&2
-  exit 20
-fi
-print_resp_if_requested "$resp_start"
+[[ -n "${resp_start:-}" ]] || { echo "Error: no response (profile.importAs)" >&2; close_session || true; exit 20; }
 
-jobId="$(json_get "$resp_start" '.result.data.jobId' || true)"
-if [[ -z "$jobId" ]]; then
-  echo "Error: jobId not found in response from profile.importAs." >&2
-  exit 21
-fi
-log "${C_G}[$(ts)] Import job started:${C_N} jobId=${jobId}"
+jobId="$(json_try_paths "$resp_start" .result.data.jobId .result.jobId)"
+[[ -n "$jobId" ]] || { echo "Error: jobId missing in response" >&2; close_session || true; exit 21; }
+log "${C_G}[$(ts)] Job started${C_N}: jobId=${jobId}"
 
-# ----------------------------- Poll Status -----------------------------------
-state="pending"
+state="running"
 progress="0"
-message=""
-errorMsg=""
 
 while true; do
-  params_status="{\"jobId\":\"$jobId\"}"
-  resp_stat="$(rpc_call "profile.importStatus" "$params_status" || true)"
-  if [[ -z "${resp_stat:-}" ]]; then
-    echo "Error: no response from server (profile.importStatus)." >&2
-    exit 22
-  fi
+  resp_stat="$(rpc_call "profile.importStatus" "{\"jobId\":\"$jobId\"}" || true)"
+  [[ -n "${resp_stat:-}" ]] || { echo "Error: no response (profile.importStatus)" >&2; close_session || true; exit 22; }
 
-  print_resp_if_requested "$resp_stat"
-
-  # Primary: fields under .result.data
-  state="$(json_get "$resp_stat" '.result.data.state' || true)"
-  progress="$(json_get "$resp_stat" '.result.data.progress' || true)"
-  message="$(json_get "$resp_stat" '.result.data.message' || true)"
-  errorMsg="$(json_get "$resp_stat" '.result.data.error' || true)"
-
-  # Fallback: nested .result.data.status.*
-  if [[ -z "$state" ]]; then
-    state="$(json_get "$resp_stat" '.result.data.status.state' || true)"
-    progress="$(json_get "$resp_stat" '.result.data.status.progress' || true)"
-    message="$(json_get "$resp_stat" '.result.data.status.message' || true)"
-    errorMsg="$(json_get "$resp_stat" '.result.data.status.error' || true)"
-  fi
-
+  state="$(json_try_paths "$resp_stat" .result.data.state .result.state)"
   [[ -z "$state" ]] && state="running"
+  progress="$(json_try_paths "$resp_stat" .result.data.progress .result.progress)"
   [[ -z "$progress" ]] && progress="0"
+  message="$(json_try_paths "$resp_stat" .result.data.message .result.message .result.msg || true)"
+  errorMsg="$(json_try_paths "$resp_stat" .result.data.error .result.error .error.message || true)"
 
   case "$state" in
     running|pending)
       log "[$(ts)] ${C_B}${progress}%${C_N} ${message}"
       ;;
-    done)
+    done|finished|success)
       log "${C_G}[$(ts)] Import finished.${C_N}"
       break
       ;;
-    error)
+    error|failed)
       log "${C_R}[$(ts)] Import error:${C_N} ${errorMsg:-$message}"
+      close_session || true
       exit 23
       ;;
     *)
@@ -294,25 +295,18 @@ while true; do
   sleep "$(awk -v ms="$POLL_MS" 'BEGIN{ printf("%.3f", ms/1000.0) }')"
 done
 
-# ----------------------------- Commit (optional) -----------------------------
-
 if [[ "$DO_COMMIT" -eq 1 ]]; then
   log "${C_C}[$(ts)] Committing profile...${C_N}"
   resp_commit="$(rpc_call "profile.importCommit" "{\"jobId\":\"$jobId\"}" || true)"
-  if [[ -z "${resp_commit:-}" ]]; then
-    echo "Error: no response from server (profile.importCommit)." >&2
-    exit 24
-  fi
-  print_resp_if_requested "$resp_commit"
+  [[ -n "${resp_commit:-}" ]] || { echo "Error: no response (profile.importCommit)" >&2; close_session || true; exit 24; }
   log "${C_G}[$(ts)] Commit done.${C_N}"
-  # enable engine after successful commit (optional)
-  if [[ $DO_ENABLE -eq 1 ]]; then
-    resp_engine="$(rpc_call "engine.enable")"
-    if [[ -z "${resp_engine:-}" ]]; then
-      echo "Error: no response from server (engine.enable)." >&2
-      exit 25
-    fi
-    print_resp_if_requested "$resp_engine"
-    log "${C_G}[$(ts)] Engine: enable${C_N}"
+
+  if [[ "$DO_ENABLE" -eq 1 ]]; then
+    resp_engine="$(rpc_call "engine.enable" || true)"
+    [[ -n "${resp_engine:-}" ]] || { echo "Error: no response (engine.enable)" >&2; close_session || true; exit 25; }
+    log "${C_G}[$(ts)] Engine enabled.${C_N}"
   fi
 fi
+
+close_session || true
+exit 0
