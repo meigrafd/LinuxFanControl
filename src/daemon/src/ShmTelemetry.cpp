@@ -12,10 +12,24 @@
 #include "include/Profile.hpp"
 #include "include/Version.hpp"
 #include "include/Log.hpp"
+// Parse environment override for SHM mode (octal like "0666" or decimal like "438")
+static mode_t shm_mode_from_env(mode_t fallback) {
+    const char* ev = std::getenv("LFCD_SHM_MODE");
+    if (!ev || !*ev) return fallback;
+    errno = 0;
+    // Accept octal (leading 0) or decimal
+    long v = std::strtol(ev, nullptr, (ev[0] == '0') ? 8 : 10);
+    if (errno != 0 || v <= 0) return fallback;
+    mode_t m = static_cast<mode_t>(v) & 0777;
+    if (m == 0) m = fallback;
+    return m;
+}
+
 
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <cstdlib>
 #include <unistd.h>
 
 #include <cerrno>
@@ -45,7 +59,7 @@ using nlohmann::json;
 static inline std::string base_name(const std::string& p) {
     auto pos = p.find_last_of("/\\");
     return (pos == std::string::npos) ? p : p.substr(pos + 1);
-}
+                }
 
 static inline bool starts_with(const std::string& s, const char* prefix) {
     const size_t n = std::strlen(prefix);
@@ -185,9 +199,17 @@ static json jProfileSummary(const Profile& p) {
             if (!fc.type.empty()) cj["type"] = fc.type;
             if (!fc.tempSensors.empty()) cj["tempSensors"] = fc.tempSensors;
             if (!fc.points.empty()) cj["pointsCount"] = fc.points.size();
-            // optional: trigger-Infos, falls gesetzt
-            if (fc.onC != 0.0 || fc.offC != 0.0) {
-                cj["trigger"] = json{{"onC", fc.onC}, {"offC", fc.offC}};
+            // optional: trigger info (new schema)
+            if (fc.type == "trigger") {
+                if (fc.idleTemperature != 0.0 || fc.loadTemperature != 0.0 ||
+        fc.idleFanSpeed != 0.0   || fc.loadFanSpeed != 0.0) {
+                    json tj;
+                    tj["IdleTemperature"] = fc.idleTemperature;
+                    tj["LoadTemperature"] = fc.loadTemperature;
+                    tj["IdleFanSpeed"]    = fc.idleFanSpeed;
+                    tj["LoadFanSpeed"]    = fc.loadFanSpeed;
+                    cj["trigger"] = std::move(tj);
+    }
             }
             arr.push_back(std::move(cj));
         }
@@ -202,9 +224,7 @@ static json jProfileSummary(const Profile& p) {
             json hj;
             if (!h.hwmonPath.empty()) hj["hwmonPath"] = h.hwmonPath;
             if (!h.name.empty())      hj["name"]      = h.name;
-            if (!h.vendor.empty())    hj["vendor"]    = h.vendor;
-            if (!h.pwms.empty())      hj["pwmCount"]  = h.pwms.size();
-            arr.push_back(std::move(hj));
+            if (!h.vendor.empty())    hj["vendor"]    = h.vendor;arr.push_back(std::move(hj));
         }
         j["hwmons"] = std::move(arr);
     }
@@ -263,8 +283,37 @@ struct ShmTelemetryImpl {
         const size_t size = payload.size();
 
         // 1) POSIX SHM
-        int fd = shm_open(shmName.c_str(), O_CREAT | O_RDWR, 0660);
-        if (fd >= 0) {
+        mode_t shmMode = shm_mode_from_env(0666);
+        mode_t _old_umask = ::umask(0);
+int fd = shm_open(shmName.c_str(), O_CREAT | O_EXCL | O_RDWR, shmMode);
+if (fd < 0 && errno == EEXIST) {
+    // Existing segment may have restrictive perms; recreate with wide perms
+    ::shm_unlink(shmName.c_str());
+    fd = shm_open(shmName.c_str(), O_CREAT | O_EXCL | O_RDWR, shmMode);
+}
+::umask(_old_umask);
+if (fd >= 0) {
+
+// Sanity: ensure 0666 perms and warn about ownership
+struct stat st{};
+if (::fstat(fd, &st) == 0) {
+    if ((st.st_mode & 0777) != 0666) {
+        if (::fchmod(fd, shmMode) != 0) {
+            LOG_WARN("shm: fchmod(LFCD_SHM_MODE) failed (mode=%03o uid=%d gid=%d errno=%d) — readers may get PermissionsError",
+                     (st.st_mode & 0777), (int)st.st_uid, (int)st.st_gid, errno);
+        }
+    }
+    uid_t me = ::getuid();
+    if (st.st_uid != me && st.st_uid != 0) {
+        LOG_WARN("shm: segment owned by uid=%d (self=%d); consider cleaning stale segment or adjusting service user.",
+                 (int)st.st_uid, (int)me);
+    }
+} else {
+    LOG_WARN("shm: fstat failed (errno=%d)", errno);
+}
+
+            (void)::fchmod(fd, shmMode);
+            (void)::fchmod(fd, shmMode);
             bool ok = true;
             if (ftruncate(fd, static_cast<off_t>(size)) != 0) {
                 ok = false;

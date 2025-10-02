@@ -569,11 +569,14 @@ bool FanControlImport::LoadAndMap(const std::string& path,
                         default: fc.mix = MixFunction::Avg; break;
                     }
                 } else if ((hasIdle && hasLoad) || nameTrig) {
-                    fc.type = "trigger";
-                    fc.onC  = j2d(cj, "LoadTemperature", j2d(cj, "TriggerOn",  0.0));
-                    fc.offC = j2d(cj, "IdleTemperature", j2d(cj, "TriggerOff", 0.0));
-                    collectCurveTempSources(cj, fc.tempSensors, temps);
-                } else if (hasPoints) {
+    fc.type = "trigger";
+    // New schema: Idle/Load temps + speeds (no onC/offC, no graph conversion)
+    fc.idleTemperature = j2d(cj, "IdleTemperature", j2d(cj, "TriggerOff", 0.0));
+    fc.loadTemperature = j2d(cj, "LoadTemperature", j2d(cj, "TriggerOn",  0.0));
+    fc.idleFanSpeed    = j2d(cj, "IdleFanSpeed", 0.0);
+    fc.loadFanSpeed    = j2d(cj, "LoadFanSpeed", 0.0);
+    collectCurveTempSources(cj, fc.tempSensors, temps);
+} else if (hasPoints) {
                     fc.type = "graph";
                     collectCurveTempSources(cj, fc.tempSensors, temps);
                     auto pts = parse_points(cj["Points"]);
@@ -594,10 +597,7 @@ bool FanControlImport::LoadAndMap(const std::string& path,
                 if (fc.name.empty()) continue;
                 if (!curveNames.insert(fc.name).second) { ++skippedDup; continue; }
 
-                LOG_DEBUG("import: curve '%s' type=%s sensors=%zu refs=%zu points=%zu on=%.2f off=%.2f mix=%d",
-                          fc.name.c_str(), fc.type.c_str(),
-                          fc.tempSensors.size(), fc.curveRefs.size(), fc.points.size(),
-                          fc.onC, fc.offC, (int)fc.mix);
+                LOG_DEBUG("import: curve '%s' type=%s sensors=%zu refs=%zu points=%zu idleT=%.2f loadT=%.2f idle%%=%.2f load%%=%.2f mix=%d", fc.name.c_str(), fc.type.c_str(), fc.tempSensors.size(), fc.curveRefs.size(), fc.points.size(), fc.idleTemperature, fc.loadTemperature, fc.idleFanSpeed, fc.loadFanSpeed, (int)fc.mix);
 
                 out.fanCurves.push_back(std::move(fc));
             }

@@ -92,7 +92,126 @@ bool Engine::tick(double deltaC) {
             continue;
         }
 
-        // Aggregate temperatures from the curve's sensor list
+
+
+// --- MIX CURVES: compute from referenced curves' own temps ---
+if (curve->type == "mix") {
+    std::vector<int> percents;
+    std::vector<double> tempsForLog;
+    percents.reserve(curve->curveRefs.size());
+    tempsForLog.reserve(curve->curveRefs.size());
+    for (const auto& refName : curve->curveRefs) {
+        const FanCurveMeta* ref = nullptr;
+        for (const auto& c2 : profile_.fanCurves) {
+            if (c2.name == refName) { ref = &c2; break; }
+        }
+        if (!ref) continue;
+
+        // collect temps for this referenced curve
+        std::vector<double> tvals;
+        tvals.reserve(ref->tempSensors.size());
+        for (const auto& path : ref->tempSensors) {
+            const HwmonTemp* t = findTempSensor(path);
+            if (!t) continue;
+            auto v = Hwmon::readTempC(*t);
+            if (v) tvals.push_back(*v);
+        }
+        if (tvals.empty()) continue;
+
+        double tref = 0.0;
+        if (ref->mix == MixFunction::Min) {
+            tref = *std::min_element(tvals.begin(), tvals.end());
+        } else if (ref->mix == MixFunction::Max) {
+            tref = *std::max_element(tvals.begin(), tvals.end());
+        } else {
+            double s = 0.0; for (double x : tvals) s += x;
+            tref = s / static_cast<double>(tvals.size());
+        }
+        tempsForLog.push_back(tref);
+
+        // percent of the referenced curve at its own temp
+        percents.push_back(curvePercent(*ref, tref));
+    }
+
+    if (percents.empty()) {
+        LOG_DEBUG("engine: mix '%s' has no usable referenced temps on %s [%s] -> skip tick",
+                  curve->name.c_str(), pwm->path_pwm.c_str(), label.c_str());
+        continue;
+    }
+
+    // combine percents according to mix function
+    int mixPct = 0;
+    if (curve->mix == MixFunction::Min) {
+        mixPct = *std::min_element(percents.begin(), percents.end());
+    } else if (curve->mix == MixFunction::Max) {
+        mixPct = *std::max_element(percents.begin(), percents.end());
+    } else {
+        long sum = 0; for (int v : percents) sum += v;
+        mixPct = static_cast<int>(std::lround(static_cast<double>(sum) / percents.size()));
+    }
+
+    // synthesize an avgTempC for logging/gating based on the same rule
+    double avgTempC = 0.0;
+    if (curve->mix == MixFunction::Min) {
+        avgTempC = *std::min_element(tempsForLog.begin(), tempsForLog.end());
+    } else if (curve->mix == MixFunction::Max) {
+        avgTempC = *std::max_element(tempsForLog.begin(), tempsForLog.end());
+    } else {
+        double s = 0.0; for (double x : tempsForLog) s += x;
+        avgTempC = s / static_cast<double>(tempsForLog.size());
+    }
+
+    // Minimum-change gate
+    double deltaAbs = st.hasLastTemp ? std::fabs(avgTempC - st.lastTempC) : 0.0;
+    if (st.hasLastTemp && deltaAbs < deltaC) {
+        st.lastTempC = avgTempC;
+        LOG_TRACE("engine: temp gate (mix): |%.3f-%.3f|=%.3f°C < gate=%.3f°C -> keep %d%% on %s [%s]",
+                  avgTempC, st.prevTempC, std::fabs(avgTempC - st.prevTempC), deltaC,
+                  st.lastPercent, pwm->path_pwm.c_str(), label.c_str());
+        continue;
+    }
+
+    const int outPct = applyHysteresis(st, mixPct);
+
+    // Ensure manual mode before write (tolerate devices without enable path)
+    {
+        auto en = Hwmon::readEnable(*pwm); // optional<int>
+        if (en.has_value()) {
+            if (*en != 1) {
+                if (Hwmon::setEnable(*pwm, 1)) {
+                    LOG_DEBUG("engine: set manual mode (enable=1) on %s [%s]", pwm->path_pwm.c_str(), label.c_str());
+                } else {
+                    LOG_WARN("engine: failed to set manual mode on %s [%s]", pwm->path_pwm.c_str(), label.c_str());
+                }
+            }
+        } else {
+            // No enable path exposed (common on some GPUs) -> proceed without trying and avoid scary warnings.
+            LOG_TRACE("engine: no enable path for %s [%s] — assuming device handles mode automatically", pwm->path_pwm.c_str(), label.c_str());
+        }
+    }
+
+    if (outPct != st.lastPercent) {
+        if (Hwmon::setPercent(*pwm, outPct)) {
+            if (st.hasLastTemp) {
+                LOG_DEBUG("engine: set %s [%s] <- %d%% (was %d%%) @ mixTemp=%.2f°C; Δ=%.3f°C ≥ gate=%.3f°C",
+                          pwm->path_pwm.c_str(), label.c_str(), outPct, st.lastPercent, avgTempC, deltaAbs, deltaC);
+            } else {
+                LOG_DEBUG("engine: set %s [%s] <- %d%% (was %d%%) @ mixTemp=%.2f°C; Δ=n/a (first sample), gate=%.3f°C",
+                          pwm->path_pwm.c_str(), label.c_str(), outPct, st.lastPercent, avgTempC, deltaC);
+            }
+            st.lastPercent = outPct;
+            anyChanged = true;
+        } else {
+            LOG_WARN("engine: setPercent failed on %s [%s] -> %d%% (mix)",
+                     pwm->path_pwm.c_str(), label.c_str(), outPct);
+        }
+    }
+    st.prevTempC = st.hasLastTemp ? st.lastTempC : avgTempC;
+    st.lastTempC = avgTempC;
+    st.hasLastTemp = true;
+    continue; // done with this control (mix handled)
+}
+// Aggregate temperatures from the curve's sensor list
         std::vector<double> tempsC;
         tempsC.reserve(curve->tempSensors.size());
         for (const auto& path : curve->tempSensors) {
@@ -197,14 +316,46 @@ const HwmonTemp* Engine::findTempSensor(const std::string& path) const {
 }
 
 int Engine::curvePercent(const FanCurveMeta& curve, double tempC) const {
+    // Trigger curves: use Idle/Load temperatures and speeds (new schema)
+    if (curve.type == "trigger") {
+        const double idleT = curve.idleTemperature;
+        const double loadT = curve.loadTemperature;
+
+        double idlePct = curve.idleFanSpeed;
+        double loadPct = curve.loadFanSpeed;
+
+        // Fallback: if speeds unset, derive from lowest/highest point if available
+        if ((idlePct == 0.0 && loadPct == 0.0) && !curve.points.empty()) {
+            auto itMin = std::min_element(curve.points.begin(), curve.points.end(),
+                                          [](const CurvePoint& a, const CurvePoint& b){ return a.tempC < b.tempC; });
+            auto itMax = std::max_element(curve.points.begin(), curve.points.end(),
+                                          [](const CurvePoint& a, const CurvePoint& b){ return a.tempC < b.tempC; });
+            if (itMin != curve.points.end()) idlePct = itMin->percent;
+            if (itMax != curve.points.end()) loadPct = itMax->percent;
+        }
+
+        if (tempC >= loadT) {
+            return clamp01(static_cast<int>(std::lround(loadPct)));
+        } else if (tempC <= idleT) {
+            return clamp01(static_cast<int>(std::lround(idlePct)));
+        } else {
+            // Between thresholds: choose the nearer target to avoid oscillation;
+            // applyHysteresis() at call-site will smooth transitions further.
+            const double mid = (idleT + loadT) * 0.5;
+            const double pick = (tempC >= mid) ? loadPct : idlePct;
+            return clamp01(static_cast<int>(std::lround(pick)));
+        }
+    }
+
+    // Graph curves: piecewise linear interpolation
     if (curve.points.empty()) return 0;
 
     const auto& pts = curve.points;
     if (tempC <= pts.front().tempC) {
-        return clamp01(pts.front().percent);
+        return clamp01(static_cast<int>(std::lround(pts.front().percent)));
     }
     if (tempC >= pts.back().tempC) {
-        return clamp01(pts.back().percent);
+        return clamp01(static_cast<int>(std::lround(pts.back().percent)));
     }
 
     for (size_t i = 1; i < pts.size(); ++i) {
@@ -218,9 +369,8 @@ int Engine::curvePercent(const FanCurveMeta& curve, double tempC) const {
             return clamp01(static_cast<int>(std::lround(y)));
         }
     }
-    return clamp01(pts.back().percent);
+    return clamp01(static_cast<int>(std::lround(pts.back().percent)));
 }
-
 int Engine::applyHysteresis(RuleState& st, int target) {
     // Keep original behavior: small smoothing by stepping toward target
     const int cur = (st.lastPercent < 0) ? 0 : st.lastPercent;

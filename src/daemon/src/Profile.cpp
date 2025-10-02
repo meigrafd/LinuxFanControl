@@ -6,7 +6,7 @@
  *  - Preserve curve type faithfully across save/load.
  *  - Write only fields that semantically belong to the type:
  *      graph   → points, tempSensors
- *      trigger → onC, offC, tempSensors
+ *      trigger → IdleTemperature, LoadTemperature, IdleFanSpeed, LoadFanSpeed, tempSensors
  *      mix     → curveRefs, mix
  *  - Robust load fallback: if type looks inconsistent (e.g. type=graph but no
  *    points and ≥2 curveRefs), coerce to mix; if type=trigger but thresholds
@@ -76,77 +76,91 @@ void to_json(json& j, const FanCurveMeta& f) {
     if (f.type == "graph") {
         j["points"]      = f.points;
         j["tempSensors"] = f.tempSensors;   // one per curve in our pipeline
-        // mix & curveRefs & thresholds are irrelevant for graph
     } else if (f.type == "trigger") {
-        j["onC"]         = f.onC;
-        j["offC"]        = f.offC;
-        j["tempSensors"] = f.tempSensors;   // one per trigger
+        // New trigger schema: FCR-style names only (no onC/offC)
+        j["IdleTemperature"] = f.idleTemperature;
+        j["LoadTemperature"] = f.loadTemperature;
+        j["IdleFanSpeed"]    = f.idleFanSpeed;
+        j["LoadFanSpeed"]    = f.loadFanSpeed;
+        j["tempSensors"]     = f.tempSensors;
     } else if (f.type == "mix") {
         j["mix"]       = mixToStr(f.mix);
-        j["curveRefs"] = f.curveRefs;       // referenced curves supply sensors
-        // do not emit points/tempSensors for pure mix
+        j["curveRefs"] = f.curveRefs;
     } else {
         // Unknown type: store everything we have to avoid data loss.
-        j["points"]      = f.points;
-        j["tempSensors"] = f.tempSensors;
-        j["onC"]         = f.onC;
-        j["offC"]        = f.offC;
-        j["mix"]         = mixToStr(f.mix);
-        j["curveRefs"]   = f.curveRefs;
+        j["points"]        = f.points;
+        j["tempSensors"]   = f.tempSensors;
+        j["IdleTemperature"] = f.idleTemperature;
+        j["LoadTemperature"] = f.loadTemperature;
+        j["IdleFanSpeed"]    = f.idleFanSpeed;
+        j["LoadFanSpeed"]    = f.loadFanSpeed;
+        j["mix"]           = mixToStr(f.mix);
+        j["curveRefs"]     = f.curveRefs;
     }
 
     // controlRefs are meta links (UI), safe to keep across types
     if (!f.controlRefs.empty()) j["controlRefs"] = f.controlRefs;
 }
 
-void from_json(const json& j, FanCurveMeta& f) {
-    f = FanCurveMeta{}; // reset
-    f.name = j.value("name", std::string{});
-    f.type = j.value("type", std::string{});
+void from_json(const json& j, FanCurveMeta& f) {f = FanCurveMeta{}; // reset
+f.name = j.value("name", std::string{});
+f.type = j.value("type", std::string{});
 
-    // Load everything that might be present.
-    if (j.contains("points"))       f.points      = j.at("points").get<std::vector<CurvePoint>>();
-    if (j.contains("tempSensors"))  f.tempSensors = j.at("tempSensors").get<std::vector<std::string>>();
-    if (j.contains("curveRefs"))    f.curveRefs   = j.at("curveRefs").get<std::vector<std::string>>();
-    if (j.contains("controlRefs"))  f.controlRefs = j.at("controlRefs").get<std::vector<std::string>>();
-    f.onC  = j.value("onC",  0.0);
-    f.offC = j.value("offC", 0.0);
-    f.mix  = mixFromAny(j.value("mix", json{}), MixFunction::Avg);
+// Load everything that might be present.
+if (j.contains("points"))       f.points      = j.at("points").get<std::vector<CurvePoint>>();
+if (j.contains("tempSensors"))  f.tempSensors = j.at("tempSensors").get<std::vector<std::string>>();
+if (j.contains("curveRefs"))    f.curveRefs   = j.at("curveRefs").get<std::vector<std::string>>();
+if (j.contains("controlRefs"))  f.controlRefs = j.at("controlRefs").get<std::vector<std::string>>();
+f.mix  = mixFromAny(j.value("mix", json{}), MixFunction::Avg);
 
-    // Robust type reconciliation in case of inconsistent/legacy data:
-    const bool hasPoints    = !f.points.empty();
-    const bool hasRefsMix   = f.curveRefs.size() >= 2;
-    const bool hasThresh    = (f.onC != 0.0 || f.offC != 0.0);
+// New trigger schema (no back-compat): read FCR-style names only
+f.idleTemperature = j.value("IdleTemperature", 0.0);
+f.loadTemperature = j.value("LoadTemperature", 0.0);
+f.idleFanSpeed    = j.value("IdleFanSpeed", 0.0);
+f.loadFanSpeed    = j.value("LoadFanSpeed", 0.0);
 
-    if (f.type == "mix") {
-        // Ensure we don't carry meaningless data for mix
-        f.points.clear();
-        f.onC = f.offC = 0.0;
-        f.tempSensors.clear(); // sensors come from referenced curves
-    } else if (f.type == "trigger") {
-        // Trigger should not have points
-        f.points.clear();
-    } else if (f.type == "graph") {
-        // Graph should not carry trigger thresholds or curveRefs
-        f.onC = f.offC = 0.0;
-        f.curveRefs.clear();
-    }
+// Robust type reconciliation in case of inconsistent data:
+const bool hasPoints   = !f.points.empty();
+const bool hasRefsMix  = f.curveRefs.size() >= 2;
+const bool hasThresh   = (f.loadTemperature != 0.0 || f.idleTemperature != 0.0);
 
-    // Fallbacks: fix obviously wrong combinations
-    if (f.type.empty()) {
-        // Deduce type from content
-        if (hasRefsMix)       f.type = "mix";
-        else if (hasThresh)   f.type = "trigger";
-        else                  f.type = "graph";
-    } else if (f.type == "graph" && !hasPoints && hasRefsMix) {
-        // Looks like a mix that was mis-labeled as graph
-        f.type = "mix";
-        f.tempSensors.clear();
-        f.onC = f.offC = 0.0;
-    } else if (f.type == "trigger" && hasPoints && !hasThresh) {
-        // Looks like a graph mislabeled as trigger
-        f.type = "graph";
-    }
+if (f.type == "mix") {
+    // Ensure we don't carry meaningless data for mix
+    f.points.clear();
+    f.tempSensors.clear(); // sensors come from referenced curves
+    // trigger fields are irrelevant for mix
+    f.idleTemperature = f.loadTemperature = 0.0;
+    f.idleFanSpeed = f.loadFanSpeed = 0.0;
+} else if (f.type == "trigger") {
+    // Trigger should not have points (we keep speeds/thresholds only)
+    f.points.clear();
+    f.curveRefs.clear();
+} else if (f.type == "graph") {
+    // Graph should not carry trigger thresholds or curveRefs
+    f.idleTemperature = f.loadTemperature = 0.0;
+    f.idleFanSpeed = f.loadFanSpeed = 0.0;
+    f.curveRefs.clear();
+}
+
+// Fallbacks: fix obviously wrong combinations
+if (f.type.empty()) {
+    // Deduce type from content
+    if (hasRefsMix)       f.type = "mix";
+    else if (hasThresh)   f.type = "trigger";
+    else                  f.type = "graph";
+} else if (f.type == "graph" && !hasPoints && hasRefsMix) {
+    // Looks like a mix that was mis-labeled as graph
+    f.type = "mix";
+    f.tempSensors.clear();
+    f.idleTemperature = f.loadTemperature = 0.0;
+    f.idleFanSpeed = f.loadFanSpeed = 0.0;
+} else if (f.type == "trigger" && hasPoints && !hasThresh) {
+    // Looks like a graph mislabeled as trigger
+    f.type = "graph";
+    // ensure trigger fields are cleared
+    f.idleTemperature = f.loadTemperature = 0.0;
+    f.idleFanSpeed = f.loadFanSpeed = 0.0;
+}
 }
 
 /* ======================== ControlMeta ========================= */
