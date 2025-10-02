@@ -348,4 +348,49 @@ void GpuMonitor::enrichViaAMDSMI(std::vector<GpuSample>& out)
 #endif
 }
 
+
+
+bool gpuSetFanPercent_AMD(const std::string& hwmonBase, int percent)
+{
+#ifndef LFC_WITH_AMDSMI
+    (void)hwmonBase; (void)percent;
+    return false;
+#else
+    if (hwmonBase.empty()) return false;
+
+    // Map hwmon base -> PCI BDF -> AMDSMI handle
+    GpuSample tmp{};
+    tmp.hwmonPath = hwmonBase;
+    const std::string bdf = getPciBdf(tmp);
+    if (bdf.empty()) {
+        LOG_DEBUG("gpu: AMDSMI setFan skip (no BDF) hwmon=%s", hwmonBase.c_str());
+        return false;
+    }
+
+    amdsmi_status_t st = amdsmi_init(AMDSMI_INIT_AMD_GPUS);
+    if (st != AMDSMI_STATUS_SUCCESS) {
+        LOG_DEBUG("gpu: AMDSMI init failed for setFan (status=%d)", (int)st);
+        return false;
+    }
+
+    auto handles = enumerateProcessors();
+    auto h = findHandleByBdf(handles, bdf);
+    if (!h) {
+        LOG_DEBUG("gpu: AMDSMI setFan no handle for pci=%s", bdf.c_str());
+        (void)amdsmi_shut_down();
+        return false;
+    }
+
+    // Convert percent (0..100) → driver scale (0..255)
+    int pct = std::max(0, std::min(100, percent));
+    uint64_t speed = static_cast<uint64_t>(std::llround(pct * 255.0 / 100.0));
+
+    // Sensor index 0 (most GPUs expose a single fan sensor)
+    uint32_t sensor = 0;
+    bool ok = (amdsmi_set_gpu_fan_speed(h, sensor, speed) == AMDSMI_STATUS_SUCCESS);
+    (void)amdsmi_shut_down();
+    return ok;
+#endif
+
+}
 } // namespace lfc

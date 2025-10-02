@@ -483,4 +483,14 @@ std::string GpuMonitor::resolveHwmonTempPath(const std::string& hwmonBase,
     return {};
 }
 
+
+
+// --- control dispatch ---
+bool setGpuFanPercentForHwmonPath(const std::string& hwmonBase, int percent) {
+    // For now only AMD backend supports control; others can be added similarly
+    (void)hwmonBase; (void)percent;
+    bool ok = false;
+    // The actual implementation lives in vendor TUs guarded by macros; we keep only a weak stub here.
+    return ok;
+}
 } // namespace lfc

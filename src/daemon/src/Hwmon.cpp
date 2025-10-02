@@ -232,18 +232,21 @@ std::optional<int> Hwmon::readRaw(const HwmonPwm& p) {
 /* ------------------------------ write helpers ----------------------------- */
 
 bool Hwmon::setEnable(const HwmonPwm& p, int mode) {
-    // Common modes: 0=auto, 1=manual (some drivers: 2=manual)
-    if (p.path_enable.empty()) {
-        LOG_WARN("Hwmon: setEnable ignored (no enable path) for %s", p.path_pwm.c_str());
-        return false;
-    }
-    const bool ok = writeInt(p.path_enable, mode);
-    if (!ok) {
-        LOG_WARN("Hwmon: setEnable failed path=%s errno=%d", p.path_enable.c_str(), errno);
-    } else {
-        LOG_DEBUG("Hwmon: setEnable path=%s mode=%d", p.path_enable.c_str(), mode);
-    }
-    return ok;
+// Common modes: 0=auto, 1=manual (some drivers: 2=manual)
+if (p.path_enable.empty()) {
+    // Some devices (notably many GPUs) do not expose an enable path.
+    // Treat this as a no-op success to avoid noisy warnings; engine will handle mode gracefully.
+    LOG_TRACE("Hwmon: setEnable noop (no enable path) for %s", p.path_pwm.c_str());
+    return true;
+}
+const bool ok = writeInt(p.path_enable, mode);
+if (!ok) {
+    LOG_WARN("Hwmon: setEnable failed path=%s errno=%d", p.path_enable.c_str(), errno);
+} else {
+    LOG_DEBUG("Hwmon: setEnable path=%s mode=%d", p.path_enable.c_str(), mode);
+}
+return ok;
+
 }
 
 bool Hwmon::setRaw(const HwmonPwm& p, int raw) {

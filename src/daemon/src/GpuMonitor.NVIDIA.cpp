@@ -177,4 +177,34 @@ void GpuMonitor::enrichViaNVML(std::vector<GpuSample>& out)
 #endif
 }
 
+
+
+bool gpuSetFanPercent_NVIDIA(const std::string& hwmonBase, int percent)
+{
+#ifndef LFC_WITH_NVML
+    (void)hwmonBase; (void)percent;
+    return false;
+#else
+    if (hwmonBase.empty()) return false;
+    GpuSample tmp{};
+    tmp.hwmonPath = hwmonBase;
+    const std::string bdf = getPciBdf(tmp);
+    if (bdf.empty()) return false;
+
+    if (nvmlInit_v2() != NVML_SUCCESS) return false;
+    nvmlDevice_t dev = nullptr;
+    if (nvmlDeviceGetHandleByPciBusId_v2(bdf.c_str(), &dev) != NVML_SUCCESS) {
+        nvmlShutdown();
+        return false;
+    }
+    unsigned int d = (unsigned int)std::max(0, std::min(100, percent));
+    nvmlReturn_t r = nvmlDeviceSetFanSpeed_v2(dev, 0 /* fan index */, d);
+    if (r != NVML_SUCCESS) {
+        nvmlShutdown();
+        return false;
+    }
+    nvmlShutdown();
+    return true;
+#endif
+}
 } // namespace lfc

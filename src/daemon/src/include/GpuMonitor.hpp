@@ -55,3 +55,23 @@ public:
 };
 
 } // namespace lfc
+
+
+// --- control API (optional backends) ---
+namespace lfc {
+// Try to set a GPU fan speed (percent 0..100) given a hwmon base path (e.g., "/sys/class/hwmon/hwmon4").
+// Returns true if any vendor backend could apply the change.
+bool setGpuFanPercentForHwmonPath(const std::string& hwmonBase, int percent);
+
+
+// Vendor hooks implemented in vendor TUs
+#if defined(LFC_WITH_AMDSMI)
+bool gpuSetFanPercent_AMD(const std::string& hwmonBase, int percent);
+#endif
+#if defined(LFC_WITH_NVML)
+bool gpuSetFanPercent_NVIDIA(const std::string& hwmonBase, int percent);
+#endif
+#if defined(LFC_WITH_IGCL)
+bool gpuSetFanPercent_INTEL(const std::string& hwmonBase, int percent);
+#endif
+}

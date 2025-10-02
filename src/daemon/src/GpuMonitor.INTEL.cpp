@@ -191,4 +191,26 @@ void GpuMonitor::enrichViaIGCL(std::vector<GpuSample>& out)
 #endif
 }
 
+
+
+bool gpuSetFanPercent_INTEL(const std::string& hwmonBase, int percent)
+{
+#ifndef LFC_WITH_IGCL
+    (void)hwmonBase; (void)percent;
+    return false;
+#else
+    if (hwmonBase.empty()) return false;
+    GpuSample tmp{};
+    tmp.hwmonPath = hwmonBase;
+    const std::string bdf = getPciBdf(tmp);
+    if (bdf.empty()) return false;
+
+    // TODO: Wire to your actual Intel control backend (IGCL/oneAPI).
+    // Placeholder symbol names:
+    igcl_device_handle dev = igcl_find_device_by_bdf(bdf.c_str());
+    if (!dev) return false;
+    unsigned int d = (unsigned int)std::max(0, std::min(100, percent));
+    return igcl_set_fan_percent(dev, d);
+#endif
+}
 } // namespace lfc
