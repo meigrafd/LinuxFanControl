@@ -1,104 +1,183 @@
 /*
  * Linux Fan Control — Profile (implementation)
  * (c) 2025 LinuxFanControl contributors
+ *
+ * Notes:
+ *  - Preserve curve type faithfully across save/load.
+ *  - Write only fields that semantically belong to the type:
+ *      graph   → points, tempSensors
+ *      trigger → onC, offC, tempSensors
+ *      mix     → curveRefs, mix
+ *  - Robust load fallback: if type looks inconsistent (e.g. type=graph but no
+ *    points and ≥2 curveRefs), coerce to mix; if type=trigger but thresholds
+ *    are zero and points exist, coerce to graph.
  */
+
 #include "include/Profile.hpp"
-#include "include/Version.hpp"
+#include "include/Version.hpp"   // LFCD_VERSION
+#include "include/Utils.hpp"     // util::read_json_file, util::write_text_file
+#include "include/Log.hpp"
 
+#include <nlohmann/json.hpp>
+#include <algorithm>
 #include <fstream>
-#include <filesystem>
-
-namespace fs = std::filesystem;
-using nlohmann::json;
+#include <string>
+#include <vector>
+#include <stdexcept>
 
 namespace lfc {
 
-/* ------------------ CurvePoint ------------------ */
+using nlohmann::json;
 
-void to_json(json& j, const CurvePoint& p) {
-    j = json{
-        {"tempC",   p.tempC},
-        {"percent", p.percent}
-    };
-}
+/* ============================ helpers ============================ */
 
-void from_json(const json& j, CurvePoint& p) {
-    p.tempC   = j.value("tempC", 0.0);
-    p.percent = j.value("percent", 0);
-}
-
-/* ------------------ FanCurveMeta ------------------ */
-
-static std::string mixToString(MixFunction m) {
+static std::string mixToStr(MixFunction m) {
     switch (m) {
         case MixFunction::Min: return "min";
-        case MixFunction::Avg: return "avg";
         case MixFunction::Max: return "max";
+        case MixFunction::Avg:
+        default: return "avg";
     }
-    return "avg";
+}
+static MixFunction mixFromAny(const json& v, MixFunction def = MixFunction::Avg) {
+    if (v.is_string()) {
+        const auto s = v.get<std::string>();
+        if (s == "min") return MixFunction::Min;
+        if (s == "max") return MixFunction::Max;
+        if (s == "avg") return MixFunction::Avg;
+    } else if (v.is_number_integer()) {
+        const int n = (int)v.get<long long>();
+        if (n == 0) return MixFunction::Min;
+        if (n == 1) return MixFunction::Max;
+        if (n == 2) return MixFunction::Avg;
+    }
+    return def;
 }
 
-static MixFunction mixFromString(const std::string& s) {
-    if (s == "min") return MixFunction::Min;
-    if (s == "max") return MixFunction::Max;
-    return MixFunction::Avg;
+/* ========================= CurvePoint ========================= */
+
+void to_json(json& j, const CurvePoint& p) {
+    j = json{{"tempC", p.tempC}, {"percent", p.percent}};
 }
+void from_json(const json& j, CurvePoint& p) {
+    p.tempC   = j.value("tempC", 0.0);
+    p.percent = j.value("percent", 0.0);
+}
+
+/* ======================== FanCurveMeta ======================== */
 
 void to_json(json& j, const FanCurveMeta& f) {
+    // Always write name/type, then type-specific fields to avoid ambiguity.
     j = json{
-        {"name",        f.name},
-        {"type",        f.type},
-        {"mix",         mixToString(f.mix)},
-        {"tempSensors", f.tempSensors},
-        {"curveRefs",   f.curveRefs},
-        {"controlRefs", f.controlRefs},
-        {"points",      f.points},
-        {"onC",         f.onC},
-        {"offC",        f.offC}
+        {"name", f.name},
+        {"type", f.type}
     };
+
+    if (f.type == "graph") {
+        j["points"]      = f.points;
+        j["tempSensors"] = f.tempSensors;   // one per curve in our pipeline
+        // mix & curveRefs & thresholds are irrelevant for graph
+    } else if (f.type == "trigger") {
+        j["onC"]         = f.onC;
+        j["offC"]        = f.offC;
+        j["tempSensors"] = f.tempSensors;   // one per trigger
+    } else if (f.type == "mix") {
+        j["mix"]       = mixToStr(f.mix);
+        j["curveRefs"] = f.curveRefs;       // referenced curves supply sensors
+        // do not emit points/tempSensors for pure mix
+    } else {
+        // Unknown type: store everything we have to avoid data loss.
+        j["points"]      = f.points;
+        j["tempSensors"] = f.tempSensors;
+        j["onC"]         = f.onC;
+        j["offC"]        = f.offC;
+        j["mix"]         = mixToStr(f.mix);
+        j["curveRefs"]   = f.curveRefs;
+    }
+
+    // controlRefs are meta links (UI), safe to keep across types
+    if (!f.controlRefs.empty()) j["controlRefs"] = f.controlRefs;
 }
 
 void from_json(const json& j, FanCurveMeta& f) {
+    f = FanCurveMeta{}; // reset
     f.name = j.value("name", std::string{});
-    f.type = j.value("type", std::string{"graph"});
-    f.mix  = mixFromString(j.value("mix", std::string{"avg"}));
+    f.type = j.value("type", std::string{});
 
-    f.tempSensors = j.value("tempSensors", std::vector<std::string>{});
-    f.curveRefs   = j.value("curveRefs",   std::vector<std::string>{});
-    f.controlRefs = j.value("controlRefs", std::vector<std::string>{});
-
-    f.points.clear();
-    if (j.contains("points") && j.at("points").is_array()) {
-        for (const auto& it : j.at("points")) {
-            f.points.push_back(it.get<CurvePoint>());
-        }
-    }
-
+    // Load everything that might be present.
+    if (j.contains("points"))       f.points      = j.at("points").get<std::vector<CurvePoint>>();
+    if (j.contains("tempSensors"))  f.tempSensors = j.at("tempSensors").get<std::vector<std::string>>();
+    if (j.contains("curveRefs"))    f.curveRefs   = j.at("curveRefs").get<std::vector<std::string>>();
+    if (j.contains("controlRefs"))  f.controlRefs = j.at("controlRefs").get<std::vector<std::string>>();
     f.onC  = j.value("onC",  0.0);
     f.offC = j.value("offC", 0.0);
+    f.mix  = mixFromAny(j.value("mix", json{}), MixFunction::Avg);
+
+    // Robust type reconciliation in case of inconsistent/legacy data:
+    const bool hasPoints    = !f.points.empty();
+    const bool hasRefsMix   = f.curveRefs.size() >= 2;
+    const bool hasThresh    = (f.onC != 0.0 || f.offC != 0.0);
+
+    if (f.type == "mix") {
+        // Ensure we don't carry meaningless data for mix
+        f.points.clear();
+        f.onC = f.offC = 0.0;
+        f.tempSensors.clear(); // sensors come from referenced curves
+    } else if (f.type == "trigger") {
+        // Trigger should not have points
+        f.points.clear();
+    } else if (f.type == "graph") {
+        // Graph should not carry trigger thresholds or curveRefs
+        f.onC = f.offC = 0.0;
+        f.curveRefs.clear();
+    }
+
+    // Fallbacks: fix obviously wrong combinations
+    if (f.type.empty()) {
+        // Deduce type from content
+        if (hasRefsMix)       f.type = "mix";
+        else if (hasThresh)   f.type = "trigger";
+        else                  f.type = "graph";
+    } else if (f.type == "graph" && !hasPoints && hasRefsMix) {
+        // Looks like a mix that was mis-labeled as graph
+        f.type = "mix";
+        f.tempSensors.clear();
+        f.onC = f.offC = 0.0;
+    } else if (f.type == "trigger" && hasPoints && !hasThresh) {
+        // Looks like a graph mislabeled as trigger
+        f.type = "graph";
+    }
 }
 
-/* ------------------ ControlMeta ------------------ */
+/* ======================== ControlMeta ========================= */
 
 void to_json(json& j, const ControlMeta& c) {
     j = json{
         {"name",     c.name},
         {"pwmPath",  c.pwmPath},
         {"curveRef", c.curveRef},
-        {"nickName", c.nickName}
+        {"nickName", c.nickName},
+        {"enabled",  c.enabled},
+        {"hidden",   c.hidden},
+        {"manual",   c.manual},
+        {"manualPercent", c.manualPercent}
     };
 }
-
 void from_json(const json& j, ControlMeta& c) {
+    c = ControlMeta{};
     c.name     = j.value("name", std::string{});
     c.pwmPath  = j.value("pwmPath", std::string{});
     c.curveRef = j.value("curveRef", std::string{});
     if (j.contains("nickName"))      c.nickName = j.at("nickName").get<std::string>();
     else if (j.contains("nick"))     c.nickName = j.at("nick").get<std::string>();
     else if (j.contains("nickname")) c.nickName = j.at("nickname").get<std::string>();
+    c.enabled  = j.value("enabled", true);
+    c.hidden   = j.value("hidden",  false);
+    c.manual   = j.value("manual",  false);
+    c.manualPercent = j.value("manualPercent", 0);
 }
 
-/* ------------------ HwmonDeviceMeta ------------------ */
+/* ====================== HwmonDeviceMeta ======================= */
 
 void to_json(json& j, const HwmonDeviceMeta& d) {
     j = json{
@@ -106,17 +185,15 @@ void to_json(json& j, const HwmonDeviceMeta& d) {
         {"name",      d.name},
         {"vendor",    d.vendor}
     };
-    // 'pwms' omitted intentionally (runtime inventory provides pwm metadata)
 }
-
 void from_json(const json& j, HwmonDeviceMeta& d) {
+    d = HwmonDeviceMeta{};
     d.hwmonPath = j.value("hwmonPath", std::string{});
     d.name      = j.value("name", std::string{});
     d.vendor    = j.value("vendor", std::string{});
-    // do not touch 'pwms' here; it is runtime-filled elsewhere
 }
 
-/* ------------------ Profile ------------------ */
+/* ============================ Profile ========================= */
 
 void to_json(json& j, const Profile& p) {
     j = json{
@@ -152,17 +229,19 @@ void from_json(const json& j, Profile& p) {
     }
 }
 
+/* ===================== File IO (Release) ====================== */
+
 Profile loadProfileFromFile(const std::string& path) {
-    std::ifstream f(path);
-    json j;
-    f >> j;
+    json j = util::read_json_file(path);
     return j.get<Profile>();
 }
 
 void saveProfileToFile(const Profile& p, const std::string& path) {
     json j = p;
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    out << j.dump(2) << "\n";
+    if (!out) throw std::runtime_error("saveProfileToFile: open failed: " + path);
+    out << j.dump(4) << "\n";
+    if (!out) throw std::runtime_error("saveProfileToFile: write failed: " + path);
 }
 
 } // namespace lfc

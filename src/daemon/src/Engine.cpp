@@ -1,14 +1,23 @@
 /*
  * Linux Fan Control — Engine (implementation)
  * (c) 2025 LinuxFanControl contributors
+ *
+ * Notes:
+ * - Skips disabled and manual controls in tick() to avoid bogus warnings.
+ * - Logs now include the control's mapped nickName (or name) alongside the pwmPath.
+ * - Replaced ambiguous "agg" and "(Δ=999.000C>=0.500C)" with clearer wording:
+ *     • "avgTemp=…" for the aggregated temperature across sensors
+ *     • "Δ=…°C ≥ gate=…°C" (or "Δ=n/a" on first sample)
  */
+
 #include "include/Engine.hpp"
 #include "include/Hwmon.hpp"
 #include "include/Log.hpp"
 
 #include <algorithm>
 #include <cmath>
-#include <chrono>
+#include <string>
+#include <vector>
 
 namespace lfc {
 
@@ -33,6 +42,14 @@ void Engine::applyProfile(const Profile& p) {
              profile_.name.c_str(), profile_.controls.size(), profile_.fanCurves.size());
 }
 
+// Helper: choose a nice label for a control (nickName > name > fallback)
+static std::string controlLabel(const ControlMeta& c, const HwmonPwm* pwm) {
+    if (!c.nickName.empty()) return c.nickName;
+    if (!c.name.empty())     return c.name;
+    if (pwm)                 return pwm->path_pwm;
+    return std::string{"(unnamed)"};
+}
+
 bool Engine::tick(double deltaC) {
     bool anyChanged = false;
 
@@ -47,9 +64,20 @@ bool Engine::tick(double deltaC) {
         const auto& ctrl = profile_.controls[i];
         RuleState& st = ruleState_[i];
 
+        // Skip disabled controls entirely
+        if (!ctrl.enabled) {
+            continue;
+        }
+        // Skip manual controls here (manual application is handled elsewhere)
+        if (ctrl.manual) {
+            continue;
+        }
+
         const HwmonPwm* pwm = findPwm(ctrl.pwmPath);
+        const std::string label = controlLabel(ctrl, pwm);
+
         if (!pwm) {
-            LOG_WARN("engine: pwm not found: %s", ctrl.pwmPath.c_str());
+            LOG_WARN("engine: pwm not found: %s [%s]", ctrl.pwmPath.c_str(), label.c_str());
             continue;
         }
 
@@ -59,7 +87,8 @@ bool Engine::tick(double deltaC) {
             if (c.name == ctrl.curveRef) { curve = &c; break; }
         }
         if (!curve) {
-            LOG_WARN("engine: curve not found: %s", ctrl.curveRef.c_str());
+            LOG_WARN("engine: curve not found: %s [%s -> %s]",
+                     ctrl.curveRef.c_str(), label.c_str(), pwm->path_pwm.c_str());
             continue;
         }
 
@@ -73,52 +102,80 @@ bool Engine::tick(double deltaC) {
             if (v) tempsC.push_back(*v);
         }
 
-        double aggC = 0.0;
+        // Ohne valide Sensorwerte NICHT schreiben (kein 0%-Ausfall) — nur Debug loggen
+        if (tempsC.empty()) {
+            LOG_DEBUG("engine: no sensor values for curve '%s' on %s [%s] -> skip tick",
+                      curve->name.c_str(), pwm->path_pwm.c_str(), label.c_str());
+            continue;
+        }
+
+        double avgTempC = 0.0;
         if (!tempsC.empty()) {
             if (curve->mix == MixFunction::Min) {
-                aggC = *std::min_element(tempsC.begin(), tempsC.end());
+                avgTempC = *std::min_element(tempsC.begin(), tempsC.end());
             } else if (curve->mix == MixFunction::Max) {
-                aggC = *std::max_element(tempsC.begin(), tempsC.end());
+                avgTempC = *std::max_element(tempsC.begin(), tempsC.end());
             } else {
                 double sum = 0.0; for (double x : tempsC) sum += x;
-                aggC = sum / static_cast<double>(tempsC.size());
+                avgTempC = sum / static_cast<double>(tempsC.size());
             }
         }
 
-        // Use deltaC as a minimum-change gate to avoid flapping
-        // If the aggregate temperature didn't move enough since the last tick,
-        // keep the existing duty and skip recalculation/apply.
-        if (st.hasLastTemp && std::fabs(aggC - st.lastTempC) < deltaC) {
-            // Update the stored temperature (small drift tracking) and continue
-            st.lastTempC = aggC;
-            LOG_TRACE("engine: deltaC gate (|%.3f-%.3f|=%.3f < %.3f) -> keep %d%% on %s",
-                      aggC, st.prevTempC, std::fabs(aggC - st.prevTempC), deltaC,
-                      st.lastPercent, pwm->path_pwm.c_str());
+        // Minimum-change gate to avoid flapping
+        double deltaAbs = st.hasLastTemp ? std::fabs(avgTempC - st.lastTempC) : 0.0;
+        if (st.hasLastTemp && deltaAbs < deltaC) {
+            // Update stored temperature (small drift tracking) and continue
+            st.lastTempC = avgTempC;
+            LOG_TRACE("engine: temp gate: |%.3f-%.3f|=%.3f°C < gate=%.3f°C -> keep %d%% on %s [%s]",
+                      avgTempC, st.prevTempC, std::fabs(avgTempC - st.prevTempC), deltaC,
+                      st.lastPercent, pwm->path_pwm.c_str(), label.c_str());
             continue;
         }
 
         // Compute target percent from curve at current aggregate temperature
-        const int targetPct = curvePercent(*curve, aggC);
+        const int targetPct = curvePercent(*curve, avgTempC);
 
-        // Optional per-control hysteresis (if the rule state provides it)
+        // Optional per-control hysteresis smoothing
         const int outPct = applyHysteresis(st, targetPct);
+
+        // Ensure manual mode (pwm*_enable = 1) before attempting to write duty
+        {
+            auto en = Hwmon::readEnable(*pwm);
+            if (!en || *en != 1) {
+                if (Hwmon::setEnable(*pwm, 1)) {
+                    LOG_DEBUG("engine: set manual mode (enable=1) on %s [%s]",
+                              pwm->path_pwm.c_str(), label.c_str());
+                } else {
+                    LOG_WARN("engine: failed to set manual mode on %s [%s]",
+                             pwm->path_pwm.c_str(), label.c_str());
+                    // weiter; einige Treiber akzeptieren Duty-Writes trotzdem
+                }
+            }
+        }
 
         // Apply only if resulting duty differs
         if (outPct != st.lastPercent) {
             if (Hwmon::setPercent(*pwm, outPct)) {
-                LOG_DEBUG("engine: set %s <- %d%% (was %d%%) @ agg=%.2fC (Δ=%.3fC>=%.3fC)",
-                          pwm->path_pwm.c_str(), outPct, st.lastPercent, aggC,
-                          (st.hasLastTemp ? std::fabs(aggC - st.lastTempC) : 999.0), deltaC);
+                if (st.hasLastTemp) {
+                    LOG_DEBUG("engine: set %s [%s] <- %d%% (was %d%%) @ avgTemp=%.2f°C; Δ=%.3f°C ≥ gate=%.3f°C",
+                              pwm->path_pwm.c_str(), label.c_str(),
+                              outPct, st.lastPercent, avgTempC, deltaAbs, deltaC);
+                } else {
+                    LOG_DEBUG("engine: set %s [%s] <- %d%% (was %d%%) @ avgTemp=%.2f°C; Δ=n/a (first sample), gate=%.3f°C",
+                              pwm->path_pwm.c_str(), label.c_str(),
+                              outPct, st.lastPercent, avgTempC, deltaC);
+                }
                 st.lastPercent = outPct;
                 anyChanged = true;
             } else {
-                LOG_WARN("engine: setPercent failed on %s -> %d%%", pwm->path_pwm.c_str(), outPct);
+                LOG_WARN("engine: setPercent failed on %s [%s] -> %d%%",
+                         pwm->path_pwm.c_str(), label.c_str(), outPct);
             }
         }
 
         // Remember temperature for next deltaC comparison
-        st.prevTempC = st.hasLastTemp ? st.lastTempC : aggC;
-        st.lastTempC = aggC;
+        st.prevTempC = st.hasLastTemp ? st.lastTempC : avgTempC;
+        st.lastTempC = avgTempC;
         st.hasLastTemp = true;
     }
 

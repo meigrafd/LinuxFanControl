@@ -87,6 +87,25 @@ static std::string chipVendorPretty(const std::string& chipName) {
     return chipName;
 }
 
+std::string Hwmon::chipNameForPath(const std::string& chipPath) {
+    if (chipPath.empty()) return {};
+    try {
+        const fs::path base(chipPath);
+        // Versuche die "name"-Datei
+        const std::string n = util::read_first_line(base / "name");
+        if (!n.empty()) return n;
+        // Fallback: Verzeichnisname (z. B. "hwmon4")
+        return base.filename().string();
+    } catch (...) {
+        return {};
+    }
+}
+
+std::string Hwmon::chipVendorForName(const std::string& chipName) {
+    if (chipName.empty()) return {};
+    return VendorMapping::instance().vendorForChipName(chipName);
+}
+
 /* ------------------------------ scanners ---------------------------------- */
 
 static void scanTemps(const fs::path& base, const std::string& chipPath, std::vector<HwmonTemp>& out) {

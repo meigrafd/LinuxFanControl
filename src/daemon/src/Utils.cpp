@@ -91,6 +91,11 @@ bool icontains(const std::string& hay, const std::string& needle) {
     return H.find(N) != std::string::npos;
 }
 
+std::string baseName(const std::string& p) {
+    const auto pos = p.find_last_of('/');
+    return (pos == std::string::npos) ? p : p.substr(pos + 1);
+}
+
 /* ----------------------------------------------------------------------------
  * Time helpers
  * ----------------------------------------------------------------------------*/

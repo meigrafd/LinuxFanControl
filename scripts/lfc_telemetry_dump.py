@@ -51,8 +51,8 @@ def main() -> int:
     )
     ap.add_argument(
         "--out",
-        default="/tmp/lfc_shm.txt",
-        help="Output file path (default: /tmp/lfc_shm.txt)",
+        default="/tmp/lfc_shm.json",
+        help="Output file path (default: /tmp/lfc_shm.json)",
     )
     ap.add_argument(
         "--indent",

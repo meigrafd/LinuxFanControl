@@ -15,7 +15,7 @@ namespace lfc {
 
 struct CurvePoint {
     double tempC{0.0};
-    int percent{0};
+    double percent{0.0};
 };
 
 enum class MixFunction {
@@ -26,21 +26,25 @@ enum class MixFunction {
 
 struct FanCurveMeta {
     std::string name;
-    std::string type;                  // "graph", "trigger", "mix"
-    MixFunction mix{MixFunction::Avg};
-    std::vector<std::string> tempSensors;     // sysfs temp input paths used by this curve (graphs/triggers)
-    std::vector<std::string> curveRefs;       // referenced curve names (for type=="mix")
-    std::vector<std::string> controlRefs;     // reverse refs: controls using this curve (from Controls[].SelectedFanCurve)
-    std::vector<CurvePoint> points;           // normalized 0..100% curve
-    double onC{0.0};                           // optional trigger ON threshold for imported trigger-style curves
-    double offC{0.0};                          // optional trigger OFF threshold for imported trigger-style curves
+    std::string type;                      // "graph", "trigger", "mix" (optional info)
+    MixFunction  mix{MixFunction::Avg};    // only for type=="mix"
+    std::vector<std::string> tempSensors;  // identifiers/paths of temperature sources
+    std::vector<std::string> curveRefs;    // referenced curve names (mix)
+    std::vector<std::string> controlRefs;  // reverse refs (filled elsewhere)
+    std::vector<CurvePoint>  points;       // normalized 0..100% curve
+    double onC{0.0};                       // optional trigger ON threshold (if imported as trigger)
+    double offC{0.0};                      // optional trigger OFF threshold (if imported as trigger)
 };
 
 struct ControlMeta {
-    std::string name;
-    std::string pwmPath;
-    std::string curveRef;
-    std::string nickName;   // imported from FanControl.Release "NickName"
+    std::string name;          // system-assigned stable name ("Fan #1", …)
+    std::string pwmPath;       // system path or imported identifier
+    std::string curveRef;      // name of selected curve (if any)
+    std::string nickName;      // user label (GUI)
+    bool        enabled{true}; // GUI: Enable (FanControl "Enable")
+    bool        hidden{false}; // GUI: IsHidden  (FanControl "IsHidden")
+    bool        manual{false}; // ManualControl
+    int      manualPercent{0}; // ManualControlValue in percent
 };
 
 struct HwmonDeviceMeta {
@@ -51,12 +55,12 @@ struct HwmonDeviceMeta {
 };
 
 struct Profile {
-    std::string schema;
-    std::string name;
-    std::string description;
-    std::string lfcdVersion;
-    std::vector<FanCurveMeta> fanCurves;
-    std::vector<ControlMeta> controls;
+    std::string schema;         // optional schema/format tag
+    std::string name;           // profile name
+    std::string description;    // optional
+    std::string lfcdVersion;    // producer version
+    std::vector<FanCurveMeta>  fanCurves;
+    std::vector<ControlMeta>   controls;
     std::vector<HwmonDeviceMeta> hwmons;
 };
 

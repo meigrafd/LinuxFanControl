@@ -341,7 +341,16 @@ ShmTelemetry::ShmTelemetry(const std::string& shmName, const std::string& fallba
     impl_->fallbackPath = std::move(fb);
 }
 
-ShmTelemetry::~ShmTelemetry() = default;
+//ShmTelemetry::~ShmTelemetry() = default;
+ShmTelemetry::~ShmTelemetry() {
+    if (!impl_) return;
+    json j;
+    j["version"]       = LFCD_VERSION;
+    j["timestampMs"]   = now_unix_ms();
+    j["engineEnabled"] = false;
+    // write directly (bypass guard)
+    (void)impl_->writePayload(j.dump(), nullptr);
+}
 
 // ---- Snapshot Publisher (nur hwmon) ----------------------------------------
 

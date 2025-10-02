@@ -16,6 +16,7 @@ import shutil
 import signal
 import sys
 import time
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
 # ----------------------------- SHM I/O ---------------------------------------
@@ -59,6 +60,19 @@ def fmt_f(x: Optional[float], digits: int = 1) -> str:
         return "-"
 
 def mode_from_enable(en: Optional[int], has_path: bool) -> str:
+    """
+    Map kernel hwmon pwm*_enable to a readable mode.
+
+    Typical meanings across drivers:
+      0 = disabled/off
+      1 = manual (software duty control)
+      2+ = automatic/hardware control (various auto modes depending on driver)
+
+    We render:
+      0 -> "OFF"
+      1 -> "MAN"
+      >=2 -> "AUTO" (append number to be explicit, e.g. AUTO(2), AUTO(3)...)
+    """
     if not has_path:
         return "N/A"
     if en is None:
@@ -68,7 +82,7 @@ def mode_from_enable(en: Optional[int], has_path: bool) -> str:
     if en in (1, 2):
         return "MAN"
     if en in (3, 4, 5):
-        return "HW"
+        return "AUTO"
     return str(en)
 
 def rule(widths: List[int]) -> str:
@@ -136,6 +150,67 @@ def extract_pwms(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def extract_gpus(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [g for g in (doc.get("gpus") or []) if isinstance(g, dict)]
+
+
+# ----------------------------- profile label mapping -------------------------
+
+@lru_cache(maxsize=1)
+def _profile_label_map_cache(sig: str):
+    # simple 1-entry cache keyed by a signature string
+    return {}
+
+def profile_label_map2(doc: dict) -> dict:
+    """
+    Build a map from pwmPath -> preferred label (nickName > name), based on the
+    active profile snapshot embedded in SHM telemetry.
+    """
+    prof = doc.get("profile") or {}
+    ctrls = prof.get("controls") or []
+    m = {}
+    for c in ctrls:
+        pwm = c.get("pwmPath")
+        if not pwm:
+            continue
+        # prefer nick (a.k.a. nickName), fallback to control name
+        nick = (c.get("nick") or c.get("nickName") or c.get("nickname") or "").strip()
+        name = c.get("name").strip()
+        label = (nick or name or "")
+        if label:
+            m[pwm] = label
+    return m
+
+def profile_label_map(doc: dict) -> dict:
+    prof = doc.get("profile") or {}
+    ctrls = prof.get("controls") or []
+    m = {}
+    for c in ctrls:
+        pwm = c.get("pwmPath")
+        # nick bevorzugen, optionaler Fallback auf nickName (nicht auf name!)
+        nick = (c.get("nick") or c.get("nickName") or "").strip()
+        if pwm and nick:
+            m[pwm] = nick
+    return m
+
+def profile_label_for_pwm(doc: dict, pwm_path: str) -> str:
+    """
+    Return mapped label for a pwmPath if present in active profile; else "".
+    """
+    # Build a cheap signature so we don't rebuild the map constantly
+    prof = doc.get("profile") or {}
+    sig = f"{prof.get('name','')}|{prof.get('controlCount','')}|{len(prof.get('controls') or [])}"
+    cache = _profile_label_map_cache(sig)
+    if not cache:
+        cache = profile_label_map(doc)
+        # refresh cache for this sig
+        _profile_label_map_cache.cache_clear()
+        _profile_label_map_cache(sig)
+        _profile_label_map_cache.__wrapped__(sig)  # no-op to satisfy lru_cache contract
+        # ugly but effective: stash map in function attribute for current sig
+        _profile_label_map_cache.map = cache  # type: ignore[attr-defined]
+    else:
+        # map is stored alongside this sig
+        cache = getattr(_profile_label_map_cache, "map", {})
+    return cache.get(pwm_path, "")
 
 # ----------------------------- rendering -------------------------------------
 
@@ -227,7 +302,7 @@ def render_pwms(doc: Dict[str, Any]) -> None:
     print(rule([W_CHIP, W_LABEL, W_PCT, W_VAL, W_MODE, W_RPM, 10]))
     for r in rows:
         chip  = os.path.basename(r["chipPath"]) or r["chipPath"]
-        label = r.get("label") or os.path.basename(r["pwmPath"])
+        label = profile_label_for_pwm(doc, r["pwmPath"]) or r.get("label") or os.path.basename(r["pwmPath"])
         pct   = "-" if r.get("percent") is None else f"{int(r['percent'])}%"
         raw   = fmt_i(r.get("raw"))
         mxv   = r.get("pwmMax")
@@ -237,6 +312,7 @@ def render_pwms(doc: Dict[str, Any]) -> None:
         rpm   = fmt_i(r.get("fanRpm"))
         print("  " + f"{ell(chip, W_CHIP):<{W_CHIP}} | {ell(label, W_LABEL):<{W_LABEL}} | "
               f"{pct:>{W_PCT}} | {v_m:<{W_VAL}} | {mode:<{W_MODE}} | {rpm:>{W_RPM}} | {r['pwmPath']}")
+
 
 # ----------------------------- main ------------------------------------------
 

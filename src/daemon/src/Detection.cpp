@@ -122,7 +122,7 @@ bool Detection::measureCurve_(const HwmonPwm& p,
         }
         lastRpm = rpm;
 
-        out.push_back(CurvePoint{aggC, duty});
+        out.push_back(CurvePoint{aggC, static_cast<double>(duty)});
 
         auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
         if (dt >= totalMs) break;

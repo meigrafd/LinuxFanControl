@@ -40,6 +40,8 @@ std::string to_lower(std::string_view sv);
 
 bool icontains(const std::string& hay, const std::string& needle);
 
+std::string baseName(const std::string& s);
+
 /* ----------------------------------------------------------------------------
  * Time helpers
  * ----------------------------------------------------------------------------*/
